@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>漏斗选股系统</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>漏斗选股系统</h1>
+      <p id="meta">加载中...</p>
+    </div>
+    <div class="actions">
+      <button id="btnEod">盘后筛选</button>
+      <button id="btnRefresh">立即刷新</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="left-main">
+      <section class="panel card">
+        <h2>热门概念大盘</h2>
+        <div id="hotConcepts" class="hot-list"></div>
+      </section>
+
+      <section class="funnel-area">
+        <div class="filter-line">
+          <span>概念筛选：</span>
+          <span id="activeConcept" class="chip muted">全部</span>
+          <button id="clearConcept" class="text-btn">清除</button>
+        </div>
+
+        <div class="funnel-grid">
+          <div class="pool-column">
+            <div class="pool-header">调整期候选池 <span id="count-candidate">0</span></div>
+            <div id="pool-candidate" class="pool-list"></div>
+          </div>
+
+          <div class="pool-column">
+            <div class="pool-header">重点关注池 <span id="count-focus">0</span></div>
+            <div id="pool-focus" class="pool-list"></div>
+          </div>
+
+          <div class="pool-column">
+            <div class="pool-header">买入池 <span id="count-buy">0</span></div>
+            <div id="pool-buy" class="pool-list"></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="right-panel">
+      <section class="panel card">
+        <h2>热门个股 Top10</h2>
+        <div id="hotStocks" class="hot-stock-list"></div>
+      </section>
+
+      <section class="panel card">
+        <div class="panel-title-row">
+          <h2>日K + 成交量（30日）</h2>
+          <div id="stockSummary" class="summary">点击左侧股票查看</div>
+        </div>
+        <div id="klineChart" class="kline-chart"></div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
