@@ -46,6 +46,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 18888 --reload
 - `GET /api/market/hot-concepts?trade_date=YYYY-MM-DD`
 - `GET /api/market/hot-stocks?trade_date=YYYY-MM-DD`
 - `GET /api/stock/{symbol}/detail?trade_date=YYYY-MM-DD&kline_days=30`
+- `GET /api/kline/{symbol}?days=30`
+- `GET /api/jobs/kline-cache/status`
+- `POST /api/jobs/kline-cache/sync?trade_date=YYYY-MM-DD&force=false`
 - `POST /api/pool/move`
 - `POST /api/score/recompute`
 - `POST /api/jobs/eod-screen`
@@ -63,3 +66,4 @@ pytest -q
 - 买入池上限：5只
 - 自动降级：买入池个股分数连续 5 分钟 < 65 自动降至重点池
 - 状态存储：SQLite `data/funnel_state.db`（首次启动可自动迁移旧 `data/funnel_state.json`）
+- 日K缓存：SQLite `data/market_kline.db`（每日15:20后自动调度一次，缓存主板股票最近30交易日日K）

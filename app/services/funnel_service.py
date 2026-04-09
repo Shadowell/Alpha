@@ -39,11 +39,13 @@ class FunnelService:
         self,
         provider: AkshareDataProvider,
         config: StrategyConfig | None = None,
+        kline_cache_service: Any | None = None,
         persist_db_path: str = "data/funnel_state.db",
         legacy_json_path: str = "data/funnel_state.json",
     ) -> None:
         self.provider = provider
         self.config = config or StrategyConfig()
+        self.kline_cache_service = kline_cache_service
         self.state_store = SQLiteStateStore(persist_db_path)
         self.legacy_json_file = Path(legacy_json_path)
 
@@ -410,7 +412,25 @@ class FunnelService:
                 hist = pd.DataFrame()
 
             kline = []
-            if not hist.empty:
+            if self.kline_cache_service is not None:
+                try:
+                    cached_rows = self.kline_cache_service.get_kline(symbol, days)
+                except Exception:
+                    cached_rows = []
+                if cached_rows:
+                    kline = [
+                        {
+                            "date": str(r.get("date", "")),
+                            "open": float(r.get("open", 0)),
+                            "high": float(r.get("high", 0)),
+                            "low": float(r.get("low", 0)),
+                            "close": float(r.get("close", 0)),
+                            "volume": float(r.get("volume", 0)),
+                        }
+                        for r in cached_rows
+                    ]
+
+            if not kline and not hist.empty:
                 for _, row in hist.tail(days).iterrows():
                     kline.append(
                         {
