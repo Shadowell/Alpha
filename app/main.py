@@ -12,13 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from app.models import MovePoolRequest, RecomputeRequest
 from app.services.data_provider import AkshareDataProvider
 from app.services.funnel_service import FunnelService
+from app.services.kline_cache_service import KlineCacheService
 from app.services.realtime import RealtimeHub
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 provider = AkshareDataProvider()
-service = FunnelService(provider=provider)
+kline_cache_service = KlineCacheService(provider=provider)
+service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 hub = RealtimeHub()
 
 app = FastAPI(title="漏斗选股系统", version="1.0.0")
@@ -59,18 +61,32 @@ async def _ticker_loop() -> None:
         await asyncio.sleep(60)
 
 
+async def _kline_cache_loop() -> None:
+    await asyncio.sleep(10)
+    while True:
+        try:
+            changed = await kline_cache_service.run_if_due()
+            if changed:
+                print("[kline-cache] daily sync completed")
+        except Exception as exc:
+            print(f"[kline-cache] error: {exc}")
+        await asyncio.sleep(600)
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
+    app.state.kline_cache_task = asyncio.create_task(_kline_cache_loop())
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    task = getattr(app.state, "ticker_task", None)
-    if task:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+    for key in ["ticker_task", "kline_cache_task"]:
+        task = getattr(app.state, key, None)
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 @app.get("/")
@@ -127,6 +143,30 @@ async def run_eod_screen(trade_date: str | None = None):
         raise HTTPException(status_code=503, detail=f"盘后筛选执行失败: {exc}")
     await _broadcast_snapshot()
     return {"success": True, "candidate_count": count}
+
+
+@app.post("/api/jobs/kline-cache/sync")
+async def run_kline_cache_sync(trade_date: str | None = None, force: bool = False):
+    payload = await kline_cache_service.sync_trade_date(trade_date=trade_date, force=force)
+    if not payload.get("success"):
+        raise HTTPException(status_code=503, detail=payload.get("message", "同步失败"))
+    return payload
+
+
+@app.get("/api/jobs/kline-cache/status")
+async def get_kline_cache_status():
+    return kline_cache_service.get_sync_state()
+
+
+@app.get("/api/kline/{symbol}")
+async def get_cached_kline(symbol: str, days: int = 30):
+    items = kline_cache_service.get_kline(symbol=symbol, days=days)
+    return {
+        "symbol": symbol,
+        "days": max(1, min(days, 365)),
+        "count": len(items),
+        "items": items,
+    }
 
 
 @app.websocket("/ws/realtime")
