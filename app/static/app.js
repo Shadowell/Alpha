@@ -74,7 +74,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
+const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -95,9 +95,6 @@ function switchTab(tab) {
   }
   if (tab === 'notice' && !state.noticeFunnel) {
     reloadNotice();
-  }
-  if (tab === 'rules' && !state.rulesEngine) {
-    loadRulesEngine();
   }
 }
 
@@ -724,9 +721,6 @@ async function init() {
     } else if (state.activeTab === 'notice') {
       await reloadNotice();
       setStatus('已刷新公告池', 'success');
-    } else if (state.activeTab === 'rules') {
-      await loadRulesEngine();
-      setStatus('规则引擎配置已刷新', 'success');
     }
   };
 
