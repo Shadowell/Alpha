@@ -14,12 +14,12 @@ def _safe_col(df: pd.DataFrame, col: str, default: float = 0.0) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce").fillna(default)
 
 
-def build_concept_heat(
+async def build_concept_heat(
     provider: AkshareDataProvider,
     top_n: int = 120,
     concepts_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    raw = concepts_df.copy() if concepts_df is not None else provider.get_all_concepts()
+    raw = concepts_df.copy() if concepts_df is not None else await provider.get_all_concepts()
     if raw.empty:
         return pd.DataFrame()
 
@@ -39,7 +39,7 @@ def build_concept_heat(
         limit_counts: list[int] = []
         for _, row in df.iterrows():
             name = str(row.get("板块名称", ""))
-            cons = provider.get_concept_constituents(name)
+            cons = await provider.get_concept_constituents(name)
             if cons.empty or "涨跌幅" not in cons.columns:
                 limit_counts.append(0)
                 continue
@@ -57,7 +57,7 @@ def build_concept_heat(
     return df
 
 
-def map_stock_concepts(
+async def map_stock_concepts(
     provider: AkshareDataProvider,
     symbols: set[str],
     concept_heat_df: pd.DataFrame,
@@ -70,7 +70,7 @@ def map_stock_concepts(
         concept_name = str(row.get("板块名称", ""))
         if not concept_name:
             continue
-        cons = provider.get_concept_constituents(concept_name)
+        cons = await provider.get_concept_constituents(concept_name)
         if cons.empty or "代码" not in cons.columns:
             continue
 

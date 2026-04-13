@@ -1,3 +1,5 @@
+import asyncio
+
 import pandas as pd
 
 from app.services import data_provider as provider_mod
@@ -39,7 +41,7 @@ def test_get_hist_fallback_to_tx_when_main_source_fails(monkeypatch):
     monkeypatch.setattr(provider_mod.ak, "stock_zh_a_hist_tx", _ok_tx)
 
     provider = AkshareDataProvider()
-    out = provider.get_hist("000592", "20260301", "20260413")
+    out = asyncio.run(provider.get_hist("000592", "20260301", "20260413"))
 
     assert not out.empty
     assert {"日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"}.issubset(set(out.columns))

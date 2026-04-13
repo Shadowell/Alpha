@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -106,7 +107,7 @@ class NoticeService:
 
     async def run_notice_screen(self, notice_date: str | None = None, limit: int = 10) -> dict[str, Any]:
         yyyymmdd, display_date = _normalize_notice_date(notice_date)
-        df = ak.stock_notice_report(symbol="全部", date=yyyymmdd)
+        df = await asyncio.to_thread(ak.stock_notice_report, symbol="全部", date=yyyymmdd)
         if df is None or df.empty:
             self.entries = {}
             self.updated_at = now_cn().isoformat()

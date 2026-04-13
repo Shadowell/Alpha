@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -27,16 +28,6 @@ service = FunnelService(provider=provider, kline_cache_service=kline_cache_servi
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service)
 hub = RealtimeHub()
 
-app = FastAPI(title="漏斗选股系统", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 
 async def _broadcast_snapshot() -> None:
     funnel = await service.get_funnel()
@@ -53,7 +44,6 @@ async def _broadcast_snapshot() -> None:
 
 
 async def _ticker_loop() -> None:
-    # Avoid blocking startup with heavy first refresh.
     await asyncio.sleep(5)
     while True:
         try:
@@ -77,20 +67,28 @@ async def _kline_cache_loop() -> None:
         await asyncio.sleep(600)
 
 
-@app.on_event("startup")
-async def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(_kline_cache_loop())
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
+    yield
     for key in ["ticker_task", "kline_cache_task"]:
         task = getattr(app.state, key, None)
         if task:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+
+
+app = FastAPI(title="漏斗选股系统", version="1.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
@@ -190,13 +188,10 @@ async def get_cached_kline(symbol: str, days: int = 30):
     clean_symbol = normalize_symbol(symbol)
     items = kline_cache_service.get_kline(symbol=clean_symbol, days=days)
     if not items:
-        trade_days = provider.get_trade_days()
+        trade_days = await provider.get_trade_days()
         try:
             start_date, end_date = get_last_n_trade_window(trade_days, now_cn().date().isoformat(), max(10, min(days, 180)))
-            hist = await asyncio.wait_for(
-                asyncio.to_thread(provider.get_hist, clean_symbol, start_date, end_date),
-                timeout=8.0,
-            )
+            hist = await provider.get_hist(clean_symbol, start_date, end_date)
         except Exception:
             hist = None
         if hist is not None and not hist.empty:
