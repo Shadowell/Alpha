@@ -79,7 +79,7 @@ class KlineCacheService:
                 message="开始同步",
             )
 
-            symbols = self._load_symbol_list()
+            symbols = await asyncio.to_thread(self._load_symbol_list)
             if not symbols:
                 self.store.set_sync_state(
                     attempt_trade_date=target_trade_date,
@@ -129,9 +129,9 @@ class KlineCacheService:
             success_count = 0
             failed_count = 0
             now_iso = now_cn().isoformat()
-            for symbol in symbols:
+            for idx, symbol in enumerate(symbols):
                 start_symbol = pytime.time()
-                hist = self.provider.get_hist(symbol, start_date, end_date)
+                hist = await asyncio.to_thread(self.provider.get_hist, symbol, start_date, end_date)
                 rows = self._normalize_hist(hist)
                 if rows:
                     self.store.upsert_symbol_klines(symbol, rows, now_iso)
@@ -165,6 +165,9 @@ class KlineCacheService:
                         failed_symbols=failed_count,
                         message=f"同步中 {synced}/{total}",
                     )
+                # Explicitly yield so other HTTP requests remain responsive during long sync.
+                if idx % 10 == 0:
+                    await asyncio.sleep(0)
                     self.store.set_sync_state(
                         attempt_trade_date=target_trade_date,
                         success_trade_date=state.get("last_success_trade_date"),

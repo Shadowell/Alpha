@@ -49,14 +49,8 @@ if [[ "${BASH_VERSION:-}" ]]; then
   set +m
 fi
 
-BOOT_PID=""
-if command -v setsid >/dev/null 2>&1; then
-  setsid python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
-  BOOT_PID=$!
-else
-  nohup python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
-  BOOT_PID=$!
-fi
+nohup python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
+BOOT_PID=$!
 
 NEW_PID="$BOOT_PID"
 for _ in {1..20}; do
@@ -81,6 +75,12 @@ if is_running "$NEW_PID"; then
   echo "访问地址: http://127.0.0.1:$PORT"
   echo "自动重启: $([[ "$RELOAD" == "1" ]] && echo 开启 || echo 关闭)"
   echo "日志文件: $LOG_FILE"
+  for _ in {1..10}; do
+    if curl -fsS "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
 else
   echo "启动失败，请检查日志: $LOG_FILE"
   rm -f "$PID_FILE"
