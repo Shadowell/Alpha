@@ -98,6 +98,50 @@ button:disabled {
   gap: 12px;
 }
 
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(11, 22, 40, 0.8);
+}
+
+.tab-btn {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  background: rgba(34, 211, 238, 0.06);
+}
+
+.tab-btn.active {
+  color: var(--brand);
+  background: rgba(34, 211, 238, 0.12);
+  box-shadow: inset 0 -2px 0 var(--brand);
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .funnel-area {
   display: flex;
   flex-direction: column;
