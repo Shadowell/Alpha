@@ -56,12 +56,26 @@ async def _ticker_loop() -> None:
 
 
 async def _kline_cache_loop() -> None:
+    from app.services.feishu_notify import notify_sync_complete
+
     await asyncio.sleep(10)
     while True:
         try:
-            changed = await kline_cache_service.run_if_due()
-            if changed:
-                print("[kline-cache] daily sync completed")
+            result = await kline_cache_service.run_if_due()
+            if result is not None:
+                print(f"[kline-cache] daily sync completed: {result.get('message')}")
+                try:
+                    await notify_sync_complete(
+                        trade_date=result.get("trade_date", ""),
+                        success_count=result.get("success_symbols", result.get("symbol_count", 0)),
+                        failed_count=result.get("failed_symbols", 0),
+                        total=result.get("total_symbols", 0),
+                        elapsed_sec=result.get("elapsed_sec", 0),
+                        mode="全量",
+                    )
+                    print("[kline-cache] feishu notification sent")
+                except Exception as notify_exc:
+                    print(f"[kline-cache] feishu notify failed: {notify_exc}")
         except Exception as exc:
             print(f"[kline-cache] error: {exc}")
         await asyncio.sleep(600)

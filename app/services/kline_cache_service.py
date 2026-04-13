@@ -30,22 +30,22 @@ class KlineCacheService:
         self.window_days = max(10, min(window_days, 180))
         self._syncing = False
 
-    async def run_if_due(self) -> bool:
+    async def run_if_due(self) -> dict[str, Any] | None:
+        """检查是否到达自动同步时间，到达则执行同步并返回结果 dict，未触发返回 None。"""
         now = now_cn()
         cur_time = now.timetz().replace(tzinfo=None)
         if cur_time < self.schedule_after:
-            return False
+            return None
 
         trade_date = await self._resolve_latest_trade_date(now.date().isoformat())
         if not trade_date:
-            return False
+            return None
 
         state = self.store.get_sync_state()
         if state.get("last_success_trade_date") == trade_date:
-            return False
+            return None
 
-        await self.sync_trade_date(trade_date=trade_date, force=True, trigger_mode="auto")
-        return True
+        return await self.sync_trade_date(trade_date=trade_date, force=True, trigger_mode="auto")
 
     async def sync_trade_date(
         self,
@@ -67,6 +67,7 @@ class KlineCacheService:
         force: bool = False,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
+        t0 = pytime.time()
         target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
             return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
@@ -184,6 +185,9 @@ class KlineCacheService:
             "task_id": task_id,
             "total_symbols": total,
             "synced_symbols": success_count + failed_count,
+            "success_symbols": success_count,
+            "failed_symbols": failed_count,
+            "elapsed_sec": round(pytime.time() - t0, 1),
         }
 
     async def incremental_sync(
