@@ -93,17 +93,13 @@ class FunnelService:
     def _ensure_strategy_profile(self) -> dict[str, Any]:
         profile = self.state_store.get_active_strategy_profile()
         if profile is not None:
+            saved_config = profile.get("config", {})
+            if saved_config:
+                self.config = self.config.merge(saved_config)
             return profile
-        config_payload = {
-            "period_days": self.config.period_days,
-            "box_range_threshold": self.config.box_range_threshold,
-            "volume_shrink_threshold": self.config.volume_shrink_threshold,
-            "pre_breakout_buffer": self.config.pre_breakout_buffer,
-            "profile_strength": "balanced",
-            "enabled": True,
-        }
+        config_payload = self.config.to_dict()
         return self.state_store.upsert_single_active_strategy_profile(
-            name="kline_volume_balanced",
+            name="alpha_rule_engine",
             config=config_payload,
             updated_at=now_cn().isoformat(),
         )
@@ -204,7 +200,7 @@ class FunnelService:
 
         universe = prefilter_universe(snapshot, config)
         universe.sort(key=lambda x: x.get("amount", 0), reverse=True)
-        universe = universe[:500]
+        universe = universe[:config.universe_top_n]
 
         entries: dict[str, dict[str, Any]] = {}
         for stock in universe:
@@ -381,7 +377,7 @@ class FunnelService:
 
             entry = self.entries.get(symbol)
             if not entry:
-                return MovePoolResponse(success=False, message="股票不存在于当前漏斗", symbol=symbol, pool=POOL_CANDIDATE)
+                return MovePoolResponse(success=False, message="股票不存在于当前选股池", symbol=symbol, pool=POOL_CANDIDATE)
 
             if target_pool == POOL_BUY and entry["pool"] != POOL_BUY:
                 buy_count = sum(1 for e in self.entries.values() if e.get("pool") == POOL_BUY)
@@ -447,6 +443,34 @@ class FunnelService:
         async with self.lock:
             self.strategy_profile = self._ensure_strategy_profile()
             return self.strategy_profile
+
+    async def get_rule_engine(self) -> dict[str, Any]:
+        async with self.lock:
+            from app.config import RULE_GROUPS
+            return {
+                "config": self.config.to_dict(),
+                "groups": RULE_GROUPS,
+            }
+
+    async def update_rule_engine(self, overrides: dict[str, Any]) -> dict[str, Any]:
+        async with self.lock:
+            if overrides.get("_reset"):
+                self.config = StrategyConfig()
+            else:
+                self.config = self.config.merge(overrides)
+            config_payload = self.config.to_dict()
+            self.strategy_profile = self.state_store.upsert_single_active_strategy_profile(
+                name="alpha_rule_engine",
+                config=config_payload,
+                updated_at=now_cn().isoformat(),
+            )
+            self._save_state()
+            from app.config import RULE_GROUPS
+            return {
+                "config": config_payload,
+                "groups": RULE_GROUPS,
+                "message": "规则引擎参数已更新",
+            }
 
     async def get_hot_concepts(self, trade_date: str | None = None) -> HotConceptResponse:
         async with self.lock:

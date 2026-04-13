@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>漏斗选股系统</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413d" />
+  <title>Alpha</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260413e" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>漏斗选股系统</h1>
+      <h1>Alpha</h1>
       <p id="meta">加载中...</p>
     </div>
     <div class="actions">
@@ -29,6 +29,7 @@
       <nav class="tab-bar">
         <button class="tab-btn active" data-tab="funnel">漏斗选股</button>
         <button class="tab-btn" data-tab="notice">公告选股</button>
+        <button class="tab-btn" data-tab="rules">规则引擎</button>
       </nav>
 
       <!-- ========== 漏斗选股 Tab ========== -->
@@ -90,6 +91,13 @@
           </div>
         </section>
       </section>
+
+      <!-- ========== 规则引擎 Tab ========== -->
+      <section id="tab-rules" class="tab-content">
+        <div id="rulesEngine" class="rules-engine">
+          <div class="rules-loading">加载规则引擎配置...</div>
+        </div>
+      </section>
     </section>
 
     <aside class="right-panel">
@@ -130,6 +138,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413d"></script>
+  <script src="/static/app.js?v=20260413e"></script>
 </body>
 </html>

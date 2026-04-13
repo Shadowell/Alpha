@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await task
 
 
-app = FastAPI(title="漏斗选股系统", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Alpha", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -218,6 +218,16 @@ async def get_cached_kline(symbol: str, days: int = 30):
 @app.get("/api/strategy/profile")
 async def get_strategy_profile():
     return await service.get_strategy_profile()
+
+
+@app.get("/api/rules/engine")
+async def get_rule_engine():
+    return await service.get_rule_engine()
+
+
+@app.put("/api/rules/engine")
+async def update_rule_engine(body: dict):
+    return await service.update_rule_engine(body)
 
 
 @app.get("/api/notice/funnel")

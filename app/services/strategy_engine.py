@@ -26,14 +26,18 @@ def get_last_n_trade_window(trade_days_df: pd.DataFrame, base_date: str, n: int)
     return selected[0].strftime("%Y%m%d"), selected[-1].strftime("%Y%m%d")
 
 
-def is_main_board_stock(code: str, name: str) -> bool:
+def is_main_board_stock(code: str, name: str, config: StrategyConfig) -> bool:
     code = str(code)
     name = str(name)
-    if "ST" in name.upper():
+    if config.exclude_st and "ST" in name.upper():
         return False
-    if code.startswith(("30", "688", "43", "8", "9")):
+    if config.exclude_gem and code.startswith("30"):
         return False
-    return code.startswith(("00", "60"))
+    if config.exclude_star and code.startswith("688"):
+        return False
+    if code.startswith(("43", "8", "9")):
+        return False
+    return code.startswith(("00", "60", "30", "688"))
 
 
 def prefilter_universe(snapshot: pd.DataFrame, config: StrategyConfig) -> list[dict[str, Any]]:
@@ -44,7 +48,7 @@ def prefilter_universe(snapshot: pd.DataFrame, config: StrategyConfig) -> list[d
     for _, row in snapshot.iterrows():
         code = str(row.get("代码", "")).strip()
         name = str(row.get("名称", "")).strip()
-        if not code or not is_main_board_stock(code, name):
+        if not code or not is_main_board_stock(code, name, config):
             continue
 
         price = to_float(row.get("最新价"))
@@ -53,7 +57,7 @@ def prefilter_universe(snapshot: pd.DataFrame, config: StrategyConfig) -> list[d
         if price <= config.close_price_threshold:
             continue
         has_market_cap = market_cap_raw is not None and str(market_cap_raw).strip() not in {"", "nan", "NaN", "<NA>"}
-        if has_market_cap and (market_cap <= config.market_capital_low_threshold or market_cap > config.market_capital_up_threshold):
+        if has_market_cap and (market_cap <= config.market_capital_low or market_cap > config.market_capital_high):
             continue
 
         result.append(
@@ -93,7 +97,6 @@ def analyze_adjustment_candidate(
     close = float(closes.iloc[-1])
     open_ = float(opens.iloc[-1])
 
-    # K线+成交量单策略（平衡档）
     box_range = (hhv20 - llv20) / max(llv20, 0.01)
     amp5 = ((highs.tail(5) - lows.tail(5)) / lows.tail(5).replace(0, 0.01)).fillna(0.0)
     amp20 = ((highs - lows) / lows.replace(0, 0.01)).fillna(0.0)
@@ -112,29 +115,29 @@ def analyze_adjustment_candidate(
 
     last_ret = (close / max(float(closes.iloc[-2]), 0.01)) - 1 if len(closes) >= 2 else 0.0
     last_vol_ratio = float(volumes.iloc[-1]) / max(vol_ma20, 1)
-    chase_risk = bool(last_ret >= 0.07 and last_vol_ratio >= 2.3)
+    chase_risk = bool(last_ret >= config.chase_risk_return and last_vol_ratio >= config.chase_risk_vol_ratio)
 
     pass_rules = (
         box_range <= config.box_range_threshold
-        and amp_ratio <= 0.95
+        and amp_ratio <= config.amp_ratio_threshold
         and vol_shrink_ratio <= config.volume_shrink_threshold
-        and vol_recover_ratio >= 0.85
+        and vol_recover_ratio >= config.volume_recover_threshold
         and not_breakout
         and close_ge_open
-        and shadow_support >= 0.005
+        and shadow_support >= config.shadow_support_threshold
         and (not chase_risk)
     )
 
     reasons = []
     if box_range <= config.box_range_threshold:
         reasons.append("缩量横盘收敛")
-    if amp_ratio <= 0.95:
+    if amp_ratio <= config.amp_ratio_threshold:
         reasons.append("近5日振幅收敛")
     if vol_shrink_ratio <= config.volume_shrink_threshold:
         reasons.append("成交量低于中期均量")
-    if vol_recover_ratio >= 0.85:
+    if vol_recover_ratio >= config.volume_recover_threshold:
         reasons.append("量能出现温和恢复")
-    if close_ge_open and shadow_support >= 0.005:
+    if close_ge_open and shadow_support >= config.shadow_support_threshold:
         reasons.append("止跌企稳，下影承接")
     if not_breakout:
         reasons.append("临近前高但未突破")
@@ -173,28 +176,28 @@ def compute_intraday_score(
     avg_amount20 = to_float(entry.get("avg_amount20"), 1)
 
     breakout_ratio = (price / max(breakout_level, 0.01)) - 1
-    breakout_score = clamp(breakout_ratio / 0.03, 0, 1) * 35
+    breakout_score = clamp(breakout_ratio / 0.03, 0, 1) * config.score_weight_breakout
 
     expected_amount = avg_amount20 * max(elapsed_ratio, 0.01)
     volume_ratio = amount / max(expected_amount, 1)
-    volume_score = clamp(volume_ratio / 2, 0, 1) * 25
+    volume_score = clamp(volume_ratio / 2, 0, 1) * config.score_weight_volume
 
     vwap = amount / volume if volume > 0 else price
     above_vwap = price >= vwap
     drawdown_from_high = (day_high - price) / max(day_high, 0.01)
     structure_score = 0.0
     if above_vwap:
-        structure_score += 8
+        structure_score += config.score_weight_above_vwap
     if price >= open_:
-        structure_score += 6
-    structure_score += clamp((0.03 - drawdown_from_high) / 0.03, 0, 1) * 6
+        structure_score += config.score_weight_close_ge_open
+    structure_score += clamp((0.03 - drawdown_from_high) / 0.03, 0, 1) * config.score_weight_drawdown
 
     gap_up = (open_ / max(pre_close, 0.01)) - 1 if pre_close > 0 else 0.0
     penalty = 0.0
-    penalty += clamp((gap_up - 0.03) / 0.05, 0, 1) * 8
-    penalty += clamp((drawdown_from_high - 0.03) / 0.04, 0, 1) * 6
-    if pct_change >= 9.2:
-        penalty += 6
+    penalty += clamp((gap_up - 0.03) / 0.05, 0, 1) * config.penalty_gap_up
+    penalty += clamp((drawdown_from_high - 0.03) / 0.04, 0, 1) * config.penalty_drawdown
+    if pct_change >= config.near_limit_pct:
+        penalty += config.penalty_near_limit
 
     final_score = clamp(breakout_score + volume_score + structure_score - penalty, 0, 100)
 
@@ -203,7 +206,7 @@ def compute_intraday_score(
         warnings.append("高开幅度过大")
     if drawdown_from_high > 0.03:
         warnings.append("冲高回落明显")
-    if pct_change >= 9.2:
+    if pct_change >= config.near_limit_pct:
         warnings.append("接近涨停，流动性风险增加")
 
     breakdown = {
