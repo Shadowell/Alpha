@@ -41,6 +41,18 @@ class SQLiteStateStore:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notice_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                trade_date TEXT NOT NULL,
+                entries_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                llm_enabled INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
         conn.commit()
 
     def load_state(self) -> dict[str, Any] | None:
@@ -116,6 +128,44 @@ class SQLiteStateStore:
 
         active = self.get_active_strategy_profile()
         return active if active is not None else {"id": 0, "name": name, "config": config, "updated_at": updated_at}
+
+    def load_notice_state(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute("SELECT * FROM notice_state WHERE id = 1").fetchone()
+            if row is None:
+                return None
+            return {
+                "trade_date": row["trade_date"],
+                "entries": self._loads_json(row["entries_json"], default={}),
+                "updated_at": row["updated_at"],
+                "llm_enabled": bool(row["llm_enabled"]),
+                "source": row["source"] or "",
+            }
+
+    def save_notice_state(self, payload: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO notice_state(id, trade_date, entries_json, updated_at, llm_enabled, source)
+                VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    trade_date=excluded.trade_date,
+                    entries_json=excluded.entries_json,
+                    updated_at=excluded.updated_at,
+                    llm_enabled=excluded.llm_enabled,
+                    source=excluded.source
+                """,
+                (
+                    payload.get("trade_date", ""),
+                    self._dumps_json(payload.get("entries", {})),
+                    payload.get("updated_at", ""),
+                    1 if payload.get("llm_enabled", False) else 0,
+                    payload.get("source", ""),
+                ),
+            )
+            conn.commit()
 
     @staticmethod
     def _dumps_json(value: Any) -> str:
