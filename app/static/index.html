@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413g" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413h" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -119,8 +119,12 @@
       <aside class="right-panel">
         <section class="panel card">
           <div class="panel-title-row">
-            <h2>历史同步</h2>
-            <button id="btnSyncKline">立即同步</button>
+            <h2>K线同步</h2>
+            <button id="btnSyncKline" title="全量同步（30日窗口）">全量同步</button>
+          </div>
+          <div class="sync-row">
+            <input type="date" id="syncDate" class="sync-date-input" />
+            <button id="btnIncrementalSync" class="btn-incremental">增量同步</button>
           </div>
           <div id="syncSummary" class="summary">加载中...</div>
           <div class="sync-progress-wrap">
@@ -154,6 +158,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413g"></script>
+  <script src="/static/app.js?v=20260413h"></script>
 </body>
 </html>

@@ -766,18 +766,43 @@ async function init() {
     }
   };
 
+  const syncDateInput = document.getElementById('syncDate');
+  const today = new Date();
+  syncDateInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
   document.getElementById('btnSyncKline').onclick = async () => {
     const btn = document.getElementById('btnSyncKline');
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = '同步中...';
-    setStatus('历史数据同步执行中...', 'info');
+    setStatus('全量同步执行中...', 'info');
     try {
-      const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual', { method: 'POST' });
-      setStatus(`历史同步完成: ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
+      const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
+      setStatus(`全量同步完成: ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
       await reloadFunnel();
     } catch (err) {
-      setStatus(`历史同步失败: ${err.message}`, 'error');
+      setStatus(`全量同步失败: ${err.message}`, 'error');
+      await reloadFunnel();
+    } finally {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnIncrementalSync').onclick = async () => {
+    const btn = document.getElementById('btnIncrementalSync');
+    const dateVal = syncDateInput.value;
+    if (!dateVal) { setStatus('请选择同步日期', 'error'); return; }
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '同步中...';
+    setStatus(`增量同步 ${dateVal} 执行中...`, 'info');
+    try {
+      const payload = await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dateVal}&trigger_mode=manual`, { method: 'POST' });
+      setStatus(`增量同步完成: ${dateVal} · ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
+      await reloadFunnel();
+    } catch (err) {
+      setStatus(`增量同步失败: ${err.message}`, 'error');
       await reloadFunnel();
     } finally {
       btn.textContent = old;

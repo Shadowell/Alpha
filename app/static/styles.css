@@ -510,6 +510,43 @@ button:disabled {
 .hot-stock-side.down { color: var(--down); }
 
 /* ── Sync panel ── */
+.sync-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sync-date-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: rgba(11, 22, 40, 0.8);
+  color: var(--text);
+  font-size: 12px;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  outline: none;
+  color-scheme: dark;
+}
+
+.sync-date-input:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.15);
+}
+
+.btn-incremental {
+  white-space: nowrap;
+  background: linear-gradient(180deg, #0e7490, #0c5c72);
+  border-color: #22d3ee;
+  color: #e0f2fe;
+  font-weight: 600;
+}
+
+.btn-incremental:hover {
+  border-color: #67e8f9;
+}
+
 .sync-progress-wrap {
   margin-top: 8px;
   height: 8px;
