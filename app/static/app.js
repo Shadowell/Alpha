@@ -12,6 +12,8 @@ const state = {
   chart: null,
   noticeFunnel: null,
   noticeSelectedSymbol: null,
+  rulesEngine: null,
+  rulesDirty: {},
 };
 
 function fmtNum(v, digits = 2) {
@@ -31,6 +33,8 @@ function setMeta() {
     if (!state.noticeFunnel) { meta.textContent = '暂无数据'; return; }
     const nf = state.noticeFunnel;
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
+  } else if (state.activeTab === 'rules') {
+    meta.textContent = '调整选股宇宙、形态识别、评分权重、池迁移等参数';
   }
 }
 
@@ -75,7 +79,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股' };
+const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -96,6 +100,9 @@ function switchTab(tab) {
   }
   if (tab === 'notice' && !state.noticeFunnel) {
     reloadNotice();
+  }
+  if (tab === 'rules' && !state.rulesEngine) {
+    loadRulesEngine();
   }
 }
 
@@ -723,6 +730,9 @@ async function init() {
     } else if (state.activeTab === 'notice') {
       await reloadNotice();
       setStatus('公告池已刷新', 'success');
+    } else if (state.activeTab === 'rules') {
+      await loadRulesEngine();
+      setStatus('规则引擎配置已刷新', 'success');
     }
   };
 
