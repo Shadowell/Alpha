@@ -119,6 +119,40 @@ class StockDetailResponse(BaseModel):
     kline: list[KlinePoint]
 
 
+class NoticeItem(BaseModel):
+    symbol: str
+    name: str
+    title: str
+    notice_type: str
+    notice_date: str
+    url: str
+    score: float
+    pool: PoolName
+    reason: str = ""
+    risk: str = ""
+    updated_at: str
+
+
+class NoticeFunnelResponse(BaseModel):
+    trade_date: str
+    updated_at: str
+    pools: dict[str, list[NoticeItem]]
+    stats: dict[str, int]
+    llm_enabled: bool
+    source: str
+
+
+class NoticeDetailResponse(BaseModel):
+    symbol: str
+    name: str
+    score: float
+    pool: PoolName
+    reason: str = ""
+    risk: str = ""
+    notices: list[dict[str, Any]] = Field(default_factory=list)
+    kline: list[KlinePoint] = Field(default_factory=list)
+
+
 DEFAULT_EMPTY_FUNNEL = FunnelResponse(
     trade_date="",
     updated_at="",

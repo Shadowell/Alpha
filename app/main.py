@@ -13,6 +13,7 @@ from app.models import MovePoolRequest, RecomputeRequest
 from app.services.data_provider import AkshareDataProvider
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
+from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.strategy_engine import get_last_n_trade_window
 from app.services.time_utils import now_cn
@@ -23,6 +24,7 @@ STATIC_DIR = BASE_DIR / "static"
 provider = AkshareDataProvider()
 kline_cache_service = KlineCacheService(provider=provider)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
+notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service)
 hub = RealtimeHub()
 
 app = FastAPI(title="漏斗选股系统", version="1.0.0")
@@ -94,6 +96,11 @@ async def on_shutdown() -> None:
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/notice")
+async def notice_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "notice.html")
 
 
 @app.get("/api/funnel")
@@ -212,6 +219,36 @@ async def get_cached_kline(symbol: str, days: int = 30):
 @app.get("/api/strategy/profile")
 async def get_strategy_profile():
     return await service.get_strategy_profile()
+
+
+@app.get("/api/notice/funnel")
+async def get_notice_funnel(trade_date: str | None = None):
+    return await notice_service.get_notice_funnel(trade_date)
+
+
+@app.post("/api/jobs/notice-screen")
+async def run_notice_screen(notice_date: str | None = None, limit: int = 10):
+    try:
+        payload = await notice_service.run_notice_screen(notice_date=notice_date, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"公告选股执行失败: {exc}")
+    return payload
+
+
+@app.post("/api/notice/pool/move")
+async def move_notice_pool(req: MovePoolRequest):
+    payload = await notice_service.move_pool(req.symbol, req.target_pool)
+    if not payload.get("success"):
+        raise HTTPException(status_code=400, detail=payload.get("message", "迁移失败"))
+    return payload
+
+
+@app.get("/api/notice/{symbol}/detail")
+async def get_notice_detail(symbol: str, days: int = 30):
+    try:
+        return await notice_service.get_notice_detail(symbol, days=days)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="symbol not found in notice funnel")
 
 
 @app.websocket("/ws/realtime")

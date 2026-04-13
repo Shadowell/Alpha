@@ -39,12 +39,17 @@ uvicorn app.main:app --host 0.0.0.0 --port 18888 --reload
 浏览器打开：
 
 - http://127.0.0.1:18888
+- http://127.0.0.1:18888/notice
 
 ## 主要接口
 
 - `GET /api/funnel?trade_date=YYYY-MM-DD`
 - `GET /api/market/hot-concepts?trade_date=YYYY-MM-DD`
 - `GET /api/market/hot-stocks?trade_date=YYYY-MM-DD`
+- `GET /api/notice/funnel?trade_date=YYYY-MM-DD`
+- `POST /api/jobs/notice-screen?notice_date=YYYYMMDD&limit=50`
+- `POST /api/notice/pool/move`
+- `GET /api/notice/{symbol}/detail?days=30`
 - `GET /api/stock/{symbol}/detail?trade_date=YYYY-MM-DD&kline_days=30`
 - `GET /api/kline/{symbol}?days=30`
 - `GET /api/jobs/kline-cache/status`
@@ -93,3 +98,4 @@ python3 scripts/security_scan.py --fail-on-high
 - 自动降级：买入池个股分数连续 5 分钟 < 65 自动降至重点池
 - 状态存储：SQLite `data/funnel_state.db`（首次启动可自动迁移旧 `data/funnel_state.json`）
 - 日K缓存：SQLite `data/market_kline.db`（每日15:20后自动调度一次，缓存主板股票最近30交易日日K）
+- 公告LLM打分：读取环境变量 `OPENAI_API_KEY`；无Key或模型调用失败时自动回退规则评分

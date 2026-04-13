@@ -3,19 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>漏斗选股系统</title>
+  <title>公告选股系统</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>漏斗选股系统</h1>
+      <h1>公告选股系统</h1>
       <p id="meta">加载中...</p>
     </div>
     <div class="actions">
-      <button id="btnEod">盘后筛选</button>
-      <button id="btnRefresh">立即刷新</button>
-      <button id="btnGotoNotice">公告选股</button>
+      <button id="btnRunNotice">公告筛选</button>
+      <button id="btnRefreshNotice">刷新</button>
+      <button id="btnGotoMain">返回漏斗页</button>
     </div>
   </header>
 
@@ -26,31 +26,18 @@
         <div id="statusBar" class="status-bar">就绪</div>
       </section>
 
-      <section class="panel card">
-        <h2>热门概念大盘</h2>
-        <div id="hotConcepts" class="hot-list"></div>
-      </section>
-
       <section class="funnel-area">
-        <div class="filter-line">
-          <span>概念筛选：</span>
-          <span id="activeConcept" class="chip muted">全部</span>
-          <button id="clearConcept" class="text-btn">清除</button>
-        </div>
-
         <div class="funnel-grid">
           <div class="pool-column">
-            <div class="pool-header">调整期候选池 <span id="count-candidate">0</span></div>
+            <div class="pool-header">公告候选池 <span id="count-candidate">0</span></div>
             <div id="pool-candidate" class="pool-list"></div>
           </div>
-
           <div class="pool-column">
-            <div class="pool-header">重点关注池 <span id="count-focus">0</span></div>
+            <div class="pool-header">公告重点池 <span id="count-focus">0</span></div>
             <div id="pool-focus" class="pool-list"></div>
           </div>
-
           <div class="pool-column">
-            <div class="pool-header">买入池 <span id="count-buy">0</span></div>
+            <div class="pool-header">公告买入池 <span id="count-buy">0</span></div>
             <div id="pool-buy" class="pool-list"></div>
           </div>
         </div>
@@ -60,19 +47,10 @@
     <aside class="right-panel">
       <section class="panel card">
         <div class="panel-title-row">
-          <h2>历史同步</h2>
-          <button id="btnSyncKline">立即同步</button>
+          <h2>公告详情</h2>
+          <div id="noticeSummary" class="summary">点击左侧股票查看</div>
         </div>
-        <div id="syncSummary" class="summary">加载中...</div>
-        <div class="sync-progress-wrap">
-          <div id="syncProgressBar" class="sync-progress-bar"></div>
-        </div>
-        <div id="syncLogs" class="sync-logs"></div>
-      </section>
-
-      <section class="panel card">
-        <h2>热门个股 Top10</h2>
-        <div id="hotStocks" class="hot-stock-list"></div>
+        <div id="noticeDetail" class="detail-empty">暂无详情</div>
       </section>
 
       <section class="panel card">
@@ -86,6 +64,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/notice.js"></script>
 </body>
 </html>

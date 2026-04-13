@@ -513,6 +513,9 @@ async function init() {
     await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
     await reload();
   };
+  document.getElementById('btnGotoNotice').onclick = () => {
+    window.location.href = '/notice';
+  };
 
   document.getElementById('btnEod').onclick = async () => {
     const btn = document.getElementById('btnEod');
