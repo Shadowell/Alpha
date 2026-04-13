@@ -16,8 +16,52 @@ class AkshareDataProvider:
     concept_snapshot_cache: tuple[datetime, pd.DataFrame] | None = None
     realtime_snapshot_cache: tuple[datetime, pd.DataFrame] | None = None
     hot_stocks_cache: tuple[datetime, pd.DataFrame] | None = None
+    symbol_name_cache: tuple[datetime, dict[str, str]] | None = None
 
     def get_realtime_snapshot(
+        self,
+        retries: int = 2,
+        retry_wait_seconds: float = 1.0,
+        cache_ttl_seconds: int = 300,
+    ) -> pd.DataFrame:
+        return self.get_snapshot_em(
+            retries=retries,
+            retry_wait_seconds=retry_wait_seconds,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
+
+    def _normalize_snapshot(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        code_col = "代码" if "代码" in df.columns else ("symbol" if "symbol" in df.columns else None)
+        name_col = "名称" if "名称" in df.columns else ("name" if "name" in df.columns else None)
+        if code_col is None or name_col is None:
+            return pd.DataFrame()
+
+        payload = pd.DataFrame()
+        payload["代码"] = df[code_col].apply(normalize_symbol)
+        payload["名称"] = df[name_col].astype(str)
+        payload["最新价"] = pd.to_numeric(df["最新价"], errors="coerce").fillna(0.0) if "最新价" in df.columns else 0.0
+        payload["涨跌额"] = pd.to_numeric(df["涨跌额"], errors="coerce").fillna(0.0) if "涨跌额" in df.columns else 0.0
+        payload["涨跌幅"] = pd.to_numeric(df["涨跌幅"], errors="coerce").fillna(0.0) if "涨跌幅" in df.columns else 0.0
+        payload["昨收"] = pd.to_numeric(df["昨收"], errors="coerce").fillna(0.0) if "昨收" in df.columns else 0.0
+        payload["今开"] = pd.to_numeric(df["今开"], errors="coerce").fillna(payload["昨收"]) if "今开" in df.columns else 0.0
+        payload["最高"] = pd.to_numeric(df["最高"], errors="coerce").fillna(payload["最新价"]) if "最高" in df.columns else payload[
+            "最新价"
+        ]
+        payload["最低"] = pd.to_numeric(df["最低"], errors="coerce").fillna(payload["最新价"]) if "最低" in df.columns else payload[
+            "最新价"
+        ]
+        payload["成交量"] = pd.to_numeric(df["成交量"], errors="coerce").fillna(0.0) if "成交量" in df.columns else 0.0
+        payload["成交额"] = pd.to_numeric(df["成交额"], errors="coerce").fillna(0.0) if "成交额" in df.columns else 0.0
+        if "总市值" in df.columns:
+            payload["总市值"] = pd.to_numeric(df["总市值"], errors="coerce")
+        else:
+            payload["总市值"] = pd.NA
+        return payload.reset_index(drop=True)
+
+    def get_snapshot_em(
         self,
         retries: int = 2,
         retry_wait_seconds: float = 1.0,
@@ -27,8 +71,8 @@ class AkshareDataProvider:
         for idx in range(retries + 1):
             try:
                 df = ak.stock_zh_a_spot_em()
-                if df is not None and not df.empty:
-                    payload = df.copy()
+                payload = self._normalize_snapshot(df)
+                if not payload.empty:
                     self.realtime_snapshot_cache = (datetime.now(), payload)
                     return payload
             except Exception as exc:
@@ -45,6 +89,35 @@ class AkshareDataProvider:
 
         if last_exc is not None:
             print(f"[data_provider] get_realtime_snapshot failed: {last_exc}")
+        return pd.DataFrame()
+
+    def get_snapshot_spot(
+        self,
+        retries: int = 1,
+        retry_wait_seconds: float = 1.0,
+        cache_ttl_seconds: int = 300,
+    ) -> pd.DataFrame:
+        last_exc: Exception | None = None
+        for idx in range(retries + 1):
+            try:
+                df = ak.stock_zh_a_spot()
+                payload = self._normalize_snapshot(df)
+                if not payload.empty:
+                    self.realtime_snapshot_cache = (datetime.now(), payload.copy())
+                    return payload
+            except Exception as exc:
+                last_exc = exc
+                if idx < retries:
+                    time.sleep(retry_wait_seconds * (idx + 1))
+
+        if self.realtime_snapshot_cache is not None:
+            ts, cached = self.realtime_snapshot_cache
+            age = (datetime.now() - ts).total_seconds()
+            if age <= cache_ttl_seconds:
+                print("[data_provider] stock_zh_a_spot fallback to cached data")
+                return cached.copy()
+        if last_exc is not None:
+            print(f"[data_provider] get_snapshot_spot failed: {last_exc}")
         return pd.DataFrame()
 
     def get_trade_days(self) -> pd.DataFrame:
@@ -211,6 +284,31 @@ class AkshareDataProvider:
         if last_exc is not None:
             print(f"[data_provider] get_hot_stocks failed: {last_exc}")
         return pd.DataFrame(columns=["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"])
+
+    def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
+        now = datetime.now()
+        if self.symbol_name_cache is not None:
+            ts, payload = self.symbol_name_cache
+            if (now - ts).total_seconds() <= cache_ttl_seconds:
+                return dict(payload)
+
+        try:
+            df = ak.stock_info_a_code_name()
+            if df is not None and not df.empty and {"code", "name"}.issubset(set(df.columns)):
+                mapping = {
+                    normalize_symbol(code): str(name)
+                    for code, name in zip(df["code"].tolist(), df["name"].tolist())
+                    if str(code).strip()
+                }
+                self.symbol_name_cache = (now, mapping)
+                return mapping
+        except Exception as exc:
+            print(f"[data_provider] get_symbol_name_map failed: {exc}")
+
+        if self.symbol_name_cache is not None:
+            _, payload = self.symbol_name_cache
+            return dict(payload)
+        return {}
 
 
 

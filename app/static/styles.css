@@ -9,7 +9,7 @@
   --muted: #94a3b8;
   --brand: #22d3ee;
   --up: #ef4444;
-  --down: #3b82f6;
+  --down: #16a34a;
   --focus: #f59e0b;
   --buy: #22c55e;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
@@ -222,6 +222,14 @@ button:disabled {
   color: var(--down);
 }
 
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
 .tags {
   display: flex;
   gap: 6px;
@@ -329,6 +337,11 @@ button:disabled {
   align-items: center;
 }
 
+.hot-stock-item.active {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.2);
+}
+
 .hot-stock-main {
   display: flex;
   align-items: center;
@@ -378,6 +391,47 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.status-bar {
+  font-size: 12px;
+  color: #dbeafe;
+  background: rgba(30, 64, 175, 0.22);
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.sync-progress-wrap {
+  margin-top: 8px;
+  height: 8px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sync-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #22c55e, #86efac);
+  transition: width 0.2s ease;
+}
+
+.sync-logs {
+  margin-top: 10px;
+  max-height: 160px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.sync-log-item {
+  border: 1px solid var(--line);
+  background: rgba(15, 27, 45, 0.72);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #c7d2fe;
 }
 
 .kline-chart {

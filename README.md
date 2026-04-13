@@ -52,6 +52,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 18888 --reload
 - `POST /api/pool/move`
 - `POST /api/score/recompute`
 - `POST /api/jobs/eod-screen`
+- `GET /api/jobs/kline-cache/progress`
+- `GET /api/jobs/kline-cache/logs?page=1&page_size=20`
+- `GET /api/jobs/kline-cache/logs/{task_id}`
+- `GET /api/strategy/profile`
 - `WS /ws/realtime`
 
 ## 测试

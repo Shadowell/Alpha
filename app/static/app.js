@@ -2,7 +2,11 @@ const state = {
   funnel: null,
   hotConcepts: null,
   hotStocks: null,
+  syncStatus: null,
+  syncLogs: null,
+  strategyProfile: null,
   selectedSymbol: null,
+  selectedHotSymbol: null,
   selectedConcept: null,
   chart: null,
 };
@@ -19,6 +23,22 @@ function setMeta() {
     return;
   }
   meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+}
+
+function setStatus(text, tone = 'info') {
+  const el = document.getElementById('statusBar');
+  if (!el) return;
+  el.textContent = text;
+  if (tone === 'error') {
+    el.style.background = 'rgba(127, 29, 29, 0.25)';
+    el.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+  } else if (tone === 'success') {
+    el.style.background = 'rgba(20, 83, 45, 0.25)';
+    el.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+  } else {
+    el.style.background = 'rgba(30, 64, 175, 0.22)';
+    el.style.borderColor = 'rgba(59, 130, 246, 0.45)';
+  }
 }
 
 async function request(path, options = {}) {
@@ -150,6 +170,9 @@ function renderHotConcepts() {
 
   const items = state.hotConcepts?.items || [];
   items.forEach((item) => {
+    const rise = Number(item.change_pct || 0) >= 0;
+    const cls = rise ? 'up' : 'down';
+    const sign = rise ? '+' : '';
     const div = document.createElement('div');
     div.className = `hot-item ${state.selectedConcept === item.name ? 'active' : ''}`;
     div.onclick = () => {
@@ -161,7 +184,7 @@ function renderHotConcepts() {
     div.innerHTML = `
       <div class="hot-title">
         <span>${item.name}</span>
-        <span>${fmtNum(item.change_pct, 2)}%</span>
+        <span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span>
       </div>
       <div class="hot-meta">热度 ${fmtNum(item.heat, 3)} · 涨停 ${item.limit_up_count} · 上涨 ${item.up_count} / 下跌 ${item.down_count}</div>
       <div class="hot-meta">领涨 ${item.leader || '-'} · 入选 ${item.selected_count}</div>
@@ -183,7 +206,8 @@ function renderHotStocks() {
     const cls = Number(item.change_pct || 0) >= 0 ? 'up' : 'down';
     const sign = Number(item.change_pct || 0) >= 0 ? '+' : '';
     const card = document.createElement('div');
-    card.className = 'hot-stock-item';
+    card.className = `hot-stock-item ${state.selectedHotSymbol === item.symbol ? 'active' : ''}`;
+    card.onclick = () => selectHotStock(item);
     card.innerHTML = `
       <div class="hot-stock-main">
         <div class="hot-stock-rank">#${item.rank}</div>
@@ -199,6 +223,31 @@ function renderHotStocks() {
 
   if (!items.length) {
     root.innerHTML = '<div class="detail-empty">暂无热门个股数据</div>';
+  }
+}
+
+function renderSyncPanel() {
+  const summary = document.getElementById('syncSummary');
+  const bar = document.getElementById('syncProgressBar');
+  const logsRoot = document.getElementById('syncLogs');
+  const sync = state.syncStatus || {};
+  const status = sync.status || 'idle';
+  const synced = Number(sync.synced_symbols || 0);
+  const total = Number(sync.total_symbols || 0);
+  const pct = Number(sync.progress_pct || 0);
+  summary.textContent = `状态:${status} · 进度:${synced}/${total} (${pct.toFixed(2)}%) · 最近:${sync.updated_at || '-'}`;
+  bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+
+  const logs = state.syncLogs?.items || [];
+  logsRoot.innerHTML = '';
+  logs.slice(0, 8).forEach((item) => {
+    const div = document.createElement('div');
+    div.className = 'sync-log-item';
+    div.textContent = `[${item.status}] ${item.trade_date} ${item.synced_symbols}/${item.total_symbols} (${item.trigger_mode}) ${item.message || ''}`;
+    logsRoot.appendChild(div);
+  });
+  if (!logs.length) {
+    logsRoot.innerHTML = '<div class="detail-empty">暂无同步日志</div>';
   }
 }
 
@@ -320,9 +369,9 @@ function renderKlineChart(detail) {
           data: candleData,
           itemStyle: {
             color: '#ef4444',
-            color0: '#2563eb',
+            color0: '#16a34a',
             borderColor: '#ef4444',
-            borderColor0: '#2563eb',
+            borderColor0: '#16a34a',
           },
         },
         {
@@ -332,7 +381,7 @@ function renderKlineChart(detail) {
           yAxisIndex: 1,
           data: volumeData,
           itemStyle: {
-            color: (params) => (params.data[2] > 0 ? '#ef4444' : '#2563eb'),
+            color: (params) => (params.data[2] > 0 ? '#ef4444' : '#16a34a'),
           },
         },
       ],
@@ -354,9 +403,19 @@ function renderStockSummary(detail) {
   root.textContent = `${detail.name}(${detail.symbol})  现价:${price}  涨跌:${pct}%  放量比:${volumeRatio}  突破位:${breakout}`;
 }
 
+function renderStockSummaryLite(item, klinePayload) {
+  const root = document.getElementById('stockSummary');
+  const latest = Number(item.latest_price || 0);
+  const pct = Number(item.change_pct || 0);
+  const cnt = Number(klinePayload?.count || 0);
+  root.textContent = `${item.name}(${item.symbol})  现价:${fmtNum(latest, 2)}  涨跌:${fmtNum(pct, 2)}%  K线:${cnt}日`;
+}
+
 async function selectSymbol(symbol) {
   state.selectedSymbol = symbol;
+  state.selectedHotSymbol = null;
   renderFunnel();
+  renderHotStocks();
   renderStockSummary(null);
   renderChartPlaceholder('加载中...');
 
@@ -370,19 +429,44 @@ async function selectSymbol(symbol) {
   }
 }
 
+async function selectHotStock(item) {
+  state.selectedHotSymbol = item.symbol;
+  renderHotStocks();
+  renderChartPlaceholder('加载中...');
+  try {
+    const payload = await request(`/api/kline/${item.symbol}?days=30`);
+    renderStockSummaryLite(item, payload);
+    renderKlineChart({ kline: payload.items || [] });
+    setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
+  } catch (err) {
+    renderChartPlaceholder(`加载失败: ${err.message}`);
+    setStatus(`热门个股加载失败: ${err.message}`, 'error');
+  }
+}
+
 async function reload() {
-  const [funnel, hotConcepts, hotStocks] = await Promise.all([
+  const [funnelRes, hotConceptsRes, hotStocksRes, syncRes, logsRes, strategyRes] = await Promise.allSettled([
     request('/api/funnel'),
     request('/api/market/hot-concepts'),
     request('/api/market/hot-stocks'),
+    request('/api/jobs/kline-cache/progress'),
+    request('/api/jobs/kline-cache/logs?page=1&page_size=20'),
+    request('/api/strategy/profile'),
   ]);
-  state.funnel = funnel;
-  state.hotConcepts = hotConcepts;
-  state.hotStocks = hotStocks;
+  if (funnelRes.status === 'fulfilled') state.funnel = funnelRes.value;
+  if (hotConceptsRes.status === 'fulfilled') state.hotConcepts = hotConceptsRes.value;
+  if (hotStocksRes.status === 'fulfilled') state.hotStocks = hotStocksRes.value;
+  if (syncRes.status === 'fulfilled') state.syncStatus = syncRes.value;
+  if (logsRes.status === 'fulfilled') state.syncLogs = logsRes.value;
+  if (strategyRes.status === 'fulfilled') state.strategyProfile = strategyRes.value;
 
   renderHotConcepts();
   renderHotStocks();
   renderFunnel();
+  renderSyncPanel();
+  if (state.strategyProfile?.name) {
+    setStatus(`策略模板: ${state.strategyProfile.name}`, 'info');
+  }
 
   if (state.selectedSymbol) {
     const found = ['candidate', 'focus', 'buy']
@@ -435,14 +519,37 @@ async function init() {
     btn.disabled = true;
     const oldText = btn.textContent;
     btn.textContent = '执行中...';
+    setStatus('盘后筛选执行中...', 'info');
     try {
-      await request('/api/jobs/eod-screen', { method: 'POST' });
+      const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
       await reload();
-      alert('盘后筛选完成');
+      setStatus(
+        `盘后筛选完成: 候选${payload.candidate_count || 0}只 · 来源${payload.source_used || '-'} · ${payload.elapsed_ms || 0}ms`,
+        'success',
+      );
     } catch (err) {
-      alert(`盘后筛选失败: ${err.message}`);
+      setStatus(`盘后筛选失败: ${err.message}`, 'error');
     } finally {
       btn.textContent = oldText;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnSyncKline').onclick = async () => {
+    const btn = document.getElementById('btnSyncKline');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '同步中...';
+    setStatus('历史数据同步执行中...', 'info');
+    try {
+      const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual', { method: 'POST' });
+      setStatus(`历史同步完成: ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
+      await reload();
+    } catch (err) {
+      setStatus(`历史同步失败: ${err.message}`, 'error');
+      await reload();
+    } finally {
+      btn.textContent = old;
       btn.disabled = false;
     }
   };
@@ -455,6 +562,19 @@ async function init() {
 
   await reload();
   connectWs();
+  setInterval(async () => {
+    try {
+      const [sync, logs] = await Promise.all([
+        request('/api/jobs/kline-cache/progress'),
+        request('/api/jobs/kline-cache/logs?page=1&page_size=20'),
+      ]);
+      state.syncStatus = sync;
+      state.syncLogs = logs;
+      renderSyncPanel();
+    } catch (_) {
+      // ignore periodic poll error
+    }
+  }, 8000);
 }
 
 init().catch((err) => {

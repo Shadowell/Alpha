@@ -19,6 +19,12 @@ class FakeProvider:
             }
         )
 
+    def get_symbol_name_map(self, cache_ttl_seconds=3600):
+        return {"000001": "平安银行", "600111": "北方稀土", "300001": "创业测试"}
+
+    def get_snapshot_spot(self, **kwargs):
+        return pd.DataFrame()
+
     def get_hist(self, symbol, start_date, end_date, adjust="qfq"):
         dates = pd.bdate_range("2026-03-01", "2026-04-10").date.astype(str)
         return pd.DataFrame(
@@ -48,4 +54,13 @@ def test_kline_cache_service_sync_trade_date(tmp_path):
     status = service.get_sync_state()
     assert status["status"] == "success"
     assert status["last_success_trade_date"] == "2026-04-09"
+    assert status["total_symbols"] >= 2
+    assert status["synced_symbols"] >= 2
+    assert status["task_id"] is not None
 
+    logs = service.list_sync_logs(page=1, page_size=10)
+    assert logs["total"] >= 1
+    task_id = logs["items"][0]["task_id"]
+    detail = service.get_sync_log_detail(task_id)
+    assert detail is not None
+    assert detail["task"]["task_id"] == task_id

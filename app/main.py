@@ -14,6 +14,8 @@ from app.services.data_provider import AkshareDataProvider
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
 from app.services.realtime import RealtimeHub
+from app.services.strategy_engine import get_last_n_trade_window
+from app.services.time_utils import now_cn
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -138,16 +140,16 @@ async def recompute(req: RecomputeRequest):
 @app.post("/api/jobs/eod-screen")
 async def run_eod_screen(trade_date: str | None = None):
     try:
-        count = await service.run_eod_screen(trade_date)
+        result = await service.run_eod_screen(trade_date)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"盘后筛选执行失败: {exc}")
     await _broadcast_snapshot()
-    return {"success": True, "candidate_count": count}
+    return {"success": True, **result}
 
 
 @app.post("/api/jobs/kline-cache/sync")
-async def run_kline_cache_sync(trade_date: str | None = None, force: bool = False):
-    payload = await kline_cache_service.sync_trade_date(trade_date=trade_date, force=force)
+async def run_kline_cache_sync(trade_date: str | None = None, force: bool = False, trigger_mode: str = "manual"):
+    payload = await kline_cache_service.sync_trade_date(trade_date=trade_date, force=force, trigger_mode=trigger_mode)
     if not payload.get("success"):
         raise HTTPException(status_code=503, detail=payload.get("message", "同步失败"))
     return payload
@@ -158,15 +160,58 @@ async def get_kline_cache_status():
     return kline_cache_service.get_sync_state()
 
 
+@app.get("/api/jobs/kline-cache/progress")
+async def get_kline_cache_progress():
+    return kline_cache_service.get_sync_progress()
+
+
+@app.get("/api/jobs/kline-cache/logs")
+async def get_kline_cache_logs(page: int = 1, page_size: int = 20):
+    return kline_cache_service.list_sync_logs(page=page, page_size=page_size)
+
+
+@app.get("/api/jobs/kline-cache/logs/{task_id}")
+async def get_kline_cache_log_detail(task_id: str):
+    payload = kline_cache_service.get_sync_log_detail(task_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return payload
+
+
 @app.get("/api/kline/{symbol}")
 async def get_cached_kline(symbol: str, days: int = 30):
     items = kline_cache_service.get_kline(symbol=symbol, days=days)
+    if not items:
+        trade_days = provider.get_trade_days()
+        try:
+            start_date, end_date = get_last_n_trade_window(trade_days, now_cn().date().isoformat(), max(10, min(days, 180)))
+            hist = provider.get_hist(symbol=symbol, start_date=start_date, end_date=end_date)
+        except Exception:
+            hist = None
+        if hist is not None and not hist.empty:
+            for _, row in hist.tail(max(1, min(days, 365))).iterrows():
+                items.append(
+                    {
+                        "date": str(row.get("日期", "")),
+                        "open": float(row.get("开盘", 0)),
+                        "high": float(row.get("最高", 0)),
+                        "low": float(row.get("最低", 0)),
+                        "close": float(row.get("收盘", 0)),
+                        "volume": float(row.get("成交量", 0)),
+                        "amount": float(row.get("成交额", 0)),
+                    }
+                )
     return {
         "symbol": symbol,
         "days": max(1, min(days, 365)),
         "count": len(items),
         "items": items,
     }
+
+
+@app.get("/api/strategy/profile")
+async def get_strategy_profile():
+    return await service.get_strategy_profile()
 
 
 @app.websocket("/ws/realtime")

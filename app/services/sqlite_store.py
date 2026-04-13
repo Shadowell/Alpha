@@ -30,6 +30,17 @@ class SQLiteStateStore:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                config_json TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
     def load_state(self) -> dict[str, Any] | None:
@@ -74,6 +85,37 @@ class SQLiteStateStore:
                 ),
             )
             conn.commit()
+
+    def get_active_strategy_profile(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute(
+                "SELECT id, name, config_json, updated_at FROM strategy_profiles WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": int(row["id"]),
+                "name": row["name"],
+                "config": self._loads_json(row["config_json"], default={}),
+                "updated_at": row["updated_at"],
+            }
+
+    def upsert_single_active_strategy_profile(self, name: str, config: dict[str, Any], updated_at: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute("UPDATE strategy_profiles SET is_active = 0 WHERE is_active = 1")
+            conn.execute(
+                """
+                INSERT INTO strategy_profiles(name, config_json, is_active, updated_at)
+                VALUES (?, ?, 1, ?)
+                """,
+                (name, self._dumps_json(config), updated_at),
+            )
+            conn.commit()
+
+        active = self.get_active_strategy_profile()
+        return active if active is not None else {"id": 0, "name": name, "config": config, "updated_at": updated_at}
 
     @staticmethod
     def _dumps_json(value: Any) -> str:

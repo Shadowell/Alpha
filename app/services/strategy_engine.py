@@ -48,10 +48,12 @@ def prefilter_universe(snapshot: pd.DataFrame, config: StrategyConfig) -> list[d
             continue
 
         price = to_float(row.get("最新价"))
-        market_cap = to_float(row.get("总市值"))
+        market_cap_raw = row.get("总市值")
+        market_cap = to_float(market_cap_raw, default=-1)
         if price <= config.close_price_threshold:
             continue
-        if market_cap <= config.market_capital_low_threshold or market_cap > config.market_capital_up_threshold:
+        has_market_cap = market_cap_raw is not None and str(market_cap_raw).strip() not in {"", "nan", "NaN", "<NA>"}
+        if has_market_cap and (market_cap <= config.market_capital_low_threshold or market_cap > config.market_capital_up_threshold):
             continue
 
         result.append(
@@ -85,50 +87,70 @@ def analyze_adjustment_candidate(
     opens = recent["开盘"].astype(float)
     volumes = recent["成交量"].astype(float)
     amounts = recent["成交额"].astype(float) if "成交额" in recent.columns else volumes * closes
-    pct_chg = recent["涨跌幅"].astype(float)
 
     hhv20 = float(highs.max())
     llv20 = float(lows.min())
     close = float(closes.iloc[-1])
     open_ = float(opens.iloc[-1])
 
+    # K线+成交量单策略（平衡档）
     box_range = (hhv20 - llv20) / max(llv20, 0.01)
+    amp5 = ((highs.tail(5) - lows.tail(5)) / lows.tail(5).replace(0, 0.01)).fillna(0.0)
+    amp20 = ((highs - lows) / lows.replace(0, 0.01)).fillna(0.0)
+    amp_ratio = float(amp5.mean() / max(float(amp20.mean()), 0.001))
+
     vol_ma5 = float(volumes.tail(5).mean())
+    vol_ma10 = float(volumes.tail(10).mean())
     vol_ma20 = float(volumes.mean())
     avg_amount20 = float(amounts.mean())
     vol_shrink_ratio = vol_ma5 / max(vol_ma20, 1)
+    vol_recover_ratio = vol_ma5 / max(vol_ma10, 1)
 
-    has_limit_up_recently = bool((pct_chg >= config.pct_chg_limit_up_threshold).any())
     not_breakout = close <= hhv20 * config.pre_breakout_buffer
     close_ge_open = close >= open_
+    shadow_support = float(min(open_, close) - float(lows.iloc[-1])) / max(close, 0.01)
+
+    last_ret = (close / max(float(closes.iloc[-2]), 0.01)) - 1 if len(closes) >= 2 else 0.0
+    last_vol_ratio = float(volumes.iloc[-1]) / max(vol_ma20, 1)
+    chase_risk = bool(last_ret >= 0.07 and last_vol_ratio >= 2.3)
 
     pass_rules = (
-        (not has_limit_up_recently)
-        and box_range <= config.box_range_threshold
+        box_range <= config.box_range_threshold
+        and amp_ratio <= 0.95
         and vol_shrink_ratio <= config.volume_shrink_threshold
+        and vol_recover_ratio >= 0.85
         and not_breakout
         and close_ge_open
+        and shadow_support >= 0.005
+        and (not chase_risk)
     )
 
     reasons = []
-    if not has_limit_up_recently:
-        reasons.append("近20日无涨停")
     if box_range <= config.box_range_threshold:
-        reasons.append("箱体收敛")
+        reasons.append("缩量横盘收敛")
+    if amp_ratio <= 0.95:
+        reasons.append("近5日振幅收敛")
     if vol_shrink_ratio <= config.volume_shrink_threshold:
-        reasons.append("成交量收缩")
+        reasons.append("成交量低于中期均量")
+    if vol_recover_ratio >= 0.85:
+        reasons.append("量能出现温和恢复")
+    if close_ge_open and shadow_support >= 0.005:
+        reasons.append("止跌企稳，下影承接")
     if not_breakout:
-        reasons.append("尚未突破前高")
-    if close_ge_open:
-        reasons.append("收盘不弱")
+        reasons.append("临近前高但未突破")
+    if chase_risk:
+        reasons.append("末端爆量长阳，追高风险")
 
     metrics = {
         "box_range": box_range,
+        "amp_ratio": amp_ratio,
         "vol_shrink_ratio": vol_shrink_ratio,
+        "vol_recover_ratio": vol_recover_ratio,
         "breakout_level": hhv20,
         "avg_amount20": avg_amount20,
         "close": close,
         "open": open_,
+        "chase_risk": chase_risk,
     }
     return pass_rules, reasons, metrics
 
