@@ -227,6 +227,165 @@ class KlineCacheService:
             "synced_symbols": success_count + failed_count,
         }
 
+    async def incremental_sync(
+        self,
+        trade_date: str | None = None,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        """增量同步：只同步指定交易日（默认当天）的 K 线数据。"""
+        if self._syncing:
+            return {"success": False, "message": "同步任务正在执行中", "trade_date": trade_date or "", "symbol_count": 0}
+        self._syncing = True
+        try:
+            return await self._do_incremental_sync(trade_date=trade_date, trigger_mode=trigger_mode)
+        finally:
+            self._syncing = False
+
+    async def _do_incremental_sync(
+        self,
+        trade_date: str | None = None,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        if not target_trade_date:
+            return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
+
+        td_fmt = target_trade_date.replace("-", "")
+
+        state = self.store.get_sync_state()
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=0,
+            total_symbols=0,
+            synced_symbols=0,
+            success_symbols=0,
+            failed_symbols=0,
+            task_id=None,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message=f"增量同步 {target_trade_date}",
+        )
+
+        symbols = await self._load_symbol_list()
+        if not symbols:
+            self.store.set_sync_state(
+                attempt_trade_date=target_trade_date,
+                success_trade_date=state.get("last_success_trade_date"),
+                status="failed",
+                symbol_count=0,
+                total_symbols=0,
+                synced_symbols=0,
+                success_symbols=0,
+                failed_symbols=0,
+                task_id=None,
+                trigger_mode=trigger_mode,
+                updated_at=now_cn().isoformat(),
+                message="股票列表为空",
+            )
+            return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
+
+        task_id = uuid.uuid4().hex
+        started_at = now_cn().isoformat()
+        total = len(symbols)
+        self.store.start_sync_task(
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            trade_date=target_trade_date,
+            total_symbols=total,
+            started_at=started_at,
+        )
+        completed = 0
+        success_count = 0
+        failed_count = 0
+        now_iso = now_cn().isoformat()
+        for idx, symbol in enumerate(symbols):
+            start_symbol = pytime.time()
+            hist = await self.provider.get_hist(symbol, td_fmt, td_fmt)
+            rows = self._normalize_hist(hist)
+            if rows:
+                self.store.upsert_symbol_klines(symbol, rows, now_iso)
+                completed += 1
+                success_count += 1
+                self.store.add_sync_task_detail(
+                    task_id=task_id,
+                    symbol=symbol,
+                    status="success",
+                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
+                    error_message="",
+                    created_at=now_cn().isoformat(),
+                )
+            else:
+                failed_count += 1
+                self.store.add_sync_task_detail(
+                    task_id=task_id,
+                    symbol=symbol,
+                    status="failed",
+                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
+                    error_message="当日数据为空",
+                    created_at=now_cn().isoformat(),
+                )
+
+            synced = success_count + failed_count
+            if synced % 20 == 0 or synced == total:
+                self.store.update_sync_task_progress(
+                    task_id=task_id,
+                    synced_symbols=synced,
+                    success_symbols=success_count,
+                    failed_symbols=failed_count,
+                    message=f"增量同步 {synced}/{total}",
+                )
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
+                self.store.set_sync_state(
+                    attempt_trade_date=target_trade_date,
+                    success_trade_date=state.get("last_success_trade_date"),
+                    status="running",
+                    symbol_count=completed,
+                    total_symbols=total,
+                    synced_symbols=synced,
+                    success_symbols=success_count,
+                    failed_symbols=failed_count,
+                    task_id=task_id,
+                    trigger_mode=trigger_mode,
+                    updated_at=now_cn().isoformat(),
+                    message=f"增量同步 {synced}/{total}",
+                )
+
+        final_status = "success" if completed > 0 else "failed"
+        final_msg = f"增量同步完成 {target_trade_date}" if completed > 0 else f"增量同步失败 {target_trade_date}"
+        self.store.finish_sync_task(
+            task_id=task_id,
+            status=final_status,
+            finished_at=now_cn().isoformat(),
+            message=final_msg,
+        )
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=target_trade_date if completed > 0 else state.get("last_success_trade_date"),
+            status=final_status,
+            symbol_count=completed,
+            total_symbols=total,
+            synced_symbols=success_count + failed_count,
+            success_symbols=success_count,
+            failed_symbols=failed_count,
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message=final_msg,
+        )
+        return {
+            "success": completed > 0,
+            "message": final_msg,
+            "trade_date": target_trade_date,
+            "symbol_count": completed,
+            "task_id": task_id,
+            "total_symbols": total,
+            "synced_symbols": success_count + failed_count,
+            "mode": "incremental",
+        }
+
     def get_kline(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         clean_symbol = str(symbol).strip()
         return self.store.get_kline(clean_symbol, days)

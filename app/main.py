@@ -232,6 +232,14 @@ async def run_kline_cache_sync(trade_date: str | None = None, force: bool = Fals
     return payload
 
 
+@app.post("/api/jobs/kline-cache/incremental-sync")
+async def run_kline_incremental_sync(trade_date: str | None = None, trigger_mode: str = "manual"):
+    payload = await kline_cache_service.incremental_sync(trade_date=trade_date, trigger_mode=trigger_mode)
+    if not payload.get("success"):
+        raise HTTPException(status_code=503, detail=payload.get("message", "增量同步失败"))
+    return payload
+
+
 @app.get("/api/jobs/kline-cache/status")
 async def get_kline_cache_status():
     return kline_cache_service.get_sync_state()
