@@ -130,13 +130,19 @@ body {
 
 .actions { display: flex; gap: 8px; align-items: center; }
 
-.status-bar {
-  font-size: 11px; color: #dbeafe;
-  background: rgba(30, 64, 175, 0.18);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  border-radius: 8px; padding: 6px 12px;
-  max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* ── Toast ── */
+.toast {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-30px);
+  font-size: 13px; padding: 10px 22px; border-radius: 10px;
+  color: #e2e8f0; pointer-events: none; z-index: 9999;
+  opacity: 0; transition: opacity 0.25s, transform 0.25s;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
 }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast-info { background: rgba(30, 64, 175, 0.85); border: 1px solid rgba(59, 130, 246, 0.5); }
+.toast-success { background: rgba(20, 83, 45, 0.85); border: 1px solid rgba(34, 197, 94, 0.5); }
+.toast-error { background: rgba(127, 29, 29, 0.85); border: 1px solid rgba(239, 68, 68, 0.5); }
 
 button {
   border: 1px solid var(--line-strong);
