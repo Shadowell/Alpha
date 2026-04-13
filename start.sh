@@ -49,17 +49,33 @@ if [[ "${BASH_VERSION:-}" ]]; then
   set +m
 fi
 
+BOOT_PID=""
 if command -v setsid >/dev/null 2>&1; then
   setsid python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
+  BOOT_PID=$!
 else
   nohup python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
+  BOOT_PID=$!
 fi
 
-NEW_PID=$!
-disown "$NEW_PID" >/dev/null 2>&1 || true
+NEW_PID="$BOOT_PID"
+for _ in {1..20}; do
+  if command -v lsof >/dev/null 2>&1; then
+    PORT_PID="$(lsof -ti tcp:"$PORT" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$PORT_PID" ]] && is_running "$PORT_PID"; then
+      NEW_PID="$PORT_PID"
+      break
+    fi
+  fi
+  if is_running "$BOOT_PID"; then
+    NEW_PID="$BOOT_PID"
+  fi
+  sleep 0.5
+done
+
+disown "$BOOT_PID" >/dev/null 2>&1 || true
 echo "$NEW_PID" > "$PID_FILE"
 
-sleep 1
 if is_running "$NEW_PID"; then
   echo "启动成功: PID=$NEW_PID"
   echo "访问地址: http://127.0.0.1:$PORT"

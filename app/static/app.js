@@ -42,10 +42,15 @@ function setStatus(text, tone = 'info') {
 }
 
 async function request(path, options = {}) {
-  const resp = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  let resp;
+  try {
+    resp = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+  } catch (_) {
+    throw new Error('后端服务不可用(连接失败)，请确认服务已启动: ./start.sh');
+  }
   if (!resp.ok) {
     let message = '';
     try {
