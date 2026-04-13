@@ -88,9 +88,6 @@ function switchTab(tab) {
   if (tab === 'notice' && !state.noticeFunnel) {
     reloadNotice();
   }
-  if (tab === 'rules' && !state.rulesEngine) {
-    loadRulesEngine();
-  }
 }
 
 /* ==================== Funnel tab ==================== */
@@ -783,7 +780,17 @@ async function init() {
   };
 
   const urlTab = new URLSearchParams(window.location.search).get('tab');
-  if (urlTab === 'notice' || urlTab === 'rules') switchTab(urlTab);
+  if (urlTab === 'notice') switchTab('notice');
+
+  document.getElementById('ruleEngineToggle').onclick = () => {
+    const panel = document.getElementById('rulesEngine');
+    const arrow = document.querySelector('.rule-engine-arrow');
+    const isCollapsed = panel.classList.toggle('collapsed');
+    arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+    if (!isCollapsed && !state.rulesEngine) {
+      loadRulesEngine();
+    }
+  };
 
   await reload();
   connectWs();
