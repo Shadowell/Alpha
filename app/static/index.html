@@ -4,143 +4,156 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413f" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413g" />
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <h1>Alpha</h1>
-      <p id="meta">加载中...</p>
+  <!-- ========== 左侧导航栏 ========== -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">A</div>
     </div>
-    <div class="actions">
-      <button id="btnEod">盘后筛选</button>
-      <button id="btnRunNotice">公告筛选</button>
-      <button id="btnRefresh">立即刷新</button>
+    <div class="sidebar-nav">
+      <a class="sidebar-item active" data-tab="funnel" title="策略选股">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>策略选股</span>
+      </a>
+      <a class="sidebar-item" data-tab="notice" title="公告选股">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>公告选股</span>
+      </a>
+      <a class="sidebar-item" data-tab="rules" title="规则引擎">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span>规则引擎</span>
+      </a>
     </div>
-  </header>
+    <div class="sidebar-bottom">
+      <a class="sidebar-item" id="btnRefreshSidebar" title="刷新数据">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        <span>刷新</span>
+      </a>
+    </div>
+  </nav>
 
-  <main class="layout">
-    <section class="left-main">
-      <section class="panel card">
-        <h2>系统状态</h2>
+  <!-- ========== 主区域 ========== -->
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1 id="pageTitle">策略选股</h1>
+        <p id="meta">加载中...</p>
+      </div>
+      <div class="actions">
+        <button id="btnEod">盘后筛选</button>
+        <button id="btnRunNotice">公告筛选</button>
         <div id="statusBar" class="status-bar">就绪</div>
-      </section>
+      </div>
+    </header>
 
-      <nav class="tab-bar">
-        <button class="tab-btn active" data-tab="funnel">策略选股</button>
-        <button class="tab-btn" data-tab="notice">公告选股</button>
-      </nav>
+    <main class="layout">
+      <section class="center-main">
+        <!-- ========== 策略选股 ========== -->
+        <section id="tab-funnel" class="tab-content active">
+          <section class="panel card">
+            <h2>热门概念大盘</h2>
+            <div id="hotConcepts" class="hot-list"></div>
+          </section>
 
-      <!-- ========== 策略选股 Tab ========== -->
-      <section id="tab-funnel" class="tab-content active">
-        <section class="panel card">
-          <h2>热门概念大盘</h2>
-          <div id="hotConcepts" class="hot-list"></div>
+          <section class="funnel-area">
+            <div class="filter-line">
+              <span>概念筛选：</span>
+              <span id="activeConcept" class="chip muted">全部</span>
+              <button id="clearConcept" class="text-btn">清除</button>
+            </div>
+
+            <div class="funnel-grid">
+              <div class="pool-column">
+                <div class="pool-header">调整期候选池 <span id="count-candidate">0</span></div>
+                <div id="pool-candidate" class="pool-list"></div>
+              </div>
+              <div class="pool-column">
+                <div class="pool-header">重点关注池 <span id="count-focus">0</span></div>
+                <div id="pool-focus" class="pool-list"></div>
+              </div>
+              <div class="pool-column">
+                <div class="pool-header">买入池 <span id="count-buy">0</span></div>
+                <div id="pool-buy" class="pool-list"></div>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <section class="funnel-area">
-          <div class="filter-line">
-            <span>概念筛选：</span>
-            <span id="activeConcept" class="chip muted">全部</span>
-            <button id="clearConcept" class="text-btn">清除</button>
-          </div>
-
-          <div class="funnel-grid">
-            <div class="pool-column">
-              <div class="pool-header">调整期候选池 <span id="count-candidate">0</span></div>
-              <div id="pool-candidate" class="pool-list"></div>
+        <!-- ========== 公告选股 ========== -->
+        <section id="tab-notice" class="tab-content">
+          <section class="panel card">
+            <div class="panel-title-row">
+              <h2>公告概览</h2>
+              <div id="noticeMeta" class="summary">暂无数据</div>
             </div>
+          </section>
 
-            <div class="pool-column">
-              <div class="pool-header">重点关注池 <span id="count-focus">0</span></div>
-              <div id="pool-focus" class="pool-list"></div>
+          <section class="funnel-area">
+            <div class="funnel-grid">
+              <div class="pool-column">
+                <div class="pool-header">公告候选池 <span id="notice-count-candidate">0</span></div>
+                <div id="notice-pool-candidate" class="pool-list"></div>
+              </div>
+              <div class="pool-column">
+                <div class="pool-header">公告重点池 <span id="notice-count-focus">0</span></div>
+                <div id="notice-pool-focus" class="pool-list"></div>
+              </div>
+              <div class="pool-column">
+                <div class="pool-header">公告买入池 <span id="notice-count-buy">0</span></div>
+                <div id="notice-pool-buy" class="pool-list"></div>
+              </div>
             </div>
+          </section>
+        </section>
 
-            <div class="pool-column">
-              <div class="pool-header">买入池 <span id="count-buy">0</span></div>
-              <div id="pool-buy" class="pool-list"></div>
-            </div>
+        <!-- ========== 规则引擎 ========== -->
+        <section id="tab-rules" class="tab-content">
+          <div id="rulesEngine" class="rules-engine">
+            <div class="rules-loading">加载规则引擎配置...</div>
           </div>
         </section>
       </section>
 
-      <!-- ========== 公告选股 Tab ========== -->
-      <section id="tab-notice" class="tab-content">
+      <aside class="right-panel">
         <section class="panel card">
           <div class="panel-title-row">
-            <h2>公告漏斗</h2>
-            <div id="noticeMeta" class="summary">暂无数据</div>
+            <h2>历史同步</h2>
+            <button id="btnSyncKline">立即同步</button>
           </div>
+          <div id="syncSummary" class="summary">加载中...</div>
+          <div class="sync-progress-wrap">
+            <div id="syncProgressBar" class="sync-progress-bar"></div>
+          </div>
+          <div id="syncLogs" class="sync-logs"></div>
         </section>
 
-        <section class="funnel-area">
-          <div class="funnel-grid">
-            <div class="pool-column">
-              <div class="pool-header">公告候选池 <span id="notice-count-candidate">0</span></div>
-              <div id="notice-pool-candidate" class="pool-list"></div>
-            </div>
-            <div class="pool-column">
-              <div class="pool-header">公告重点池 <span id="notice-count-focus">0</span></div>
-              <div id="notice-pool-focus" class="pool-list"></div>
-            </div>
-            <div class="pool-column">
-              <div class="pool-header">公告买入池 <span id="notice-count-buy">0</span></div>
-              <div id="notice-pool-buy" class="pool-list"></div>
-            </div>
-          </div>
+        <section class="panel card">
+          <h2>热门个股 Top10</h2>
+          <div id="hotStocks" class="hot-stock-list"></div>
         </section>
-      </section>
-    </section>
 
-    <aside class="right-panel">
-      <!-- 规则引擎配置（可折叠） -->
-      <section class="panel card rule-engine-card">
-        <div class="panel-title-row rule-engine-toggle" id="ruleEngineToggle">
-          <h2>规则引擎</h2>
-          <span class="rule-engine-arrow">&#9660;</span>
-        </div>
-        <div id="rulesEngine" class="rules-engine collapsed">
-          <div class="rules-loading">点击展开加载配置...</div>
-        </div>
-      </section>
+        <section id="noticeDetailCard" class="panel card" style="display:none">
+          <div class="panel-title-row">
+            <h2>公告详情</h2>
+            <div id="noticeSummary" class="summary">点击左侧股票查看</div>
+          </div>
+          <div id="noticeDetail" class="detail-empty">暂无详情</div>
+        </section>
 
-      <section class="panel card">
-        <div class="panel-title-row">
-          <h2>历史同步</h2>
-          <button id="btnSyncKline">立即同步</button>
-        </div>
-        <div id="syncSummary" class="summary">加载中...</div>
-        <div class="sync-progress-wrap">
-          <div id="syncProgressBar" class="sync-progress-bar"></div>
-        </div>
-        <div id="syncLogs" class="sync-logs"></div>
-      </section>
-
-      <section class="panel card">
-        <h2>热门个股 Top10</h2>
-        <div id="hotStocks" class="hot-stock-list"></div>
-      </section>
-
-      <!-- 公告详情（仅公告 tab 时显示） -->
-      <section id="noticeDetailCard" class="panel card" style="display:none">
-        <div class="panel-title-row">
-          <h2>公告详情</h2>
-          <div id="noticeSummary" class="summary">点击左侧股票查看</div>
-        </div>
-        <div id="noticeDetail" class="detail-empty">暂无详情</div>
-      </section>
-
-      <section class="panel card">
-        <div class="panel-title-row">
-          <h2>日K + 成交量（30日）</h2>
-          <div id="stockSummary" class="summary">点击左侧股票查看</div>
-        </div>
-        <div id="klineChart" class="kline-chart"></div>
-      </section>
-    </aside>
-  </main>
+        <section class="panel card">
+          <div class="panel-title-row">
+            <h2>日K + 成交量（30日）</h2>
+            <div id="stockSummary" class="summary">点击左侧股票查看</div>
+          </div>
+          <div id="klineChart" class="kline-chart"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413f"></script>
+  <script src="/static/app.js?v=20260413g"></script>
 </body>
 </html>

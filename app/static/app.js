@@ -74,19 +74,25 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
+const TAB_TITLES = { funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
+
 function switchTab(tab) {
   state.activeTab = tab;
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
+  document.querySelectorAll('.sidebar-item[data-tab]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.tab === tab);
   });
   document.querySelectorAll('.tab-content').forEach((el) => {
     el.classList.toggle('active', el.id === `tab-${tab}`);
   });
   const noticeCard = document.getElementById('noticeDetailCard');
   noticeCard.style.display = tab === 'notice' ? '' : 'none';
+  document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
   if (tab === 'notice' && !state.noticeFunnel) {
     reloadNotice();
+  }
+  if (tab === 'rules' && !state.rulesEngine) {
+    loadRulesEngine();
   }
 }
 
@@ -699,17 +705,23 @@ function connectWs() {
 /* ==================== Init ==================== */
 
 async function init() {
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.onclick = () => switchTab(btn.dataset.tab);
+  document.querySelectorAll('.sidebar-item[data-tab]').forEach((el) => {
+    el.onclick = (e) => { e.preventDefault(); switchTab(el.dataset.tab); };
   });
 
-  document.getElementById('btnRefresh').onclick = async () => {
+  document.getElementById('btnRefreshSidebar').onclick = async (e) => {
+    e.preventDefault();
     if (state.activeTab === 'funnel') {
+      setStatus('刷新策略选股...', 'info');
       await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
       await reloadFunnel();
-    } else {
+      setStatus('策略选股已刷新', 'success');
+    } else if (state.activeTab === 'notice') {
       await reloadNotice();
       setStatus('已刷新公告池', 'success');
+    } else if (state.activeTab === 'rules') {
+      await loadRulesEngine();
+      setStatus('规则引擎配置已刷新', 'success');
     }
   };
 
@@ -780,17 +792,7 @@ async function init() {
   };
 
   const urlTab = new URLSearchParams(window.location.search).get('tab');
-  if (urlTab === 'notice') switchTab('notice');
-
-  document.getElementById('ruleEngineToggle').onclick = () => {
-    const panel = document.getElementById('rulesEngine');
-    const arrow = document.querySelector('.rule-engine-arrow');
-    const isCollapsed = panel.classList.toggle('collapsed');
-    arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
-    if (!isCollapsed && !state.rulesEngine) {
-      loadRulesEngine();
-    }
-  };
+  if (urlTab && TAB_TITLES[urlTab]) switchTab(urlTab);
 
   await reload();
   connectWs();
