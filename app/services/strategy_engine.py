@@ -19,7 +19,7 @@ def get_last_n_trade_window(trade_days_df: pd.DataFrame, base_date: str, n: int)
 
     days = trade_days_df.copy()
     days["trade_date"] = pd.to_datetime(days["trade_date"])
-    selected = days[days["trade_date"] < target].tail(n)["trade_date"].tolist()
+    selected = days[days["trade_date"] <= target].tail(n)["trade_date"].tolist()
     if len(selected) < n:
         raise ValueError("Not enough trade days to calculate lookback window")
 

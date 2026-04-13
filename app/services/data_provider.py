@@ -67,6 +67,12 @@ class AkshareDataProvider:
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
     ) -> pd.DataFrame:
+        if self.realtime_snapshot_cache is not None:
+            ts, cached = self.realtime_snapshot_cache
+            age = (datetime.now() - ts).total_seconds()
+            if age <= cache_ttl_seconds:
+                return cached.copy()
+
         last_exc: Exception | None = None
         for idx in range(retries + 1):
             try:
@@ -82,10 +88,8 @@ class AkshareDataProvider:
 
         if self.realtime_snapshot_cache is not None:
             ts, cached = self.realtime_snapshot_cache
-            age = (datetime.now() - ts).total_seconds()
-            if age <= cache_ttl_seconds:
-                print("[data_provider] realtime snapshot fallback to cached data")
-                return cached.copy()
+            print("[data_provider] realtime snapshot fallback to stale cache")
+            return cached.copy()
 
         if last_exc is not None:
             print(f"[data_provider] get_realtime_snapshot failed: {last_exc}")
