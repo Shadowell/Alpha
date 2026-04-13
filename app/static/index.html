@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413n" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413p" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -95,12 +95,18 @@
 
         <!-- ========== 公告选股 ========== -->
         <section id="tab-notice" class="tab-content">
-          <div class="tab-toolbar">
-            <div class="panel-title-row" style="margin-bottom:0">
-              <h2 style="margin:0">公告概览</h2>
-              <div id="noticeMeta" class="summary">暂无数据</div>
+          <div class="tab-toolbar notice-toolbar">
+            <div class="notice-toolbar-top">
+              <div class="panel-title-row" style="margin-bottom:0">
+                <h2 style="margin:0">公告概览</h2>
+                <div id="noticeMeta" class="summary">暂无数据</div>
+              </div>
+              <button id="btnNoticeScreen" class="btn-action">公告筛选</button>
             </div>
-            <button id="btnNoticeScreen" class="btn-action">公告筛选</button>
+            <div class="keyword-filter">
+              <span class="keyword-label">关键词：</span>
+              <div id="keywordTags" class="keyword-tags"></div>
+            </div>
           </div>
 
           <section class="funnel-area">
@@ -167,6 +173,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413n"></script>
+  <script src="/static/app.js?v=20260413p"></script>
 </body>
 </html>
