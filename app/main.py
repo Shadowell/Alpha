@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.models import MovePoolRequest, RecomputeRequest
@@ -97,8 +97,8 @@ async def index() -> FileResponse:
 
 
 @app.get("/notice")
-async def notice_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "notice.html")
+async def notice_index() -> RedirectResponse:
+    return RedirectResponse(url="/?tab=notice")
 
 
 @app.get("/api/funnel")

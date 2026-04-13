@@ -1,4 +1,5 @@
 const state = {
+  activeTab: 'funnel',
   funnel: null,
   hotConcepts: null,
   hotStocks: null,
@@ -9,6 +10,8 @@ const state = {
   selectedHotSymbol: null,
   selectedConcept: null,
   chart: null,
+  noticeFunnel: null,
+  noticeSelectedSymbol: null,
 };
 
 function fmtNum(v, digits = 2) {
@@ -18,11 +21,14 @@ function fmtNum(v, digits = 2) {
 
 function setMeta() {
   const meta = document.getElementById('meta');
-  if (!state.funnel) {
-    meta.textContent = '暂无数据';
-    return;
+  if (state.activeTab === 'funnel') {
+    if (!state.funnel) { meta.textContent = '暂无数据'; return; }
+    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+  } else {
+    if (!state.noticeFunnel) { meta.textContent = '暂无数据'; return; }
+    const nf = state.noticeFunnel;
+    meta.textContent = `交易日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source} · LLM ${nf.llm_enabled ? '开启' : '关闭'}`;
   }
-  meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
 }
 
 function setStatus(text, tone = 'info') {
@@ -64,6 +70,26 @@ async function request(path, options = {}) {
   return await resp.json();
 }
 
+/* ==================== Tab switching ==================== */
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  document.querySelectorAll('.tab-content').forEach((el) => {
+    el.classList.toggle('active', el.id === `tab-${tab}`);
+  });
+  const noticeCard = document.getElementById('noticeDetailCard');
+  noticeCard.style.display = tab === 'notice' ? '' : 'none';
+  setMeta();
+  if (tab === 'notice' && !state.noticeFunnel) {
+    reloadNotice();
+  }
+}
+
+/* ==================== Funnel tab ==================== */
+
 function passConceptFilter(stock) {
   if (!state.selectedConcept) return true;
   return (stock.concept_tags || []).some((t) => t.name === state.selectedConcept);
@@ -78,16 +104,9 @@ function renderCounts() {
 
 function cardActions(stock) {
   const actions = [];
-  if (stock.pool === 'candidate') {
-    actions.push(['加入重点', 'focus']);
-  }
-  if (stock.pool === 'focus') {
-    actions.push(['移回候选', 'candidate']);
-    actions.push(['加入买入', 'buy']);
-  }
-  if (stock.pool === 'buy') {
-    actions.push(['降级重点', 'focus']);
-  }
+  if (stock.pool === 'candidate') actions.push(['加入重点', 'focus']);
+  if (stock.pool === 'focus') { actions.push(['移回候选', 'candidate']); actions.push(['加入买入', 'buy']); }
+  if (stock.pool === 'buy') actions.push(['降级重点', 'focus']);
   return actions;
 }
 
@@ -97,10 +116,8 @@ async function movePool(symbol, targetPool) {
       method: 'POST',
       body: JSON.stringify({ symbol, target_pool: targetPool }),
     });
-    if (!res.success) {
-      alert(res.message || '迁移失败');
-    }
-    await reload();
+    if (!res.success) alert(res.message || '迁移失败');
+    await reloadFunnel();
   } catch (err) {
     alert(err.message || '迁移失败');
   }
@@ -109,29 +126,23 @@ async function movePool(symbol, targetPool) {
 function renderPool(poolName, list) {
   const root = document.getElementById(`pool-${poolName}`);
   root.innerHTML = '';
-
   const filtered = list.filter(passConceptFilter);
   filtered.forEach((stock) => {
     const div = document.createElement('div');
     div.className = `stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
     div.onclick = () => selectSymbol(stock.symbol);
-
     const delta = Number(stock.score_delta || 0);
     const deltaCls = delta >= 0 ? 'up' : 'down';
     const deltaTxt = delta >= 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
-
     const tags = (stock.concept_tags || [])
       .map((tag) => `<span class="tag" style="background:${tag.color}" title="热度:${tag.heat} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${tag.name} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
       .join('');
-
     const badge = stock.recommended_pool
       ? `<span class="badge ${stock.recommended_pool === 'buy' ? 'buy' : 'focus'}">建议进入${stock.recommended_pool === 'buy' ? '买入池' : '重点池'}</span>`
       : '';
-
     const btns = cardActions(stock)
       .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
       .join('');
-
     div.innerHTML = `
       <div class="stock-top">
         <div class="stock-name">${stock.name} (${stock.symbol})</div>
@@ -142,20 +153,12 @@ function renderPool(poolName, list) {
       ${badge}
       <div class="card-actions">${btns}</div>
     `;
-
     div.querySelectorAll('button').forEach((btn) => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        movePool(btn.dataset.symbol, btn.dataset.pool);
-      };
+      btn.onclick = (e) => { e.stopPropagation(); movePool(btn.dataset.symbol, btn.dataset.pool); };
     });
-
     root.appendChild(div);
   });
-
-  if (!filtered.length) {
-    root.innerHTML = '<div class="detail-empty">暂无股票</div>';
-  }
+  if (!filtered.length) root.innerHTML = '<div class="detail-empty">暂无股票</div>';
 }
 
 function renderFunnel() {
@@ -164,7 +167,7 @@ function renderFunnel() {
   renderPool('candidate', state.funnel.pools.candidate || []);
   renderPool('focus', state.funnel.pools.focus || []);
   renderPool('buy', state.funnel.pools.buy || []);
-  setMeta();
+  if (state.activeTab === 'funnel') setMeta();
 }
 
 function renderHotConcepts() {
@@ -172,7 +175,6 @@ function renderHotConcepts() {
   root.innerHTML = '';
   const activeChip = document.getElementById('activeConcept');
   activeChip.textContent = state.selectedConcept || '全部';
-
   const items = (state.hotConcepts?.items || []).slice(0, 10);
   items.forEach((item) => {
     const rise = Number(item.change_pct || 0) >= 0;
@@ -185,28 +187,20 @@ function renderHotConcepts() {
       renderHotConcepts();
       renderFunnel();
     };
-
     div.innerHTML = `
-      <div class="hot-title">
-        <span>${item.name}</span>
-        <span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span>
-      </div>
+      <div class="hot-title"><span>${item.name}</span><span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span></div>
       <div class="hot-meta">热度 ${fmtNum(item.heat, 3)} · 涨停 ${item.limit_up_count} · 上涨 ${item.up_count} / 下跌 ${item.down_count}</div>
       <div class="hot-meta">领涨 ${item.leader || '-'} · 入选 ${item.selected_count}</div>
     `;
     root.appendChild(div);
   });
-
-  if (!items.length) {
-    root.innerHTML = '<div class="detail-empty">暂无概念数据</div>';
-  }
+  if (!items.length) root.innerHTML = '<div class="detail-empty">暂无概念数据</div>';
 }
 
 function renderHotStocks() {
   const root = document.getElementById('hotStocks');
   root.innerHTML = '';
   const items = state.hotStocks?.items || [];
-
   items.forEach((item) => {
     const cls = Number(item.change_pct || 0) >= 0 ? 'up' : 'down';
     const sign = Number(item.change_pct || 0) >= 0 ? '+' : '';
@@ -214,21 +208,12 @@ function renderHotStocks() {
     card.className = `hot-stock-item ${state.selectedHotSymbol === item.symbol ? 'active' : ''}`;
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
-      <div class="hot-stock-main">
-        <div class="hot-stock-rank">#${item.rank}</div>
-        <div class="hot-stock-name">${item.name} (${item.symbol})</div>
-      </div>
-      <div class="hot-stock-side ${cls}">
-        <div>¥${fmtNum(item.latest_price, 2)}</div>
-        <div>${sign}${fmtNum(item.change_pct, 2)}%</div>
-      </div>
+      <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
+      <div class="hot-stock-side ${cls}"><div>¥${fmtNum(item.latest_price, 2)}</div><div>${sign}${fmtNum(item.change_pct, 2)}%</div></div>
     `;
     root.appendChild(card);
   });
-
-  if (!items.length) {
-    root.innerHTML = '<div class="detail-empty">暂无热门个股数据</div>';
-  }
+  if (!items.length) root.innerHTML = '<div class="detail-empty">暂无热门个股数据</div>';
 }
 
 function renderSyncPanel() {
@@ -242,7 +227,6 @@ function renderSyncPanel() {
   const pct = Number(sync.progress_pct || 0);
   summary.textContent = `状态:${status} · 进度:${synced}/${total} (${pct.toFixed(2)}%) · 最近:${sync.updated_at || '-'}`;
   bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-
   const logs = state.syncLogs?.items || [];
   logsRoot.innerHTML = '';
   logs.slice(0, 8).forEach((item) => {
@@ -251,19 +235,17 @@ function renderSyncPanel() {
     div.textContent = `[${item.status}] ${item.trade_date} ${item.synced_symbols}/${item.total_symbols} (${item.trigger_mode}) ${item.message || ''}`;
     logsRoot.appendChild(div);
   });
-  if (!logs.length) {
-    logsRoot.innerHTML = '<div class="detail-empty">暂无同步日志</div>';
-  }
+  if (!logs.length) logsRoot.innerHTML = '<div class="detail-empty">暂无同步日志</div>';
 }
+
+/* ==================== Chart (shared) ==================== */
 
 function ensureChart() {
   if (state.chart) return state.chart;
   const dom = document.getElementById('klineChart');
   if (!dom || !window.echarts) return null;
   state.chart = window.echarts.init(dom);
-  window.addEventListener('resize', () => {
-    if (state.chart) state.chart.resize();
-  });
+  window.addEventListener('resize', () => { if (state.chart) state.chart.resize(); });
   return state.chart;
 }
 
@@ -272,149 +254,54 @@ function renderChartPlaceholder(text) {
   if (!chart) return;
   chart.clear();
   chart.setOption({
-    animation: false,
-    xAxis: { show: false },
-    yAxis: { show: false },
-    series: [],
-    graphic: {
-      type: 'text',
-      left: 'center',
-      top: 'middle',
-      style: {
-        text,
-        fill: '#94a3b8',
-        font: '14px sans-serif',
-      },
-    },
+    animation: false, xAxis: { show: false }, yAxis: { show: false }, series: [],
+    graphic: { type: 'text', left: 'center', top: 'middle', style: { text, fill: '#94a3b8', font: '14px sans-serif' } },
   });
 }
 
-function renderKlineChart(detail) {
+function renderKlineChart(rows) {
   const chart = ensureChart();
   if (!chart) return;
-
-  const rows = detail.kline || [];
-  if (!rows.length) {
-    renderChartPlaceholder('暂无K线数据');
-    return;
-  }
-
+  if (!rows.length) { renderChartPlaceholder('暂无K线数据'); return; }
   const categoryData = rows.map((x) => x.date);
   const candleData = rows.map((x) => [x.open, x.close, x.low, x.high]);
-  const volumeData = rows.map((x, idx) => {
-    const up = x.close >= x.open ? 1 : -1;
-    return [idx, x.volume, up];
-  });
-
-  chart.setOption(
-    {
-      animation: false,
-      backgroundColor: 'transparent',
-      legend: { show: false },
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'cross' },
-      },
-      axisPointer: {
-        link: [{ xAxisIndex: 'all' }],
-        label: { backgroundColor: '#334155' },
-      },
-      grid: [
-        { left: 52, right: 18, top: 14, height: '62%' },
-        { left: 52, right: 18, top: '77%', height: '16%' },
-      ],
-      xAxis: [
-        {
-          type: 'category',
-          data: categoryData,
-          boundaryGap: true,
-          axisLine: { lineStyle: { color: '#475569' } },
-          axisLabel: { color: '#64748b' },
-          splitLine: { show: false },
-          min: 'dataMin',
-          max: 'dataMax',
-        },
-        {
-          type: 'category',
-          gridIndex: 1,
-          data: categoryData,
-          boundaryGap: true,
-          axisLine: { lineStyle: { color: '#475569' } },
-          axisLabel: { show: false },
-          splitLine: { show: false },
-          min: 'dataMin',
-          max: 'dataMax',
-        },
-      ],
-      yAxis: [
-        {
-          scale: true,
-          splitArea: { show: false },
-          axisLine: { lineStyle: { color: '#475569' } },
-          axisLabel: { color: '#64748b' },
-          splitLine: { lineStyle: { color: '#1f2937' } },
-        },
-        {
-          scale: true,
-          gridIndex: 1,
-          splitNumber: 2,
-          axisLine: { lineStyle: { color: '#475569' } },
-          axisLabel: { color: '#64748b' },
-          splitLine: { lineStyle: { color: '#1f2937' } },
-        },
-      ],
-      dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-        { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#334155' },
-      ],
-      series: [
-        {
-          name: '日K',
-          type: 'candlestick',
-          data: candleData,
-          itemStyle: {
-            color: '#ef4444',
-            color0: '#16a34a',
-            borderColor: '#ef4444',
-            borderColor0: '#16a34a',
-          },
-        },
-        {
-          name: '成交量',
-          type: 'bar',
-          xAxisIndex: 1,
-          yAxisIndex: 1,
-          data: volumeData,
-          itemStyle: {
-            color: (params) => (params.data[2] > 0 ? '#ef4444' : '#16a34a'),
-          },
-        },
-      ],
-    },
-    true,
-  );
+  const volumeData = rows.map((x, idx) => [idx, x.volume, x.close >= x.open ? 1 : -1]);
+  chart.setOption({
+    animation: false, backgroundColor: 'transparent', legend: { show: false },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#334155' } },
+    grid: [{ left: 52, right: 18, top: 14, height: '62%' }, { left: 52, right: 18, top: '77%', height: '16%' }],
+    xAxis: [
+      { type: 'category', data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
+      { type: 'category', gridIndex: 1, data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { show: false }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
+    ],
+    yAxis: [
+      { scale: true, splitArea: { show: false }, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1f2937' } } },
+      { scale: true, gridIndex: 1, splitNumber: 2, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1f2937' } } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#334155' },
+    ],
+    series: [
+      { name: '日K', type: 'candlestick', data: candleData, itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumeData, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
+    ],
+  }, true);
 }
 
 function renderStockSummary(detail) {
   const root = document.getElementById('stockSummary');
-  if (!detail) {
-    root.textContent = '点击左侧股票查看';
-    return;
-  }
-  const price = fmtNum(detail.metrics?.price, 2);
-  const pct = fmtNum(detail.metrics?.pct_change, 2);
-  const volumeRatio = fmtNum(detail.metrics?.volume_ratio, 2);
-  const breakout = fmtNum(detail.metrics?.breakout_level, 2);
-  root.textContent = `${detail.name}(${detail.symbol})  现价:${price}  涨跌:${pct}%  放量比:${volumeRatio}  突破位:${breakout}`;
+  if (!detail) { root.textContent = '点击左侧股票查看'; return; }
+  root.textContent = `${detail.name}(${detail.symbol})  现价:${fmtNum(detail.metrics?.price, 2)}  涨跌:${fmtNum(detail.metrics?.pct_change, 2)}%  放量比:${fmtNum(detail.metrics?.volume_ratio, 2)}  突破位:${fmtNum(detail.metrics?.breakout_level, 2)}`;
 }
 
 function renderStockSummaryLite(item, klinePayload) {
   const root = document.getElementById('stockSummary');
-  const latest = Number(item.latest_price || 0);
-  const pct = Number(item.change_pct || 0);
-  const cnt = Number(klinePayload?.count || 0);
-  root.textContent = `${item.name}(${item.symbol})  现价:${fmtNum(latest, 2)}  涨跌:${fmtNum(pct, 2)}%  K线:${cnt}日`;
+  root.textContent = `${item.name}(${item.symbol})  现价:${fmtNum(item.latest_price, 2)}  涨跌:${fmtNum(item.change_pct, 2)}%  K线:${Number(klinePayload?.count || 0)}日`;
 }
+
+/* ==================== Funnel symbol select ==================== */
 
 async function selectSymbol(symbol) {
   state.selectedSymbol = symbol;
@@ -423,11 +310,10 @@ async function selectSymbol(symbol) {
   renderHotStocks();
   renderStockSummary(null);
   renderChartPlaceholder('加载中...');
-
   try {
     const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
     renderStockSummary(detail);
-    renderKlineChart(detail);
+    renderKlineChart(detail.kline || []);
   } catch (err) {
     renderStockSummary(null);
     renderChartPlaceholder(`加载失败: ${err.message}`);
@@ -444,12 +330,10 @@ async function selectHotStock(item) {
       try {
         const detail = await request(`/api/stock/${item.symbol}/detail?kline_days=30`);
         payload = { items: detail?.kline || [], count: Number(detail?.kline?.length || 0) };
-      } catch (_) {
-        // ignore fallback failure for non-funnel symbols
-      }
+      } catch (_) {}
     }
     renderStockSummaryLite(item, payload || {});
-    renderKlineChart({ kline: payload?.items || [] });
+    renderKlineChart(payload?.items || []);
     setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
   } catch (err) {
     renderChartPlaceholder(`加载失败: ${err.message}`);
@@ -457,7 +341,113 @@ async function selectHotStock(item) {
   }
 }
 
-async function reload() {
+/* ==================== Notice tab ==================== */
+
+function renderNoticeMeta() {
+  const el = document.getElementById('noticeMeta');
+  if (!state.noticeFunnel) { el.textContent = '暂无数据'; return; }
+  const nf = state.noticeFunnel;
+  el.textContent = `打分源 ${nf.source} · LLM ${nf.llm_enabled ? '开启' : '关闭'} · 候选 ${nf.stats.candidate} / 重点 ${nf.stats.focus} / 买入 ${nf.stats.buy}`;
+}
+
+function renderNoticeCounts() {
+  if (!state.noticeFunnel) return;
+  document.getElementById('notice-count-candidate').textContent = state.noticeFunnel.stats.candidate;
+  document.getElementById('notice-count-focus').textContent = state.noticeFunnel.stats.focus;
+  document.getElementById('notice-count-buy').textContent = state.noticeFunnel.stats.buy;
+}
+
+function noticeCardActions(stock) {
+  if (stock.pool === 'candidate') return [['加入重点', 'focus'], ['加入买入', 'buy']];
+  if (stock.pool === 'focus') return [['移回候选', 'candidate'], ['加入买入', 'buy']];
+  return [['降级重点', 'focus']];
+}
+
+async function moveNoticePool(symbol, targetPool) {
+  try {
+    await request('/api/notice/pool/move', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, target_pool: targetPool }),
+    });
+    setStatus(`已迁移 ${symbol} -> ${targetPool}`, 'success');
+    await reloadNotice();
+  } catch (err) {
+    setStatus(`迁移失败: ${err.message}`, 'error');
+  }
+}
+
+function renderNoticePool(poolName, list) {
+  const root = document.getElementById(`notice-pool-${poolName}`);
+  root.innerHTML = '';
+  list.forEach((stock) => {
+    const card = document.createElement('div');
+    card.className = `stock-card ${state.noticeSelectedSymbol === stock.symbol ? 'active' : ''}`;
+    card.onclick = () => selectNoticeSymbol(stock.symbol);
+    const actions = noticeCardActions(stock)
+      .map(([label, pool]) => `<button data-symbol="${stock.symbol}" data-pool="${pool}">${label}</button>`)
+      .join('');
+    card.innerHTML = `
+      <div class="stock-top">
+        <div class="stock-name">${stock.name} (${stock.symbol})</div>
+        <div class="score up">${fmtNum(stock.score)}</div>
+      </div>
+      <div class="metrics">${stock.notice_type} · ${stock.notice_date}</div>
+      <div class="metrics">${stock.title}</div>
+      <div class="metrics">理由: ${stock.reason || '-'}</div>
+      <div class="metrics">风险: ${stock.risk || '-'}</div>
+      <div class="card-actions">${actions}</div>
+    `;
+    card.querySelectorAll('button').forEach((btn) => {
+      btn.onclick = (e) => { e.stopPropagation(); moveNoticePool(btn.dataset.symbol, btn.dataset.pool); };
+    });
+    root.appendChild(card);
+  });
+  if (!list.length) root.innerHTML = '<div class="detail-empty">暂无股票</div>';
+}
+
+function renderNoticeFunnel() {
+  if (!state.noticeFunnel) return;
+  renderNoticeCounts();
+  renderNoticePool('candidate', state.noticeFunnel.pools.candidate || []);
+  renderNoticePool('focus', state.noticeFunnel.pools.focus || []);
+  renderNoticePool('buy', state.noticeFunnel.pools.buy || []);
+  renderNoticeMeta();
+  if (state.activeTab === 'notice') setMeta();
+}
+
+async function selectNoticeSymbol(symbol) {
+  state.noticeSelectedSymbol = symbol;
+  renderNoticeFunnel();
+  renderChartPlaceholder('加载中...');
+  document.getElementById('noticeSummary').textContent = '加载中...';
+  document.getElementById('noticeDetail').textContent = '加载中...';
+  try {
+    const detail = await request(`/api/notice/${symbol}/detail?days=30`);
+    let kline = detail.kline || [];
+    if (!kline.length) {
+      const fallback = await request(`/api/kline/${symbol}?days=30`);
+      kline = fallback.items || [];
+    }
+    document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
+    const first = (detail.notices || [])[0] || {};
+    document.getElementById('noticeDetail').innerHTML = `
+      <div class="metrics"><b>${first.title || '-'}</b></div>
+      <div class="metrics">类型: ${first.notice_type || '-'}</div>
+      <div class="metrics">理由: ${detail.reason || '-'}</div>
+      <div class="metrics">风险: ${detail.risk || '-'}</div>
+      <div class="metrics"><a href="${first.url || '#'}" target="_blank" style="color:var(--brand)">公告链接</a></div>
+    `;
+    document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
+    renderKlineChart(kline);
+  } catch (err) {
+    document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
+    renderChartPlaceholder(`加载失败: ${err.message}`);
+  }
+}
+
+/* ==================== Data loading ==================== */
+
+async function reloadFunnel() {
   const [funnelRes, hotConceptsRes, hotStocksRes, syncRes, logsRes, strategyRes] = await Promise.allSettled([
     request('/api/funnel'),
     request('/api/market/hot-concepts'),
@@ -477,17 +467,12 @@ async function reload() {
   renderHotStocks();
   renderFunnel();
   renderSyncPanel();
-  if (state.strategyProfile?.name) {
-    setStatus(`策略模板: ${state.strategyProfile.name}`, 'info');
-  }
+  if (state.strategyProfile?.name) setStatus(`策略模板: ${state.strategyProfile.name}`, 'info');
 
-  if (state.selectedHotSymbol) {
-    return;
-  }
-
+  if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {
     const found = ['candidate', 'focus', 'buy']
-      .flatMap((x) => state.funnel.pools[x] || [])
+      .flatMap((x) => state.funnel?.pools?.[x] || [])
       .some((x) => x.symbol === state.selectedSymbol);
     if (!found) {
       state.selectedSymbol = null;
@@ -501,10 +486,28 @@ async function reload() {
   }
 }
 
+async function reloadNotice() {
+  try {
+    state.noticeFunnel = await request('/api/notice/funnel');
+  } catch (_) {}
+  renderNoticeFunnel();
+  if (!state.noticeSelectedSymbol) {
+    document.getElementById('noticeSummary').textContent = '点击左侧股票查看';
+    document.getElementById('noticeDetail').innerHTML = '<div class="detail-empty">暂无详情</div>';
+    if (state.activeTab === 'notice') renderChartPlaceholder('点击左侧股票查看');
+  }
+}
+
+async function reload() {
+  await reloadFunnel();
+  if (state.noticeFunnel) await reloadNotice();
+}
+
+/* ==================== WebSocket ==================== */
+
 function connectWs() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${window.location.host}/ws/realtime`);
-
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
@@ -519,19 +522,24 @@ function connectWs() {
       console.error('ws parse error', err);
     }
   };
-
-  ws.onclose = () => {
-    setTimeout(connectWs, 2000);
-  };
+  ws.onclose = () => { setTimeout(connectWs, 2000); };
 }
 
+/* ==================== Init ==================== */
+
 async function init() {
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    btn.onclick = () => switchTab(btn.dataset.tab);
+  });
+
   document.getElementById('btnRefresh').onclick = async () => {
-    await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
-    await reload();
-  };
-  document.getElementById('btnGotoNotice').onclick = () => {
-    window.location.href = '/notice';
+    if (state.activeTab === 'funnel') {
+      await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
+      await reloadFunnel();
+    } else {
+      await reloadNotice();
+      setStatus('已刷新公告池', 'success');
+    }
   };
 
   document.getElementById('btnEod').onclick = async () => {
@@ -542,15 +550,35 @@ async function init() {
     setStatus('盘后筛选执行中...', 'info');
     try {
       const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
-      await reload();
-      setStatus(
-        `盘后筛选完成: 候选${payload.candidate_count || 0}只 · 来源${payload.source_used || '-'} · ${payload.elapsed_ms || 0}ms`,
-        'success',
-      );
+      await reloadFunnel();
+      setStatus(`盘后筛选完成: 候选${payload.candidate_count || 0}只 · 来源${payload.source_used || '-'} · ${payload.elapsed_ms || 0}ms`, 'success');
     } catch (err) {
       setStatus(`盘后筛选失败: ${err.message}`, 'error');
     } finally {
       btn.textContent = oldText;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnRunNotice').onclick = async () => {
+    const btn = document.getElementById('btnRunNotice');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '执行中...';
+    setStatus('公告筛选执行中...', 'info');
+    if (state.activeTab !== 'notice') switchTab('notice');
+    try {
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(today.getDate()).padStart(2, '0');
+      const payload = await request(`/api/jobs/notice-screen?notice_date=${y}${m}${d}&limit=50`, { method: 'POST' });
+      await reloadNotice();
+      setStatus(`公告筛选完成: ${payload.candidate_count || 0}只 · 源:${payload.source || '-'}`, 'success');
+    } catch (err) {
+      setStatus(`公告筛选失败: ${err.message}`, 'error');
+    } finally {
+      btn.textContent = old;
       btn.disabled = false;
     }
   };
@@ -564,10 +592,10 @@ async function init() {
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual', { method: 'POST' });
       setStatus(`历史同步完成: ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
-      await reload();
+      await reloadFunnel();
     } catch (err) {
       setStatus(`历史同步失败: ${err.message}`, 'error');
-      await reload();
+      await reloadFunnel();
     } finally {
       btn.textContent = old;
       btn.disabled = false;
@@ -580,6 +608,9 @@ async function init() {
     renderFunnel();
   };
 
+  const urlTab = new URLSearchParams(window.location.search).get('tab');
+  if (urlTab === 'notice') switchTab('notice');
+
   await reload();
   connectWs();
   setInterval(async () => {
@@ -591,9 +622,7 @@ async function init() {
       state.syncStatus = sync;
       state.syncLogs = logs;
       renderSyncPanel();
-    } catch (_) {
-      // ignore periodic poll error
-    }
+    } catch (_) {}
   }, 8000);
 }
 
