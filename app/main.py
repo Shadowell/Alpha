@@ -335,10 +335,17 @@ async def get_notice_funnel(trade_date: str | None = None):
     return await notice_service.get_notice_funnel(trade_date)
 
 
+@app.get("/api/notice/keywords")
+async def get_notice_keywords():
+    from app.services.notice_service import BULLISH_RULES
+    return {"keywords": [{"tag": rule[0], "weight": rule[1]} for rule in BULLISH_RULES]}
+
+
 @app.post("/api/jobs/notice-screen")
-async def run_notice_screen(notice_date: str | None = None, limit: int = 10):
+async def run_notice_screen(notice_date: str | None = None, limit: int = 10, keywords: str | None = None):
+    kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else None
     try:
-        payload = await notice_service.run_notice_screen(notice_date=notice_date, limit=limit)
+        payload = await notice_service.run_notice_screen(notice_date=notice_date, limit=limit, keywords=kw_list)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"公告选股执行失败: {exc}")
     return payload

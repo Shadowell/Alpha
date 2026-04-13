@@ -47,7 +47,11 @@ def _normalize_notice_date(raw_date: str | None) -> tuple[str, str]:
     return dt.strftime("%Y%m%d"), dt.strftime("%Y-%m-%d")
 
 
-def _rule_score(title: str, notice_type: str) -> tuple[float, str]:
+KEYWORD_TAG_MAP: dict[str, str] = {rule[0]: rule[0] for rule in BULLISH_RULES}
+
+
+def _rule_score(title: str, notice_type: str, active_tags: set[str] | None = None) -> tuple[float, str]:
+    """对公告标题打分。active_tags 为 None 表示全部启用，否则只用选中的类别。"""
     text = f"{title} {notice_type}"
     for bad in BEARISH_KEYWORDS:
         if bad in text:
@@ -56,6 +60,8 @@ def _rule_score(title: str, notice_type: str) -> tuple[float, str]:
     score = 45.0
     hit_tags: list[str] = []
     for tag, weight, keys in BULLISH_RULES:
+        if active_tags is not None and tag not in active_tags:
+            continue
         if any(k in text for k in keys):
             score += weight
             hit_tags.append(tag)
@@ -105,7 +111,7 @@ class NoticeService:
             }
         )
 
-    async def run_notice_screen(self, notice_date: str | None = None, limit: int = 10) -> dict[str, Any]:
+    async def run_notice_screen(self, notice_date: str | None = None, limit: int = 10, keywords: list[str] | None = None) -> dict[str, Any]:
         yyyymmdd, display_date = _normalize_notice_date(notice_date)
         df = await asyncio.to_thread(ak.stock_notice_report, symbol="全部", date=yyyymmdd)
         if df is None or df.empty:
@@ -115,6 +121,13 @@ class NoticeService:
             self.llm_enabled = False
             self._save_state()
             return {"success": True, "candidate_count": 0, "notice_date": display_date, "source": "empty"}
+
+        active_tags: set[str] | None = None
+        if keywords:
+            valid_tags = {rule[0] for rule in BULLISH_RULES}
+            active_tags = {k for k in keywords if k in valid_tags}
+            if not active_tags:
+                active_tags = None
 
         candidates: list[dict[str, Any]] = []
         for _, row in df.iterrows():
@@ -128,7 +141,7 @@ class NoticeService:
                 continue
             if not (code.startswith("6") or code.startswith("00")):
                 continue
-            score, reason = _rule_score(title, notice_type)
+            score, reason = _rule_score(title, notice_type, active_tags)
             if score < 55:
                 continue
             candidates.append(

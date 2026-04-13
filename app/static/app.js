@@ -12,6 +12,8 @@ const state = {
   chart: null,
   noticeFunnel: null,
   noticeSelectedSymbol: null,
+  noticeKeywords: [],
+  activeKeywords: new Set(),
   rulesEngine: null,
   rulesDirty: {},
 };
@@ -98,8 +100,9 @@ function switchTab(tab) {
     if (chip) chip.textContent = state.selectedConcept || '全部';
     renderFunnel();
   }
-  if (tab === 'notice' && !state.noticeFunnel) {
-    reloadNotice();
+  if (tab === 'notice') {
+    loadNoticeKeywords();
+    if (!state.noticeFunnel) reloadNotice();
   }
   if (tab === 'rules' && !state.rulesEngine) {
     loadRulesEngine();
@@ -360,6 +363,35 @@ async function selectHotStock(item) {
 }
 
 /* ==================== Notice tab ==================== */
+
+async function loadNoticeKeywords() {
+  if (state.noticeKeywords.length) return;
+  try {
+    const data = await request('/api/notice/keywords');
+    state.noticeKeywords = data.keywords || [];
+  } catch { state.noticeKeywords = []; }
+  renderKeywordTags();
+}
+
+function renderKeywordTags() {
+  const container = document.getElementById('keywordTags');
+  if (!container) return;
+  container.innerHTML = '';
+  state.noticeKeywords.forEach(kw => {
+    const tag = document.createElement('span');
+    tag.className = 'keyword-tag' + (state.activeKeywords.has(kw.tag) ? ' active' : '');
+    tag.textContent = kw.tag;
+    tag.onclick = () => {
+      if (state.activeKeywords.has(kw.tag)) {
+        state.activeKeywords.delete(kw.tag);
+      } else {
+        state.activeKeywords.add(kw.tag);
+      }
+      renderKeywordTags();
+    };
+    container.appendChild(tag);
+  });
+}
 
 function renderNoticeMeta() {
   const el = document.getElementById('noticeMeta');
@@ -816,7 +848,11 @@ async function init() {
       const y = today.getFullYear();
       const m = String(today.getMonth() + 1).padStart(2, '0');
       const d = String(today.getDate()).padStart(2, '0');
-      const payload = await request(`/api/jobs/notice-screen?notice_date=${y}${m}${d}&limit=50`, { method: 'POST' });
+      let url = `/api/jobs/notice-screen?notice_date=${y}${m}${d}&limit=50`;
+      if (state.activeKeywords.size > 0) {
+        url += `&keywords=${encodeURIComponent([...state.activeKeywords].join(','))}`;
+      }
+      const payload = await request(url, { method: 'POST' });
       await reloadNotice();
       setStatus(`公告筛选完成: ${payload.candidate_count || 0}只`, 'success');
     } catch (err) {
