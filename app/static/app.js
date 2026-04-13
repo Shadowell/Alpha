@@ -217,7 +217,7 @@ function renderHotStocks() {
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
       <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
-      <div class="hot-stock-side ${cls}"><div>¥${fmtNum(item.latest_price, 2)}</div><div>${sign}${fmtNum(item.change_pct, 2)}%</div></div>
+      <div class="hot-stock-side ${cls}"><span>¥${fmtNum(item.latest_price, 2)}</span><span>${sign}${fmtNum(item.change_pct, 2)}%</span></div>
     `;
     root.appendChild(card);
   });

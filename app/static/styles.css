@@ -501,9 +501,11 @@ button:disabled {
 }
 
 .hot-stock-side {
-  text-align: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .hot-stock-side.up { color: var(--up); }
