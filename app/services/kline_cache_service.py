@@ -13,6 +13,9 @@ from app.services.kline_store import KlineSQLiteStore
 from app.services.time_utils import now_cn
 
 
+_CONCURRENCY = 8
+
+
 class KlineCacheService:
     def __init__(
         self,
@@ -138,62 +141,18 @@ class KlineCacheService:
             total_symbols=total,
             started_at=started_at,
         )
-        completed = 0
-        success_count = 0
-        failed_count = 0
-        now_iso = now_cn().isoformat()
-        for idx, symbol in enumerate(symbols):
-            start_symbol = pytime.time()
-            hist = await self.provider.get_hist(symbol, start_date, end_date)
-            rows = self._normalize_hist(hist)
-            if rows:
-                self.store.upsert_symbol_klines(symbol, rows, now_iso)
-                completed += 1
-                success_count += 1
-                self.store.add_sync_task_detail(
-                    task_id=task_id,
-                    symbol=symbol,
-                    status="success",
-                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                    error_message="",
-                    created_at=now_cn().isoformat(),
-                )
-            else:
-                failed_count += 1
-                self.store.add_sync_task_detail(
-                    task_id=task_id,
-                    symbol=symbol,
-                    status="failed",
-                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                    error_message="历史数据为空",
-                    created_at=now_cn().isoformat(),
-                )
-
-            synced = success_count + failed_count
-            if synced % 20 == 0 or synced == total:
-                self.store.update_sync_task_progress(
-                    task_id=task_id,
-                    synced_symbols=synced,
-                    success_symbols=success_count,
-                    failed_symbols=failed_count,
-                    message=f"同步中 {synced}/{total}",
-                )
-            if idx % 10 == 0:
-                await asyncio.sleep(0)
-                self.store.set_sync_state(
-                    attempt_trade_date=target_trade_date,
-                    success_trade_date=state.get("last_success_trade_date"),
-                    status="running",
-                    symbol_count=completed,
-                    total_symbols=total,
-                    synced_symbols=synced,
-                    success_symbols=success_count,
-                    failed_symbols=failed_count,
-                    task_id=task_id,
-                    trigger_mode=trigger_mode,
-                    updated_at=now_cn().isoformat(),
-                    message=f"同步中 {synced}/{total}",
-                )
+        result = await self._concurrent_fetch(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            task_id=task_id,
+            target_trade_date=target_trade_date,
+            state=state,
+            trigger_mode=trigger_mode,
+            total=total,
+            label="同步",
+        )
+        completed, success_count, failed_count = result
 
         final_status = "success" if completed > 0 else "failed"
         final_msg = "同步完成" if completed > 0 else "同步失败"
@@ -296,62 +255,18 @@ class KlineCacheService:
             total_symbols=total,
             started_at=started_at,
         )
-        completed = 0
-        success_count = 0
-        failed_count = 0
-        now_iso = now_cn().isoformat()
-        for idx, symbol in enumerate(symbols):
-            start_symbol = pytime.time()
-            hist = await self.provider.get_hist(symbol, td_fmt, td_fmt)
-            rows = self._normalize_hist(hist)
-            if rows:
-                self.store.upsert_symbol_klines(symbol, rows, now_iso)
-                completed += 1
-                success_count += 1
-                self.store.add_sync_task_detail(
-                    task_id=task_id,
-                    symbol=symbol,
-                    status="success",
-                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                    error_message="",
-                    created_at=now_cn().isoformat(),
-                )
-            else:
-                failed_count += 1
-                self.store.add_sync_task_detail(
-                    task_id=task_id,
-                    symbol=symbol,
-                    status="failed",
-                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                    error_message="当日数据为空",
-                    created_at=now_cn().isoformat(),
-                )
-
-            synced = success_count + failed_count
-            if synced % 20 == 0 or synced == total:
-                self.store.update_sync_task_progress(
-                    task_id=task_id,
-                    synced_symbols=synced,
-                    success_symbols=success_count,
-                    failed_symbols=failed_count,
-                    message=f"增量同步 {synced}/{total}",
-                )
-            if idx % 10 == 0:
-                await asyncio.sleep(0)
-                self.store.set_sync_state(
-                    attempt_trade_date=target_trade_date,
-                    success_trade_date=state.get("last_success_trade_date"),
-                    status="running",
-                    symbol_count=completed,
-                    total_symbols=total,
-                    synced_symbols=synced,
-                    success_symbols=success_count,
-                    failed_symbols=failed_count,
-                    task_id=task_id,
-                    trigger_mode=trigger_mode,
-                    updated_at=now_cn().isoformat(),
-                    message=f"增量同步 {synced}/{total}",
-                )
+        result = await self._concurrent_fetch(
+            symbols=symbols,
+            start_date=td_fmt,
+            end_date=td_fmt,
+            task_id=task_id,
+            target_trade_date=target_trade_date,
+            state=state,
+            trigger_mode=trigger_mode,
+            total=total,
+            label="增量同步",
+        )
+        completed, success_count, failed_count = result
 
         final_status = "success" if completed > 0 else "failed"
         final_msg = f"增量同步完成 {target_trade_date}" if completed > 0 else f"增量同步失败 {target_trade_date}"
@@ -385,6 +300,78 @@ class KlineCacheService:
             "synced_symbols": success_count + failed_count,
             "mode": "incremental",
         }
+
+    async def _concurrent_fetch(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        task_id: str,
+        target_trade_date: str,
+        state: dict,
+        trigger_mode: str,
+        total: int,
+        label: str = "同步",
+    ) -> tuple[int, int, int]:
+        sem = asyncio.Semaphore(_CONCURRENCY)
+        completed = 0
+        success_count = 0
+        failed_count = 0
+        now_iso = now_cn().isoformat()
+        lock = asyncio.Lock()
+
+        async def _fetch_one(symbol: str) -> None:
+            nonlocal completed, success_count, failed_count
+            async with sem:
+                t0 = pytime.time()
+                hist = await self.provider.get_hist(symbol, start_date, end_date)
+                rows = self._normalize_hist(hist)
+                elapsed = int((pytime.time() - t0) * 1000)
+
+            async with lock:
+                if rows:
+                    self.store.upsert_symbol_klines(symbol, rows, now_iso)
+                    completed += 1
+                    success_count += 1
+                    self.store.add_sync_task_detail(
+                        task_id=task_id, symbol=symbol, status="success",
+                        elapsed_ms=elapsed, error_message="", created_at=now_cn().isoformat(),
+                    )
+                else:
+                    failed_count += 1
+                    self.store.add_sync_task_detail(
+                        task_id=task_id, symbol=symbol, status="failed",
+                        elapsed_ms=elapsed, error_message="数据为空", created_at=now_cn().isoformat(),
+                    )
+
+                synced = success_count + failed_count
+                if synced % 50 == 0 or synced == total:
+                    self.store.update_sync_task_progress(
+                        task_id=task_id, synced_symbols=synced,
+                        success_symbols=success_count, failed_symbols=failed_count,
+                        message=f"{label} {synced}/{total}",
+                    )
+                    self.store.set_sync_state(
+                        attempt_trade_date=target_trade_date,
+                        success_trade_date=state.get("last_success_trade_date"),
+                        status="running",
+                        symbol_count=completed,
+                        total_symbols=total,
+                        synced_symbols=synced,
+                        success_symbols=success_count,
+                        failed_symbols=failed_count,
+                        task_id=task_id,
+                        trigger_mode=trigger_mode,
+                        updated_at=now_cn().isoformat(),
+                        message=f"{label} {synced}/{total}",
+                    )
+
+        batch_size = 200
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i : i + batch_size]
+            await asyncio.gather(*[_fetch_one(s) for s in batch])
+
+        return completed, success_count, failed_count
 
     def get_kline(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         clean_symbol = str(symbol).strip()
