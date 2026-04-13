@@ -60,6 +60,28 @@ uvicorn app.main:app --host 0.0.0.0 --port 18888 --reload
 pytest -q
 ```
 
+## 源码密点归纳与自动扫描
+
+- 报告模板：`docs/密点归纳模板.md`
+- 扫描规则：`security/secret_rules.json`
+- 扫描脚本：`scripts/security_scan.py`
+
+执行扫描：
+
+```bash
+python3 scripts/security_scan.py --fail-on-high
+```
+
+输出文件：
+
+- `reports/security_findings.json`
+- `reports/security_summary.md`
+
+说明：
+
+- 默认会跳过 `.git`、`data`、`logs`、`venv` 等目录。
+- 若某行需临时忽略，可添加 `secretscan:ignore` 注释，并在评审里说明原因。
+
 ## 说明
 
 - 数据源：AkShare（沿用你脚本口径）
