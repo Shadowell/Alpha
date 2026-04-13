@@ -504,6 +504,71 @@ class FunnelService:
                 items=self.hot_stocks,
             )
 
+    async def _get_latest_trade_date(self) -> str | None:
+        try:
+            df = await self.provider.get_trade_days()
+            if df.empty:
+                return now_cn().date().isoformat()
+            today = pd.Timestamp(now_cn().date())
+            df["trade_date"] = pd.to_datetime(df["trade_date"])
+            valid = df[df["trade_date"] <= today]["trade_date"]
+            if valid.empty:
+                return now_cn().date().isoformat()
+            return valid.iloc[-1].strftime("%Y-%m-%d")
+        except Exception:
+            return now_cn().date().isoformat()
+
+    async def _build_today_bar(self, symbol: str) -> dict | None:
+        import akshare as ak
+
+        trade_date = await self._get_latest_trade_date()
+        if not trade_date:
+            return None
+
+        bar = None
+        try:
+            raw_symbol = symbol.replace("sh", "").replace("sz", "").replace("bj", "")
+            df = await asyncio.to_thread(ak.stock_bid_ask_em, symbol=raw_symbol)
+            if df is not None and not df.empty:
+                lookup = dict(zip(df["item"], df["value"]))
+                price = float(lookup.get("最新", 0))
+                open_ = float(lookup.get("今开", 0))
+                if price > 0 and open_ > 0:
+                    volume_hands = float(lookup.get("总手", 0))
+                    bar = {
+                        "date": trade_date,
+                        "open": open_,
+                        "high": float(lookup.get("最高", price)),
+                        "low": float(lookup.get("最低", price)),
+                        "close": price,
+                        "volume": volume_hands * 100,
+                    }
+        except Exception:
+            pass
+
+        if bar is None:
+            try:
+                snapshot = await self.provider.get_realtime_snapshot(cache_ttl_seconds=300)
+                if not snapshot.empty:
+                    row = snapshot[snapshot["代码"] == symbol]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        price = float(r.get("最新价", 0))
+                        open_ = float(r.get("今开", 0))
+                        if price > 0 and open_ > 0:
+                            bar = {
+                                "date": trade_date,
+                                "open": open_,
+                                "high": float(r.get("最高", price)),
+                                "low": float(r.get("最低", price)),
+                                "close": price,
+                                "volume": float(r.get("成交量", 0)),
+                            }
+            except Exception:
+                pass
+
+        return bar
+
     async def get_stock_detail(
         self, symbol: str, trade_date: str | None = None, kline_days: int = 30
     ) -> StockDetailResponse:
@@ -554,6 +619,13 @@ class FunnelService:
                         "volume": float(row.get("成交量", 0)),
                     }
                 )
+
+        today_bar = await self._build_today_bar(symbol)
+        if today_bar:
+            if kline and kline[-1]["date"] == today_bar["date"]:
+                kline[-1] = today_bar
+            else:
+                kline.append(today_bar)
 
         return StockDetailResponse(
             symbol=entry_copy["symbol"],

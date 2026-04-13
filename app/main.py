@@ -67,6 +67,78 @@ async def _kline_cache_loop() -> None:
         await asyncio.sleep(600)
 
 
+async def _get_latest_trade_date() -> str | None:
+    """获取最近（含今天）的交易日，用于确定实时数据对应哪一天。"""
+    try:
+        import pandas as pd
+        df = await provider.get_trade_days()
+        if df.empty:
+            return now_cn().date().isoformat()
+        today = pd.Timestamp(now_cn().date())
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        valid = df[df["trade_date"] <= today]["trade_date"]
+        if valid.empty:
+            return now_cn().date().isoformat()
+        return valid.iloc[-1].strftime("%Y-%m-%d")
+    except Exception:
+        return now_cn().date().isoformat()
+
+
+async def _build_today_bar(symbol: str) -> dict | None:
+    """从个股实时行情构造当天的 K 线柱，非交易时段或无数据返回 None。"""
+    import akshare as ak
+
+    trade_date = await _get_latest_trade_date()
+    if not trade_date:
+        return None
+
+    bar = None
+    try:
+        raw_symbol = symbol.replace("sh", "").replace("sz", "").replace("bj", "")
+        df = await asyncio.to_thread(ak.stock_bid_ask_em, symbol=raw_symbol)
+        if df is not None and not df.empty:
+            lookup = dict(zip(df["item"], df["value"]))
+            price = float(lookup.get("最新", 0))
+            open_ = float(lookup.get("今开", 0))
+            if price > 0 and open_ > 0:
+                volume_hands = float(lookup.get("总手", 0))
+                bar = {
+                    "date": trade_date,
+                    "open": open_,
+                    "high": float(lookup.get("最高", price)),
+                    "low": float(lookup.get("最低", price)),
+                    "close": price,
+                    "volume": volume_hands * 100,
+                    "amount": float(lookup.get("金额", 0)),
+                }
+    except Exception:
+        pass
+
+    if bar is None:
+        try:
+            snapshot = await provider.get_realtime_snapshot(cache_ttl_seconds=300)
+            if not snapshot.empty:
+                row = snapshot[snapshot["代码"] == symbol]
+                if not row.empty:
+                    r = row.iloc[0]
+                    price = float(r.get("最新价", 0))
+                    open_ = float(r.get("今开", 0))
+                    if price > 0 and open_ > 0:
+                        bar = {
+                            "date": trade_date,
+                            "open": open_,
+                            "high": float(r.get("最高", price)),
+                            "low": float(r.get("最低", price)),
+                            "close": price,
+                            "volume": float(r.get("成交量", 0)),
+                            "amount": float(r.get("成交额", 0)),
+                        }
+        except Exception:
+            pass
+
+    return bar
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
@@ -207,6 +279,12 @@ async def get_cached_kline(symbol: str, days: int = 30):
                         "amount": float(row.get("成交额", 0)),
                     }
                 )
+    today_bar = await _build_today_bar(clean_symbol)
+    if today_bar:
+        if items and items[-1]["date"] == today_bar["date"]:
+            items[-1] = today_bar
+        else:
+            items.append(today_bar)
     return {
         "symbol": clean_symbol,
         "days": max(1, min(days, 365)),
