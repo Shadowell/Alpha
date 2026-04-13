@@ -1,5 +1,5 @@
 const state = {
-  activeTab: 'funnel',
+  activeTab: 'market',
   funnel: null,
   hotConcepts: null,
   hotStocks: null,
@@ -74,7 +74,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
+const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -88,6 +88,11 @@ function switchTab(tab) {
   noticeCard.style.display = tab === 'notice' ? '' : 'none';
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
+  if (tab === 'funnel') {
+    const chip = document.getElementById('activeConcept');
+    if (chip) chip.textContent = state.selectedConcept || '全部';
+    renderFunnel();
+  }
   if (tab === 'notice' && !state.noticeFunnel) {
     reloadNotice();
   }
@@ -182,7 +187,7 @@ function renderHotConcepts() {
   const root = document.getElementById('hotConcepts');
   root.innerHTML = '';
   const activeChip = document.getElementById('activeConcept');
-  activeChip.textContent = state.selectedConcept || '全部';
+  if (activeChip) activeChip.textContent = state.selectedConcept || '全部';
   const items = (state.hotConcepts?.items || []).slice(0, 10);
   items.forEach((item) => {
     const rise = Number(item.change_pct || 0) >= 0;
@@ -193,7 +198,7 @@ function renderHotConcepts() {
     div.onclick = () => {
       state.selectedConcept = state.selectedConcept === item.name ? null : item.name;
       renderHotConcepts();
-      renderFunnel();
+      if (state.activeTab === 'funnel') renderFunnel();
     };
     div.innerHTML = `
       <div class="hot-title"><span>${item.name}</span><span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span></div>

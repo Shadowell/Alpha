@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413j" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413k" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -13,7 +13,11 @@
       <div class="sidebar-logo">A</div>
     </div>
     <div class="sidebar-nav">
-      <a class="sidebar-item active" data-tab="funnel" title="策略选股">
+      <a class="sidebar-item active" data-tab="market" title="大盘">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><polyline points="18 9 13 14 9 10 3 16"/></svg>
+        <span>大盘</span>
+      </a>
+      <a class="sidebar-item" data-tab="funnel" title="策略选股">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span>策略选股</span>
       </a>
@@ -38,7 +42,7 @@
   <div class="app-shell">
     <header class="topbar">
       <div>
-        <h1 id="pageTitle">策略选股</h1>
+        <h1 id="pageTitle">大盘</h1>
         <p id="meta">加载中...</p>
       </div>
       <div class="actions">
@@ -48,13 +52,20 @@
 
     <main class="layout">
       <section class="center-main">
-        <!-- ========== 策略选股 ========== -->
-        <section id="tab-funnel" class="tab-content active">
+        <!-- ========== 大盘 ========== -->
+        <section id="tab-market" class="tab-content active">
           <section class="panel card">
-            <h2>热门概念大盘</h2>
+            <h2>热门概念 Top10</h2>
             <div id="hotConcepts" class="hot-list"></div>
           </section>
+          <section class="panel card">
+            <h2>热门个股 Top10</h2>
+            <div id="hotStocks" class="hot-stock-list"></div>
+          </section>
+        </section>
 
+        <!-- ========== 策略选股 ========== -->
+        <section id="tab-funnel" class="tab-content">
           <section class="funnel-area">
             <div class="filter-line">
               <span>概念筛选：</span>
@@ -131,11 +142,6 @@
           <div id="syncLogs" class="sync-logs"></div>
         </section>
 
-        <section class="panel card">
-          <h2>热门个股 Top10</h2>
-          <div id="hotStocks" class="hot-stock-list"></div>
-        </section>
-
         <section id="noticeDetailCard" class="panel card" style="display:none">
           <div class="panel-title-row">
             <h2>公告详情</h2>
@@ -156,6 +162,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413j"></script>
+  <script src="/static/app.js?v=20260413k"></script>
 </body>
 </html>
