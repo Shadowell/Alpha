@@ -173,7 +173,7 @@ function renderHotConcepts() {
   const activeChip = document.getElementById('activeConcept');
   activeChip.textContent = state.selectedConcept || '全部';
 
-  const items = state.hotConcepts?.items || [];
+  const items = (state.hotConcepts?.items || []).slice(0, 10);
   items.forEach((item) => {
     const rise = Number(item.change_pct || 0) >= 0;
     const cls = rise ? 'up' : 'down';
@@ -439,9 +439,17 @@ async function selectHotStock(item) {
   renderHotStocks();
   renderChartPlaceholder('加载中...');
   try {
-    const payload = await request(`/api/kline/${item.symbol}?days=30`);
-    renderStockSummaryLite(item, payload);
-    renderKlineChart({ kline: payload.items || [] });
+    let payload = await request(`/api/kline/${item.symbol}?days=30`);
+    if (!payload?.items?.length) {
+      try {
+        const detail = await request(`/api/stock/${item.symbol}/detail?kline_days=30`);
+        payload = { items: detail?.kline || [], count: Number(detail?.kline?.length || 0) };
+      } catch (_) {
+        // ignore fallback failure for non-funnel symbols
+      }
+    }
+    renderStockSummaryLite(item, payload || {});
+    renderKlineChart({ kline: payload?.items || [] });
     setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
   } catch (err) {
     renderChartPlaceholder(`加载失败: ${err.message}`);
@@ -471,6 +479,10 @@ async function reload() {
   renderSyncPanel();
   if (state.strategyProfile?.name) {
     setStatus(`策略模板: ${state.strategyProfile.name}`, 'info');
+  }
+
+  if (state.selectedHotSymbol) {
+    return;
   }
 
   if (state.selectedSymbol) {
