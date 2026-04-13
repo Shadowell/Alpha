@@ -126,6 +126,8 @@ class NoticeService:
             ndate = str(row.get("公告日期", display_date))
             if not code or "ST" in name.upper():
                 continue
+            if not (code.startswith("6") or code.startswith("00")):
+                continue
             score, reason = _rule_score(title, notice_type)
             if score < 55:
                 continue

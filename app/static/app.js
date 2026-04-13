@@ -12,8 +12,6 @@ const state = {
   chart: null,
   noticeFunnel: null,
   noticeSelectedSymbol: null,
-  rulesEngine: null,
-  rulesDirty: {},
 };
 
 function fmtNum(v, digits = 2) {
@@ -23,13 +21,16 @@ function fmtNum(v, digits = 2) {
 
 function setMeta() {
   const meta = document.getElementById('meta');
-  if (state.activeTab === 'funnel') {
+  if (state.activeTab === 'market') {
+    if (!state.funnel) { meta.textContent = '加载中...'; return; }
+    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+  } else if (state.activeTab === 'funnel') {
     if (!state.funnel) { meta.textContent = '暂无数据'; return; }
     meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
-  } else {
+  } else if (state.activeTab === 'notice') {
     if (!state.noticeFunnel) { meta.textContent = '暂无数据'; return; }
     const nf = state.noticeFunnel;
-    meta.textContent = `交易日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source} · LLM ${nf.llm_enabled ? '开启' : '关闭'}`;
+    meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
   }
 }
 
@@ -646,8 +647,6 @@ async function reloadFunnel() {
   renderHotStocks();
   renderFunnel();
   renderSyncPanel();
-  if (state.strategyProfile?.name) setStatus(`规则引擎: ${state.strategyProfile.name}`, 'info');
-
   if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {
     const found = ['candidate', 'focus', 'buy']
@@ -713,14 +712,17 @@ async function init() {
 
   document.getElementById('btnRefreshSidebar').onclick = async (e) => {
     e.preventDefault();
-    if (state.activeTab === 'funnel') {
-      setStatus('刷新策略选股...', 'info');
+    setStatus('刷新中...', 'info');
+    if (state.activeTab === 'market') {
+      await reloadFunnel();
+      setStatus('大盘数据已刷新', 'success');
+    } else if (state.activeTab === 'funnel') {
       await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
       await reloadFunnel();
       setStatus('策略选股已刷新', 'success');
     } else if (state.activeTab === 'notice') {
       await reloadNotice();
-      setStatus('已刷新公告池', 'success');
+      setStatus('公告池已刷新', 'success');
     }
   };
 
@@ -773,6 +775,46 @@ async function init() {
     state.selectedConcept = null;
     renderHotConcepts();
     renderFunnel();
+  };
+
+  document.getElementById('btnEodScreen').onclick = async () => {
+    const btn = document.getElementById('btnEodScreen');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '执行中...';
+    setStatus('盘后筛选执行中...', 'info');
+    try {
+      const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
+      await reloadFunnel();
+      setStatus(`盘后筛选完成: 候选${payload.candidate_count || 0}只`, 'success');
+    } catch (err) {
+      setStatus(`盘后筛选失败: ${err.message}`, 'error');
+    } finally {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnNoticeScreen').onclick = async () => {
+    const btn = document.getElementById('btnNoticeScreen');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '执行中...';
+    setStatus('公告筛选执行中...', 'info');
+    try {
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(today.getDate()).padStart(2, '0');
+      const payload = await request(`/api/jobs/notice-screen?notice_date=${y}${m}${d}&limit=50`, { method: 'POST' });
+      await reloadNotice();
+      setStatus(`公告筛选完成: ${payload.candidate_count || 0}只`, 'success');
+    } catch (err) {
+      setStatus(`公告筛选失败: ${err.message}`, 'error');
+    } finally {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
   };
 
   const urlTab = new URLSearchParams(window.location.search).get('tab');

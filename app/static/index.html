@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413l" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413m" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -62,24 +62,27 @@
 
         <!-- ========== 策略选股 ========== -->
         <section id="tab-funnel" class="tab-content">
-          <section class="funnel-area">
+          <div class="tab-toolbar">
             <div class="filter-line">
               <span>概念筛选：</span>
               <span id="activeConcept" class="chip muted">全部</span>
               <button id="clearConcept" class="text-btn">清除</button>
             </div>
+            <button id="btnEodScreen" class="btn-action">盘后筛选</button>
+          </div>
 
+          <section class="funnel-area">
             <div class="funnel-grid">
               <div class="pool-column">
-                <div class="pool-header">调整期候选池 <span id="count-candidate">0</span></div>
+                <div class="pool-header">调整期候选池 <span id="count-candidate" class="pool-count">0</span></div>
                 <div id="pool-candidate" class="pool-list"></div>
               </div>
-              <div class="pool-column">
-                <div class="pool-header">重点关注池 <span id="count-focus">0</span></div>
+              <div class="pool-column highlight-focus">
+                <div class="pool-header">重点关注池 <span id="count-focus" class="pool-count">0</span></div>
                 <div id="pool-focus" class="pool-list"></div>
               </div>
-              <div class="pool-column">
-                <div class="pool-header">买入池 <span id="count-buy">0</span></div>
+              <div class="pool-column highlight-buy">
+                <div class="pool-header">买入池 <span id="count-buy" class="pool-count">0</span></div>
                 <div id="pool-buy" class="pool-list"></div>
               </div>
             </div>
@@ -88,25 +91,26 @@
 
         <!-- ========== 公告选股 ========== -->
         <section id="tab-notice" class="tab-content">
-          <section class="panel card">
-            <div class="panel-title-row">
-              <h2>公告概览</h2>
+          <div class="tab-toolbar">
+            <div class="panel-title-row" style="margin-bottom:0">
+              <h2 style="margin:0">公告概览</h2>
               <div id="noticeMeta" class="summary">暂无数据</div>
             </div>
-          </section>
+            <button id="btnNoticeScreen" class="btn-action">公告筛选</button>
+          </div>
 
           <section class="funnel-area">
             <div class="funnel-grid">
               <div class="pool-column">
-                <div class="pool-header">公告候选池 <span id="notice-count-candidate">0</span></div>
+                <div class="pool-header">公告候选池 <span id="notice-count-candidate" class="pool-count">0</span></div>
                 <div id="notice-pool-candidate" class="pool-list"></div>
               </div>
-              <div class="pool-column">
-                <div class="pool-header">公告重点池 <span id="notice-count-focus">0</span></div>
+              <div class="pool-column highlight-focus">
+                <div class="pool-header">公告重点池 <span id="notice-count-focus" class="pool-count">0</span></div>
                 <div id="notice-pool-focus" class="pool-list"></div>
               </div>
-              <div class="pool-column">
-                <div class="pool-header">公告买入池 <span id="notice-count-buy">0</span></div>
+              <div class="pool-column highlight-buy">
+                <div class="pool-header">公告买入池 <span id="notice-count-buy" class="pool-count">0</span></div>
                 <div id="notice-pool-buy" class="pool-list"></div>
               </div>
             </div>
@@ -152,6 +156,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413l"></script>
+  <script src="/static/app.js?v=20260413m"></script>
 </body>
 </html>
