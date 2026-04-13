@@ -41,19 +41,15 @@ function setMeta() {
 }
 
 function setStatus(text, tone = 'info') {
-  const el = document.getElementById('statusBar');
-  if (!el) return;
-  el.textContent = text;
-  if (tone === 'error') {
-    el.style.background = 'rgba(127, 29, 29, 0.25)';
-    el.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-  } else if (tone === 'success') {
-    el.style.background = 'rgba(20, 83, 45, 0.25)';
-    el.style.borderColor = 'rgba(34, 197, 94, 0.5)';
-  } else {
-    el.style.background = 'rgba(30, 64, 175, 0.22)';
-    el.style.borderColor = 'rgba(59, 130, 246, 0.45)';
-  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${tone}`;
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, tone === 'error' ? 4000 : 2500);
 }
 
 async function request(path, options = {}) {
