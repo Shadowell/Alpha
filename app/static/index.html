@@ -21,6 +21,11 @@
   <main class="layout">
     <section class="left-main">
       <section class="panel card">
+        <h2>系统状态</h2>
+        <div id="statusBar" class="status-bar">就绪</div>
+      </section>
+
+      <section class="panel card">
         <h2>热门概念大盘</h2>
         <div id="hotConcepts" class="hot-list"></div>
       </section>
@@ -52,6 +57,18 @@
     </section>
 
     <aside class="right-panel">
+      <section class="panel card">
+        <div class="panel-title-row">
+          <h2>历史同步</h2>
+          <button id="btnSyncKline">立即同步</button>
+        </div>
+        <div id="syncSummary" class="summary">加载中...</div>
+        <div class="sync-progress-wrap">
+          <div id="syncProgressBar" class="sync-progress-bar"></div>
+        </div>
+        <div id="syncLogs" class="sync-logs"></div>
+      </section>
+
       <section class="panel card">
         <h2>热门个股 Top10</h2>
         <div id="hotStocks" class="hot-stock-list"></div>

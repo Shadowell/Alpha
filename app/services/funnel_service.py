@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ class FunnelService:
         self.updated_at = now_cn().isoformat()
         self.frozen = False
 
+        self.strategy_profile = self._ensure_strategy_profile()
         self._load_state()
 
     def _reset_state(self, trade_date: str) -> None:
@@ -88,6 +90,24 @@ class FunnelService:
             self.frozen = bool(payload.get("frozen", False))
         except Exception:
             return
+
+    def _ensure_strategy_profile(self) -> dict[str, Any]:
+        profile = self.state_store.get_active_strategy_profile()
+        if profile is not None:
+            return profile
+        config_payload = {
+            "period_days": self.config.period_days,
+            "box_range_threshold": self.config.box_range_threshold,
+            "volume_shrink_threshold": self.config.volume_shrink_threshold,
+            "pre_breakout_buffer": self.config.pre_breakout_buffer,
+            "profile_strength": "balanced",
+            "enabled": True,
+        }
+        return self.state_store.upsert_single_active_strategy_profile(
+            name="kline_volume_balanced",
+            config=config_payload,
+            updated_at=now_cn().isoformat(),
+        )
 
     def _save_state(self) -> None:
         payload = {
@@ -131,11 +151,46 @@ class FunnelService:
             self._reset_state(date_str)
             self._save_state()
 
-    async def run_eod_screen(self, trade_date: str | None = None) -> int:
+    def _build_cache_snapshot(self, trade_date: str) -> pd.DataFrame:
+        if self.kline_cache_service is None:
+            return pd.DataFrame()
+        try:
+            return self.kline_cache_service.build_snapshot_for_screen(trade_date)
+        except Exception:
+            return pd.DataFrame()
+
+    def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
+        now = now_cn()
+        after_close = is_after_close(now)
+        if after_close:
+            cache_df = self._build_cache_snapshot(self.trade_date)
+            if not cache_df.empty:
+                return cache_df, "history_cache"
+            spot_df = self.provider.get_snapshot_spot()
+            if not spot_df.empty:
+                return spot_df, "spot"
+            cache_fallback = self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
+            if not cache_fallback.empty:
+                return cache_fallback, "realtime_cache"
+            return pd.DataFrame(), "none"
+
+        realtime_df = self.provider.get_realtime_snapshot()
+        if not realtime_df.empty:
+            return realtime_df, "realtime"
+        spot_df = self.provider.get_snapshot_spot()
+        if not spot_df.empty:
+            return spot_df, "spot"
+        cache_fallback = self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
+        if not cache_fallback.empty:
+            return cache_fallback, "realtime_cache"
+        return pd.DataFrame(), "none"
+
+    async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
         async with self.lock:
+            started = time.time()
             await self.ensure_trade_date(trade_date)
 
-            snapshot = self.provider.get_realtime_snapshot()
+            snapshot, source_used = self._pick_screen_snapshot()
             if snapshot.empty:
                 raise RuntimeError("实时行情数据获取失败，请稍后重试")
 
@@ -205,7 +260,14 @@ class FunnelService:
             self.updated_at = now_cn().isoformat()
             self.frozen = is_after_close(now_cn())
             self._save_state()
-            return len(entries)
+            candidate_count = len(entries)
+            elapsed_ms = int((time.time() - started) * 1000)
+            return {
+                "candidate_count": candidate_count,
+                "source_used": source_used,
+                "elapsed_ms": elapsed_ms,
+                "message": f"筛选完成，候选池{candidate_count}只",
+            }
 
     async def refresh_scores(self, symbol: str | None = None, force_concept_refresh: bool = False) -> None:
         snapshot = self.provider.get_realtime_snapshot()
@@ -365,6 +427,11 @@ class FunnelService:
                 pools=pools,
                 stats=stats,
             )
+
+    async def get_strategy_profile(self) -> dict[str, Any]:
+        async with self.lock:
+            self.strategy_profile = self._ensure_strategy_profile()
+            return self.strategy_profile
 
     async def get_hot_concepts(self, trade_date: str | None = None) -> HotConceptResponse:
         async with self.lock:

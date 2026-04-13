@@ -40,13 +40,66 @@ class KlineSQLiteStore:
                 last_success_trade_date TEXT,
                 status TEXT NOT NULL,
                 symbol_count INTEGER NOT NULL DEFAULT 0,
+                total_symbols INTEGER NOT NULL DEFAULT 0,
+                synced_symbols INTEGER NOT NULL DEFAULT 0,
+                success_symbols INTEGER NOT NULL DEFAULT 0,
+                failed_symbols INTEGER NOT NULL DEFAULT 0,
+                task_id TEXT,
+                trigger_mode TEXT NOT NULL DEFAULT 'auto',
                 updated_at TEXT NOT NULL,
                 message TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        self._ensure_column(conn, "kline_sync_state", "total_symbols", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "kline_sync_state", "synced_symbols", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "kline_sync_state", "success_symbols", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "kline_sync_state", "failed_symbols", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column(conn, "kline_sync_state", "task_id", "TEXT")
+        self._ensure_column(conn, "kline_sync_state", "trigger_mode", "TEXT NOT NULL DEFAULT 'auto'")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kline_sync_tasks (
+                task_id TEXT PRIMARY KEY,
+                trigger_mode TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                status TEXT NOT NULL,
+                total_symbols INTEGER NOT NULL DEFAULT 0,
+                synced_symbols INTEGER NOT NULL DEFAULT 0,
+                success_symbols INTEGER NOT NULL DEFAULT 0,
+                failed_symbols INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                message TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kline_sync_task_details (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                status TEXT NOT NULL,
+                elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_sync_tasks_started_at ON kline_sync_tasks(started_at DESC)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kline_sync_task_details_task_id ON kline_sync_task_details(task_id, id DESC)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_symbol_date ON kline_daily(symbol, trade_date DESC)")
         conn.commit()
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table_name: str, col_name: str, col_def: str) -> None:
+        cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {str(row[1]) for row in cols}
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}")
 
     def upsert_symbol_klines(self, symbol: str, rows: list[dict[str, Any]], updated_at: str) -> int:
         if not rows:
@@ -124,6 +177,12 @@ class KlineSQLiteStore:
         success_trade_date: str | None,
         status: str,
         symbol_count: int,
+        total_symbols: int = 0,
+        synced_symbols: int = 0,
+        success_symbols: int = 0,
+        failed_symbols: int = 0,
+        task_id: str | None = None,
+        trigger_mode: str = "auto",
         updated_at: str,
         message: str = "",
     ) -> None:
@@ -132,17 +191,107 @@ class KlineSQLiteStore:
             conn.execute(
                 """
                 INSERT INTO kline_sync_state (
-                    id, last_attempt_trade_date, last_success_trade_date, status, symbol_count, updated_at, message
-                ) VALUES (1, ?, ?, ?, ?, ?, ?)
+                    id, last_attempt_trade_date, last_success_trade_date, status, symbol_count,
+                    total_symbols, synced_symbols, success_symbols, failed_symbols, task_id, trigger_mode,
+                    updated_at, message
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     last_attempt_trade_date=excluded.last_attempt_trade_date,
                     last_success_trade_date=excluded.last_success_trade_date,
                     status=excluded.status,
                     symbol_count=excluded.symbol_count,
+                    total_symbols=excluded.total_symbols,
+                    synced_symbols=excluded.synced_symbols,
+                    success_symbols=excluded.success_symbols,
+                    failed_symbols=excluded.failed_symbols,
+                    task_id=excluded.task_id,
+                    trigger_mode=excluded.trigger_mode,
                     updated_at=excluded.updated_at,
                     message=excluded.message
                 """,
-                (attempt_trade_date, success_trade_date, status, symbol_count, updated_at, message),
+                (
+                    attempt_trade_date,
+                    success_trade_date,
+                    status,
+                    symbol_count,
+                    total_symbols,
+                    synced_symbols,
+                    success_symbols,
+                    failed_symbols,
+                    task_id,
+                    trigger_mode,
+                    updated_at,
+                    message,
+                ),
+            )
+            conn.commit()
+
+    def start_sync_task(self, *, task_id: str, trigger_mode: str, trade_date: str, total_symbols: int, started_at: str) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO kline_sync_tasks(
+                    task_id, trigger_mode, trade_date, status, total_symbols, synced_symbols, success_symbols, failed_symbols,
+                    started_at, finished_at, message
+                ) VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?, NULL, '开始同步')
+                """,
+                (task_id, trigger_mode, trade_date, total_symbols, started_at),
+            )
+            conn.commit()
+
+    def update_sync_task_progress(
+        self,
+        *,
+        task_id: str,
+        synced_symbols: int,
+        success_symbols: int,
+        failed_symbols: int,
+        message: str,
+    ) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                UPDATE kline_sync_tasks
+                SET synced_symbols = ?, success_symbols = ?, failed_symbols = ?, message = ?
+                WHERE task_id = ?
+                """,
+                (synced_symbols, success_symbols, failed_symbols, message, task_id),
+            )
+            conn.commit()
+
+    def finish_sync_task(self, *, task_id: str, status: str, finished_at: str, message: str) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                UPDATE kline_sync_tasks
+                SET status = ?, finished_at = ?, message = ?
+                WHERE task_id = ?
+                """,
+                (status, finished_at, message, task_id),
+            )
+            conn.commit()
+
+    def add_sync_task_detail(
+        self,
+        *,
+        task_id: str,
+        symbol: str,
+        status: str,
+        elapsed_ms: int,
+        error_message: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (task_id, symbol, status, elapsed_ms, error_message, created_at),
             )
             conn.commit()
 
@@ -156,14 +305,113 @@ class KlineSQLiteStore:
                     "last_success_trade_date": None,
                     "status": "idle",
                     "symbol_count": 0,
+                    "total_symbols": 0,
+                    "synced_symbols": 0,
+                    "success_symbols": 0,
+                    "failed_symbols": 0,
+                    "task_id": None,
+                    "trigger_mode": "auto",
                     "updated_at": "",
                     "message": "",
                 }
+            total_symbols = int(row["total_symbols"] or 0)
+            synced_symbols = int(row["synced_symbols"] or 0)
             return {
                 "last_attempt_trade_date": row["last_attempt_trade_date"],
                 "last_success_trade_date": row["last_success_trade_date"],
                 "status": row["status"],
                 "symbol_count": int(row["symbol_count"]),
+                "total_symbols": total_symbols,
+                "synced_symbols": synced_symbols,
+                "success_symbols": int(row["success_symbols"] or 0),
+                "failed_symbols": int(row["failed_symbols"] or 0),
+                "task_id": row["task_id"],
+                "trigger_mode": row["trigger_mode"] or "auto",
+                "progress_pct": round((synced_symbols / total_symbols) * 100, 2) if total_symbols > 0 else 0.0,
                 "updated_at": row["updated_at"],
                 "message": row["message"],
             }
+
+    def list_sync_tasks(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        safe_page = max(1, int(page))
+        safe_size = max(1, min(int(page_size), 200))
+        offset = (safe_page - 1) * safe_size
+        with self._connect() as conn:
+            self._init_schema(conn)
+            total = conn.execute("SELECT COUNT(*) AS c FROM kline_sync_tasks").fetchone()["c"]
+            rows = conn.execute(
+                """
+                SELECT task_id, trigger_mode, trade_date, status, total_symbols, synced_symbols, success_symbols, failed_symbols,
+                       started_at, finished_at, message
+                FROM kline_sync_tasks
+                ORDER BY started_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (safe_size, offset),
+            ).fetchall()
+        items = [
+            {
+                "task_id": row["task_id"],
+                "trigger_mode": row["trigger_mode"],
+                "trade_date": row["trade_date"],
+                "status": row["status"],
+                "total_symbols": int(row["total_symbols"] or 0),
+                "synced_symbols": int(row["synced_symbols"] or 0),
+                "success_symbols": int(row["success_symbols"] or 0),
+                "failed_symbols": int(row["failed_symbols"] or 0),
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "message": row["message"],
+            }
+            for row in rows
+        ]
+        return {"page": safe_page, "page_size": safe_size, "total": int(total), "items": items}
+
+    def get_sync_task_detail(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            task = conn.execute(
+                """
+                SELECT task_id, trigger_mode, trade_date, status, total_symbols, synced_symbols, success_symbols, failed_symbols,
+                       started_at, finished_at, message
+                FROM kline_sync_tasks
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                return None
+            details = conn.execute(
+                """
+                SELECT symbol, status, elapsed_ms, error_message, created_at
+                FROM kline_sync_task_details
+                WHERE task_id = ?
+                ORDER BY id ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return {
+            "task": {
+                "task_id": task["task_id"],
+                "trigger_mode": task["trigger_mode"],
+                "trade_date": task["trade_date"],
+                "status": task["status"],
+                "total_symbols": int(task["total_symbols"] or 0),
+                "synced_symbols": int(task["synced_symbols"] or 0),
+                "success_symbols": int(task["success_symbols"] or 0),
+                "failed_symbols": int(task["failed_symbols"] or 0),
+                "started_at": task["started_at"],
+                "finished_at": task["finished_at"],
+                "message": task["message"],
+            },
+            "items": [
+                {
+                    "symbol": row["symbol"],
+                    "status": row["status"],
+                    "elapsed_ms": int(row["elapsed_ms"] or 0),
+                    "error_message": row["error_message"] or "",
+                    "created_at": row["created_at"],
+                }
+                for row in details
+            ],
+        }
