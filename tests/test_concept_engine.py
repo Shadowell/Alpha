@@ -1,3 +1,5 @@
+import asyncio
+
 import pandas as pd
 
 from app.services.concept_engine import build_concept_heat, build_top_tags, map_stock_concepts
@@ -11,7 +13,7 @@ class FakeProvider:
             "汽车": pd.DataFrame({"代码": ["000001", "000003"], "涨跌幅": [3.0, 2.0]}),
         }
 
-    def get_all_concepts(self, cache_seconds=30):
+    async def get_all_concepts(self, cache_seconds=30):
         return pd.DataFrame(
             {
                 "板块名称": ["算力", "机器人", "汽车"],
@@ -22,17 +24,17 @@ class FakeProvider:
             }
         )
 
-    def get_concept_constituents(self, concept_name):
+    async def get_concept_constituents(self, concept_name):
         return self.constituents.get(concept_name, pd.DataFrame())
 
 
 def test_concept_heat_and_tags_order():
     provider = FakeProvider()
-    heat_df = build_concept_heat(provider, top_n=3)
+    heat_df = asyncio.run(build_concept_heat(provider, top_n=3))
     assert not heat_df.empty
     assert heat_df.iloc[0]["板块名称"] == "算力"
 
-    mapping = map_stock_concepts(provider, {"000001"}, heat_df)
+    mapping = asyncio.run(map_stock_concepts(provider, {"000001"}, heat_df))
     tags = build_top_tags(mapping["000001"], top_k=3)
     assert len(tags) == 3
     assert tags[0]["name"] == "算力"
@@ -53,7 +55,7 @@ def test_concept_heat_uses_precomputed_limit_up_count():
             "领涨股票": ["a", "b", "c"],
         }
     )
-    out = build_concept_heat(provider, top_n=3, concepts_df=concepts_df)
+    out = asyncio.run(build_concept_heat(provider, top_n=3, concepts_df=concepts_df))
     assert "涨停家数" in out.columns
     mapped = {row["板块名称"]: int(row["涨停家数"]) for _, row in out.iterrows()}
     assert mapped["A"] == 8

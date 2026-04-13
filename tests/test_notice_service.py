@@ -1,3 +1,5 @@
+import asyncio
+
 import pandas as pd
 
 from app.services.notice_service import NoticeService
@@ -33,16 +35,14 @@ def test_notice_screen_and_detail(monkeypatch, tmp_path):
     store = SQLiteStateStore(str(tmp_path / "state.db"))
     service = NoticeService(state_store=store, kline_cache_service=FakeKlineCache())
 
-    out = service.run_notice_screen(notice_date="20260413", limit=10)
-    result = __import__("asyncio").run(out)
+    result = asyncio.run(service.run_notice_screen(notice_date="20260413", limit=10))
     assert result["success"] is True
     assert result["candidate_count"] >= 1
 
-    funnel = __import__("asyncio").run(service.get_notice_funnel())
+    funnel = asyncio.run(service.get_notice_funnel())
     assert funnel.stats["buy"] >= 1
     symbol = funnel.pools["buy"][0].symbol
 
-    detail = __import__("asyncio").run(service.get_notice_detail(symbol))
+    detail = asyncio.run(service.get_notice_detail(symbol))
     assert detail.symbol == symbol
     assert len(detail.kline) == 2
-

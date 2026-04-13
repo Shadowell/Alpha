@@ -7,11 +7,13 @@ from app.services.kline_store import KlineSQLiteStore
 
 
 class FakeProvider:
-    def get_trade_days(self):
+    symbol_name_cache = None
+
+    async def get_trade_days(self):
         dates = pd.bdate_range("2026-02-20", "2026-04-10")
         return pd.DataFrame({"trade_date": dates.date.astype(str)})
 
-    def get_realtime_snapshot(self, **kwargs):
+    async def get_realtime_snapshot(self, **kwargs):
         return pd.DataFrame(
             {
                 "代码": ["000001", "600111", "300001"],
@@ -19,13 +21,13 @@ class FakeProvider:
             }
         )
 
-    def get_symbol_name_map(self, cache_ttl_seconds=3600):
+    async def get_symbol_name_map(self, cache_ttl_seconds=3600):
         return {"000001": "平安银行", "600111": "北方稀土", "300001": "创业测试"}
 
-    def get_snapshot_spot(self, **kwargs):
+    async def get_snapshot_spot(self, **kwargs):
         return pd.DataFrame()
 
-    def get_hist(self, symbol, start_date, end_date, adjust="qfq"):
+    async def get_hist(self, symbol, start_date, end_date, adjust="qfq"):
         dates = pd.bdate_range("2026-03-01", "2026-04-10").date.astype(str)
         return pd.DataFrame(
             {

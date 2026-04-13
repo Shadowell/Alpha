@@ -72,7 +72,6 @@ class FunnelService:
     def _load_state(self) -> None:
         payload = self.state_store.load_state()
         if payload is None and self.legacy_json_file.exists():
-            # One-time compatibility migration from old JSON persistence.
             try:
                 payload = json.loads(self.legacy_json_file.read_text(encoding="utf-8"))
                 self.state_store.save_state(payload)
@@ -159,118 +158,124 @@ class FunnelService:
         except Exception:
             return pd.DataFrame()
 
-    def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
+    async def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
         now = now_cn()
         after_close = is_after_close(now)
         if after_close:
             cache_df = self._build_cache_snapshot(self.trade_date)
             if not cache_df.empty:
                 return cache_df, "history_cache"
-            spot_df = self.provider.get_snapshot_spot()
+            spot_df = await self.provider.get_snapshot_spot()
             if not spot_df.empty:
                 return spot_df, "spot"
-            cache_fallback = self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
+            cache_fallback = await self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
             if not cache_fallback.empty:
                 return cache_fallback, "realtime_cache"
             return pd.DataFrame(), "none"
 
-        realtime_df = self.provider.get_realtime_snapshot()
+        realtime_df = await self.provider.get_realtime_snapshot()
         if not realtime_df.empty:
             return realtime_df, "realtime"
-        spot_df = self.provider.get_snapshot_spot()
+        spot_df = await self.provider.get_snapshot_spot()
         if not spot_df.empty:
             return spot_df, "spot"
-        cache_fallback = self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
+        cache_fallback = await self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
         if not cache_fallback.empty:
             return cache_fallback, "realtime_cache"
         return pd.DataFrame(), "none"
 
     async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
+        started = time.time()
+
         async with self.lock:
-            started = time.time()
             await self.ensure_trade_date(trade_date)
+            current_trade_date = self.trade_date
+            config = self.config
 
-            snapshot, source_used = self._pick_screen_snapshot()
-            if snapshot.empty:
-                raise RuntimeError("实时行情数据获取失败，请稍后重试")
+        snapshot, source_used = await self._pick_screen_snapshot()
+        if snapshot.empty:
+            raise RuntimeError("实时行情数据获取失败，请稍后重试")
 
-            trade_days = self.provider.get_trade_days()
+        trade_days = await self.provider.get_trade_days()
+        try:
+            start_date, end_date = get_last_n_trade_window(trade_days, current_trade_date, config.period_days)
+        except ValueError:
+            raise RuntimeError("交易日历不可用，无法执行盘后筛选")
+
+        universe = prefilter_universe(snapshot, config)
+        universe.sort(key=lambda x: x.get("amount", 0), reverse=True)
+        universe = universe[:500]
+
+        entries: dict[str, dict[str, Any]] = {}
+        for stock in universe:
+            symbol = stock["symbol"]
             try:
-                start_date, end_date = get_last_n_trade_window(trade_days, self.trade_date, self.config.period_days)
-            except ValueError:
-                raise RuntimeError("交易日历不可用，无法执行盘后筛选")
+                hist = await self.provider.get_hist(symbol, start_date, end_date)
+            except Exception:
+                continue
 
-            universe = prefilter_universe(snapshot, self.config)
-            universe.sort(key=lambda x: x.get("amount", 0), reverse=True)
-            universe = universe[:500]
+            passed, reasons, metrics = analyze_adjustment_candidate(stock, hist, config)
+            if not passed:
+                continue
 
-            entries: dict[str, dict[str, Any]] = {}
-            for stock in universe:
-                symbol = stock["symbol"]
-                try:
-                    hist = self.provider.get_hist(symbol, start_date, end_date)
-                except Exception:
-                    continue
+            entries[symbol] = {
+                "symbol": symbol,
+                "name": stock["name"],
+                "pool": POOL_CANDIDATE,
+                "recommended_pool": None,
+                "score": 0.0,
+                "prev_score": 0.0,
+                "score_breakdown": {
+                    "breakout_strength": 0,
+                    "volume_quality": 0,
+                    "intraday_structure": 0,
+                    "risk_penalty": 0,
+                    "total": 0,
+                },
+                "metrics": {},
+                "warnings": [],
+                "reasons": reasons,
+                "transitions": {
+                    "above60_count": 0,
+                    "breakout_confirm_count": 0,
+                    "below65_count": 0,
+                },
+                "breakout_level": float(metrics.get("breakout_level", 0)),
+                "avg_amount20": float(metrics.get("avg_amount20", 0)),
+                "concept_tags": [],
+                "concept_candidates": [],
+                "trigger_log": [
+                    {
+                        "time": now_cn().isoformat(),
+                        "level": "info",
+                        "note": "盘后进入调整期候选池",
+                    }
+                ],
+                "updated_at": now_cn().isoformat(),
+            }
 
-                passed, reasons, metrics = analyze_adjustment_candidate(stock, hist, self.config)
-                if not passed:
-                    continue
-
-                entries[symbol] = {
-                    "symbol": symbol,
-                    "name": stock["name"],
-                    "pool": POOL_CANDIDATE,
-                    "recommended_pool": None,
-                    "score": 0.0,
-                    "prev_score": 0.0,
-                    "score_breakdown": {
-                        "breakout_strength": 0,
-                        "volume_quality": 0,
-                        "intraday_structure": 0,
-                        "risk_penalty": 0,
-                        "total": 0,
-                    },
-                    "metrics": {},
-                    "warnings": [],
-                    "reasons": reasons,
-                    "transitions": {
-                        "above60_count": 0,
-                        "breakout_confirm_count": 0,
-                        "below65_count": 0,
-                    },
-                    "breakout_level": float(metrics.get("breakout_level", 0)),
-                    "avg_amount20": float(metrics.get("avg_amount20", 0)),
-                    "concept_tags": [],
-                    "concept_candidates": [],
-                    "trigger_log": [
-                        {
-                            "time": now_cn().isoformat(),
-                            "level": "info",
-                            "note": "盘后进入调整期候选池",
-                        }
-                    ],
-                    "updated_at": now_cn().isoformat(),
-                }
-
+        async with self.lock:
             self.entries = entries
             if self.entries:
-                await self.refresh_scores(symbol=None, force_concept_refresh=True)
+                await self._refresh_scores_unlocked(symbol=None, force_concept_refresh=True)
             else:
-                await self.refresh_market_panels(force=True)
+                await self._refresh_market_panels_unlocked(force=True)
             self.updated_at = now_cn().isoformat()
             self.frozen = is_after_close(now_cn())
             self._save_state()
-            candidate_count = len(entries)
-            elapsed_ms = int((time.time() - started) * 1000)
-            return {
-                "candidate_count": candidate_count,
-                "source_used": source_used,
-                "elapsed_ms": elapsed_ms,
-                "message": f"筛选完成，候选池{candidate_count}只",
-            }
 
-    async def refresh_scores(self, symbol: str | None = None, force_concept_refresh: bool = False) -> None:
-        snapshot = self.provider.get_realtime_snapshot()
+        candidate_count = len(entries)
+        elapsed_ms = int((time.time() - started) * 1000)
+        return {
+            "candidate_count": candidate_count,
+            "source_used": source_used,
+            "elapsed_ms": elapsed_ms,
+            "message": f"筛选完成，候选池{candidate_count}只",
+        }
+
+    async def _refresh_scores_unlocked(self, symbol: str | None = None, force_concept_refresh: bool = False) -> None:
+        """Refresh scores. Caller MUST hold self.lock."""
+        snapshot = await self.provider.get_realtime_snapshot()
         if snapshot.empty or not self.entries:
             return
 
@@ -307,15 +312,20 @@ class FunnelService:
                 entry["recommended_pool"] = None
                 self._record_trigger(entry, "分数低于65连续5分钟，自动降级至重点池", "warn")
 
-        await self.refresh_market_panels(force=force_concept_refresh)
+        await self._refresh_market_panels_unlocked(force=force_concept_refresh)
         self.updated_at = now_cn().isoformat()
         self._save_state()
 
-    async def _refresh_concepts(self, force: bool = False) -> None:
+    async def refresh_scores(self, symbol: str | None = None, force_concept_refresh: bool = False) -> None:
+        async with self.lock:
+            await self._refresh_scores_unlocked(symbol, force_concept_refresh)
+
+    async def _refresh_concepts_unlocked(self, force: bool = False) -> None:
+        """Refresh concepts. Caller MUST hold self.lock."""
         if self.frozen and is_after_close(now_cn()) and not force:
             return
 
-        concept_heat_df = build_concept_heat(self.provider, top_n=120)
+        concept_heat_df = await build_concept_heat(self.provider, top_n=120)
         if concept_heat_df.empty:
             print("[funnel] concept refresh skipped: empty concept source")
             return
@@ -324,22 +334,22 @@ class FunnelService:
         symbols = set(self.entries.keys())
         stock_map: dict[str, list[dict[str, Any]]]
         if data_source == "em":
-            stock_map = map_stock_concepts(self.provider, symbols, concept_heat_df)
+            stock_map = await map_stock_concepts(self.provider, symbols, concept_heat_df)
             for symbol, entry in self.entries.items():
                 concepts = stock_map.get(symbol, [])
                 entry["concept_candidates"] = concepts
                 entry["concept_tags"] = build_top_tags(concepts, top_k=3)
         else:
-            # THS fallback has no direct constituents map; keep existing stock tags.
             stock_map = {s: self.entries.get(s, {}).get("concept_candidates", []) for s in symbols}
 
         selected_symbols = {s for s, e in self.entries.items() if e.get("pool") in VALID_POOLS}
         self.hot_concepts = build_hot_concepts_payload(concept_heat_df, selected_symbols, stock_map, top_n=10)
 
-    async def _refresh_hot_stocks(self, force: bool = False) -> None:
+    async def _refresh_hot_stocks_unlocked(self, force: bool = False) -> None:
+        """Refresh hot stocks. Caller MUST hold self.lock."""
         if self.frozen and is_after_close(now_cn()) and not force:
             return
-        hot_df = self.provider.get_hot_stocks(top_n=10)
+        hot_df = await self.provider.get_hot_stocks(top_n=10)
         if hot_df.empty:
             return
         self.hot_stocks = []
@@ -355,9 +365,14 @@ class FunnelService:
                 }
             )
 
+    async def _refresh_market_panels_unlocked(self, force: bool = False) -> None:
+        """Refresh market panels. Caller MUST hold self.lock."""
+        await self._refresh_concepts_unlocked(force=force)
+        await self._refresh_hot_stocks_unlocked(force=force)
+
     async def refresh_market_panels(self, force: bool = False) -> None:
-        await self._refresh_concepts(force=force)
-        await self._refresh_hot_stocks(force=force)
+        async with self.lock:
+            await self._refresh_market_panels_unlocked(force=force)
 
     async def move_pool(self, symbol: str, target_pool: str, note: str | None = None) -> MovePoolResponse:
         async with self.lock:
@@ -379,7 +394,7 @@ class FunnelService:
             entry["updated_at"] = now_cn().isoformat()
             self._record_trigger(entry, note or f"手动迁移: {old_pool} -> {target_pool}")
 
-            await self.refresh_market_panels(force=True)
+            await self._refresh_market_panels_unlocked(force=True)
             self.updated_at = now_cn().isoformat()
             self._save_state()
             return MovePoolResponse(success=True, message="迁移成功", symbol=symbol, pool=target_pool)
@@ -387,7 +402,7 @@ class FunnelService:
     async def recompute(self, symbol: str | None = None) -> None:
         async with self.lock:
             force_refresh = not (self.frozen and is_after_close(now_cn()))
-            await self.refresh_scores(symbol=symbol, force_concept_refresh=force_refresh)
+            await self._refresh_scores_unlocked(symbol=symbol, force_concept_refresh=force_refresh)
 
     async def get_funnel(self, trade_date: str | None = None) -> FunnelResponse:
         async with self.lock:
@@ -437,11 +452,10 @@ class FunnelService:
         async with self.lock:
             await self.ensure_trade_date(trade_date)
             if not self.hot_concepts:
-                await self._refresh_concepts(force=True)
+                await self._refresh_concepts_unlocked(force=True)
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
             elif len(self.hot_concepts) > 10:
-                # Backward compatibility for old persisted snapshots.
                 self.hot_concepts = self.hot_concepts[:10]
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
@@ -456,7 +470,7 @@ class FunnelService:
         async with self.lock:
             await self.ensure_trade_date(trade_date)
             if not self.hot_stocks:
-                await self._refresh_hot_stocks(force=True)
+                await self._refresh_hot_stocks_unlocked(force=True)
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
             return HotStocksResponse(
@@ -474,60 +488,62 @@ class FunnelService:
             entry = self.entries.get(symbol)
             if not entry:
                 raise KeyError(symbol)
+            entry_copy = dict(entry)
+            current_trade_date = self.trade_date
 
-            trade_days = self.provider.get_trade_days()
+        trade_days = await self.provider.get_trade_days()
+        try:
+            days = max(10, min(kline_days, 180))
+            start_date, end_date = get_last_n_trade_window(trade_days, current_trade_date, days)
+            hist = await self.provider.get_hist(symbol, start_date, end_date)
+        except ValueError:
+            hist = pd.DataFrame()
+
+        kline = []
+        if self.kline_cache_service is not None:
             try:
-                days = max(10, min(kline_days, 180))
-                start_date, end_date = get_last_n_trade_window(trade_days, self.trade_date, days)
-                hist = self.provider.get_hist(symbol, start_date, end_date)
-            except ValueError:
-                hist = pd.DataFrame()
+                cached_rows = self.kline_cache_service.get_kline(symbol, days)
+            except Exception:
+                cached_rows = []
+            if cached_rows:
+                kline = [
+                    {
+                        "date": str(r.get("date", "")),
+                        "open": float(r.get("open", 0)),
+                        "high": float(r.get("high", 0)),
+                        "low": float(r.get("low", 0)),
+                        "close": float(r.get("close", 0)),
+                        "volume": float(r.get("volume", 0)),
+                    }
+                    for r in cached_rows
+                ]
 
-            kline = []
-            if self.kline_cache_service is not None:
-                try:
-                    cached_rows = self.kline_cache_service.get_kline(symbol, days)
-                except Exception:
-                    cached_rows = []
-                if cached_rows:
-                    kline = [
-                        {
-                            "date": str(r.get("date", "")),
-                            "open": float(r.get("open", 0)),
-                            "high": float(r.get("high", 0)),
-                            "low": float(r.get("low", 0)),
-                            "close": float(r.get("close", 0)),
-                            "volume": float(r.get("volume", 0)),
-                        }
-                        for r in cached_rows
-                    ]
+        if not kline and not hist.empty:
+            for _, row in hist.tail(days).iterrows():
+                kline.append(
+                    {
+                        "date": str(row.get("日期", "")),
+                        "open": float(row.get("开盘", 0)),
+                        "high": float(row.get("最高", 0)),
+                        "low": float(row.get("最低", 0)),
+                        "close": float(row.get("收盘", 0)),
+                        "volume": float(row.get("成交量", 0)),
+                    }
+                )
 
-            if not kline and not hist.empty:
-                for _, row in hist.tail(days).iterrows():
-                    kline.append(
-                        {
-                            "date": str(row.get("日期", "")),
-                            "open": float(row.get("开盘", 0)),
-                            "high": float(row.get("最高", 0)),
-                            "low": float(row.get("最低", 0)),
-                            "close": float(row.get("收盘", 0)),
-                            "volume": float(row.get("成交量", 0)),
-                        }
-                    )
-
-            return StockDetailResponse(
-                symbol=entry["symbol"],
-                name=entry["name"],
-                pool=entry["pool"],
-                score=round(float(entry.get("score", 0)), 2),
-                recommended_pool=entry.get("recommended_pool"),
-                score_breakdown=entry.get("score_breakdown", {}),
-                metrics=entry.get("metrics", {}),
-                concept_tags=entry.get("concept_tags", []),
-                concept_candidates=entry.get("concept_candidates", []),
-                trigger_log=entry.get("trigger_log", []),
-                kline=kline,
-            )
+        return StockDetailResponse(
+            symbol=entry_copy["symbol"],
+            name=entry_copy["name"],
+            pool=entry_copy["pool"],
+            score=round(float(entry_copy.get("score", 0)), 2),
+            recommended_pool=entry_copy.get("recommended_pool"),
+            score_breakdown=entry_copy.get("score_breakdown", {}),
+            metrics=entry_copy.get("metrics", {}),
+            concept_tags=entry_copy.get("concept_tags", []),
+            concept_candidates=entry_copy.get("concept_candidates", []),
+            trigger_log=entry_copy.get("trigger_log", []),
+            kline=kline,
+        )
 
     async def tick(self) -> bool:
         async with self.lock:
@@ -539,12 +555,11 @@ class FunnelService:
             is_frozen = self.frozen
 
         if not has_entries and is_after_close(now_cn()):
-            # Keep API responsive after close; EOD screening is triggered manually via /api/jobs/eod-screen.
             return False
 
         if not has_entries:
             async with self.lock:
-                await self.refresh_market_panels(force=False)
+                await self._refresh_market_panels_unlocked(force=False)
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
             return False

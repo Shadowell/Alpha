@@ -6,10 +6,16 @@ from app.services.funnel_service import FunnelService
 
 
 class EmptyConceptProvider:
-    def get_all_concepts(self, cache_seconds=30):
+    async def get_all_concepts(self, cache_seconds=30):
         return pd.DataFrame()
 
-    def get_concept_constituents(self, concept_name):
+    async def get_concept_constituents(self, concept_name):
+        return pd.DataFrame()
+
+    async def get_hot_stocks(self, top_n=10, **kwargs):
+        return pd.DataFrame(columns=["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"])
+
+    async def get_realtime_snapshot(self, **kwargs):
         return pd.DataFrame()
 
 
@@ -18,7 +24,11 @@ def test_refresh_concepts_keeps_previous_hot_concepts_when_source_empty(tmp_path
     service = FunnelService(provider=provider, persist_db_path=str(tmp_path / "state.db"))
     service.hot_concepts = [{"name": "旧概念", "heat": 0.88, "change_pct": 2.1}]
 
-    asyncio.run(service._refresh_concepts(force=True))
+    async def _run():
+        async with service.lock:
+            await service._refresh_concepts_unlocked(force=True)
+
+    asyncio.run(_run())
 
     assert service.hot_concepts == [{"name": "旧概念", "heat": 0.88, "change_pct": 2.1}]
 

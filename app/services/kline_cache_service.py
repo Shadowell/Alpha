@@ -25,7 +25,7 @@ class KlineCacheService:
         self.store = store or KlineSQLiteStore()
         self.schedule_after = schedule_after
         self.window_days = max(10, min(window_days, 180))
-        self.lock = asyncio.Lock()
+        self._syncing = False
 
     async def run_if_due(self) -> bool:
         now = now_cn()
@@ -33,7 +33,7 @@ class KlineCacheService:
         if cur_time < self.schedule_after:
             return False
 
-        trade_date = self._resolve_latest_trade_date(now.date().isoformat())
+        trade_date = await self._resolve_latest_trade_date(now.date().isoformat())
         if not trade_date:
             return False
 
@@ -50,24 +50,54 @@ class KlineCacheService:
         force: bool = False,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
-        async with self.lock:
-            target_trade_date = trade_date or self._resolve_latest_trade_date(now_cn().date().isoformat())
-            if not target_trade_date:
-                return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
+        if self._syncing:
+            return {"success": False, "message": "同步任务正在执行中", "trade_date": trade_date or "", "symbol_count": 0}
+        self._syncing = True
+        try:
+            return await self._do_sync(trade_date=trade_date, force=force, trigger_mode=trigger_mode)
+        finally:
+            self._syncing = False
 
-            state = self.store.get_sync_state()
-            if not force and state.get("last_success_trade_date") == target_trade_date:
-                return {
-                    "success": True,
-                    "message": "当日已完成缓存",
-                    "trade_date": target_trade_date,
-                    "symbol_count": int(state.get("symbol_count", 0)),
-                }
+    async def _do_sync(
+        self,
+        trade_date: str | None = None,
+        force: bool = False,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        if not target_trade_date:
+            return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
 
+        state = self.store.get_sync_state()
+        if not force and state.get("last_success_trade_date") == target_trade_date:
+            return {
+                "success": True,
+                "message": "当日已完成缓存",
+                "trade_date": target_trade_date,
+                "symbol_count": int(state.get("symbol_count", 0)),
+            }
+
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=0,
+            total_symbols=0,
+            synced_symbols=0,
+            success_symbols=0,
+            failed_symbols=0,
+            task_id=None,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message="开始同步",
+        )
+
+        symbols = await self._load_symbol_list()
+        if not symbols:
             self.store.set_sync_state(
                 attempt_trade_date=target_trade_date,
                 success_trade_date=state.get("last_success_trade_date"),
-                status="running",
+                status="failed",
                 symbol_count=0,
                 total_symbols=0,
                 synced_symbols=0,
@@ -76,144 +106,126 @@ class KlineCacheService:
                 task_id=None,
                 trigger_mode=trigger_mode,
                 updated_at=now_cn().isoformat(),
-                message="开始同步",
+                message="股票列表为空",
             )
+            return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
-            symbols = await asyncio.to_thread(self._load_symbol_list)
-            if not symbols:
-                self.store.set_sync_state(
-                    attempt_trade_date=target_trade_date,
-                    success_trade_date=state.get("last_success_trade_date"),
-                    status="failed",
-                    symbol_count=0,
-                    total_symbols=0,
-                    synced_symbols=0,
-                    success_symbols=0,
-                    failed_symbols=0,
-                    task_id=None,
-                    trigger_mode=trigger_mode,
-                    updated_at=now_cn().isoformat(),
-                    message="股票列表为空",
-                )
-                return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
-
-            start_date, end_date = self._resolve_window(target_trade_date, self.window_days)
-            if not start_date or not end_date:
-                self.store.set_sync_state(
-                    attempt_trade_date=target_trade_date,
-                    success_trade_date=state.get("last_success_trade_date"),
-                    status="failed",
-                    symbol_count=0,
-                    total_symbols=0,
-                    synced_symbols=0,
-                    success_symbols=0,
-                    failed_symbols=0,
-                    task_id=None,
-                    trigger_mode=trigger_mode,
-                    updated_at=now_cn().isoformat(),
-                    message="交易窗口计算失败",
-                )
-                return {"success": False, "message": "交易窗口计算失败", "trade_date": target_trade_date, "symbol_count": 0}
-
-            task_id = uuid.uuid4().hex
-            started_at = now_cn().isoformat()
-            total = len(symbols)
-            self.store.start_sync_task(
-                task_id=task_id,
-                trigger_mode=trigger_mode,
-                trade_date=target_trade_date,
-                total_symbols=total,
-                started_at=started_at,
-            )
-            completed = 0
-            success_count = 0
-            failed_count = 0
-            now_iso = now_cn().isoformat()
-            for idx, symbol in enumerate(symbols):
-                start_symbol = pytime.time()
-                hist = await asyncio.to_thread(self.provider.get_hist, symbol, start_date, end_date)
-                rows = self._normalize_hist(hist)
-                if rows:
-                    self.store.upsert_symbol_klines(symbol, rows, now_iso)
-                    completed += 1
-                    success_count += 1
-                    self.store.add_sync_task_detail(
-                        task_id=task_id,
-                        symbol=symbol,
-                        status="success",
-                        elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                        error_message="",
-                        created_at=now_cn().isoformat(),
-                    )
-                else:
-                    failed_count += 1
-                    self.store.add_sync_task_detail(
-                        task_id=task_id,
-                        symbol=symbol,
-                        status="failed",
-                        elapsed_ms=int((pytime.time() - start_symbol) * 1000),
-                        error_message="历史数据为空",
-                        created_at=now_cn().isoformat(),
-                    )
-
-                synced = success_count + failed_count
-                if synced % 20 == 0 or synced == total:
-                    self.store.update_sync_task_progress(
-                        task_id=task_id,
-                        synced_symbols=synced,
-                        success_symbols=success_count,
-                        failed_symbols=failed_count,
-                        message=f"同步中 {synced}/{total}",
-                    )
-                # Explicitly yield so other HTTP requests remain responsive during long sync.
-                if idx % 10 == 0:
-                    await asyncio.sleep(0)
-                    self.store.set_sync_state(
-                        attempt_trade_date=target_trade_date,
-                        success_trade_date=state.get("last_success_trade_date"),
-                        status="running",
-                        symbol_count=completed,
-                        total_symbols=total,
-                        synced_symbols=synced,
-                        success_symbols=success_count,
-                        failed_symbols=failed_count,
-                        task_id=task_id,
-                        trigger_mode=trigger_mode,
-                        updated_at=now_cn().isoformat(),
-                        message=f"同步中 {synced}/{total}",
-                    )
-
-            final_status = "success" if completed > 0 else "failed"
-            final_msg = "同步完成" if completed > 0 else "同步失败"
-            self.store.finish_sync_task(
-                task_id=task_id,
-                status=final_status,
-                finished_at=now_cn().isoformat(),
-                message=final_msg,
-            )
+        start_date, end_date = await self._resolve_window(target_trade_date, self.window_days)
+        if not start_date or not end_date:
             self.store.set_sync_state(
                 attempt_trade_date=target_trade_date,
-                success_trade_date=target_trade_date if completed > 0 else state.get("last_success_trade_date"),
-                status=final_status,
-                symbol_count=completed,
-                total_symbols=total,
-                synced_symbols=success_count + failed_count,
-                success_symbols=success_count,
-                failed_symbols=failed_count,
-                task_id=task_id,
+                success_trade_date=state.get("last_success_trade_date"),
+                status="failed",
+                symbol_count=0,
+                total_symbols=0,
+                synced_symbols=0,
+                success_symbols=0,
+                failed_symbols=0,
+                task_id=None,
                 trigger_mode=trigger_mode,
                 updated_at=now_cn().isoformat(),
-                message=final_msg,
+                message="交易窗口计算失败",
             )
-            return {
-                "success": completed > 0,
-                "message": final_msg,
-                "trade_date": target_trade_date,
-                "symbol_count": completed,
-                "task_id": task_id,
-                "total_symbols": total,
-                "synced_symbols": success_count + failed_count,
-            }
+            return {"success": False, "message": "交易窗口计算失败", "trade_date": target_trade_date, "symbol_count": 0}
+
+        task_id = uuid.uuid4().hex
+        started_at = now_cn().isoformat()
+        total = len(symbols)
+        self.store.start_sync_task(
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            trade_date=target_trade_date,
+            total_symbols=total,
+            started_at=started_at,
+        )
+        completed = 0
+        success_count = 0
+        failed_count = 0
+        now_iso = now_cn().isoformat()
+        for idx, symbol in enumerate(symbols):
+            start_symbol = pytime.time()
+            hist = await self.provider.get_hist(symbol, start_date, end_date)
+            rows = self._normalize_hist(hist)
+            if rows:
+                self.store.upsert_symbol_klines(symbol, rows, now_iso)
+                completed += 1
+                success_count += 1
+                self.store.add_sync_task_detail(
+                    task_id=task_id,
+                    symbol=symbol,
+                    status="success",
+                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
+                    error_message="",
+                    created_at=now_cn().isoformat(),
+                )
+            else:
+                failed_count += 1
+                self.store.add_sync_task_detail(
+                    task_id=task_id,
+                    symbol=symbol,
+                    status="failed",
+                    elapsed_ms=int((pytime.time() - start_symbol) * 1000),
+                    error_message="历史数据为空",
+                    created_at=now_cn().isoformat(),
+                )
+
+            synced = success_count + failed_count
+            if synced % 20 == 0 or synced == total:
+                self.store.update_sync_task_progress(
+                    task_id=task_id,
+                    synced_symbols=synced,
+                    success_symbols=success_count,
+                    failed_symbols=failed_count,
+                    message=f"同步中 {synced}/{total}",
+                )
+            if idx % 10 == 0:
+                await asyncio.sleep(0)
+                self.store.set_sync_state(
+                    attempt_trade_date=target_trade_date,
+                    success_trade_date=state.get("last_success_trade_date"),
+                    status="running",
+                    symbol_count=completed,
+                    total_symbols=total,
+                    synced_symbols=synced,
+                    success_symbols=success_count,
+                    failed_symbols=failed_count,
+                    task_id=task_id,
+                    trigger_mode=trigger_mode,
+                    updated_at=now_cn().isoformat(),
+                    message=f"同步中 {synced}/{total}",
+                )
+
+        final_status = "success" if completed > 0 else "failed"
+        final_msg = "同步完成" if completed > 0 else "同步失败"
+        self.store.finish_sync_task(
+            task_id=task_id,
+            status=final_status,
+            finished_at=now_cn().isoformat(),
+            message=final_msg,
+        )
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=target_trade_date if completed > 0 else state.get("last_success_trade_date"),
+            status=final_status,
+            symbol_count=completed,
+            total_symbols=total,
+            synced_symbols=success_count + failed_count,
+            success_symbols=success_count,
+            failed_symbols=failed_count,
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message=final_msg,
+        )
+        return {
+            "success": completed > 0,
+            "message": final_msg,
+            "trade_date": target_trade_date,
+            "symbol_count": completed,
+            "task_id": task_id,
+            "total_symbols": total,
+            "synced_symbols": success_count + failed_count,
+        }
 
     def get_kline(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         clean_symbol = str(symbol).strip()
@@ -267,7 +279,11 @@ class KlineCacheService:
                 "amount": float(row["amount"]),
             }
 
-        name_map = self.provider.get_symbol_name_map()
+        # build_snapshot_for_screen is called from sync context in funnel_service;
+        # provider.get_symbol_name_map is now async, so use cached data if available.
+        name_map: dict[str, str] = {}
+        if self.provider.symbol_name_cache is not None:
+            _, name_map = self.provider.symbol_name_cache
         for symbol, item in latest_map.items():
             close = float(item["close"])
             pre_close = float(prev_close_map.get(symbol, close))
@@ -289,8 +305,8 @@ class KlineCacheService:
             )
         return pd.DataFrame(rows)
 
-    def _resolve_latest_trade_date(self, base_date: str) -> str:
-        trade_days = self.provider.get_trade_days()
+    async def _resolve_latest_trade_date(self, base_date: str) -> str:
+        trade_days = await self.provider.get_trade_days()
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return ""
         days = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
@@ -300,8 +316,8 @@ class KlineCacheService:
             return ""
         return valid.iloc[-1].isoformat()
 
-    def _resolve_window(self, trade_date: str, days: int) -> tuple[str, str]:
-        trade_days = self.provider.get_trade_days()
+    async def _resolve_window(self, trade_date: str, days: int) -> tuple[str, str]:
+        trade_days = await self.provider.get_trade_days()
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return "", ""
         dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
@@ -311,9 +327,9 @@ class KlineCacheService:
             return "", ""
         return selected.iloc[0].strftime("%Y%m%d"), selected.iloc[-1].strftime("%Y%m%d")
 
-    def _load_symbol_list(self) -> list[str]:
+    async def _load_symbol_list(self) -> list[str]:
         symbols: list[str] = []
-        name_map = self.provider.get_symbol_name_map() if hasattr(self.provider, "get_symbol_name_map") else {}
+        name_map = await self.provider.get_symbol_name_map()
         for code, name in name_map.items():
             n = str(name).upper()
             if not code or "ST" in n:
@@ -324,9 +340,9 @@ class KlineCacheService:
         if symbols:
             return sorted(set(symbols))
 
-        snapshot = self.provider.get_snapshot_spot() if hasattr(self.provider, "get_snapshot_spot") else pd.DataFrame()
+        snapshot = await self.provider.get_snapshot_spot()
         if snapshot.empty:
-            snapshot = self.provider.get_realtime_snapshot()
+            snapshot = await self.provider.get_realtime_snapshot()
         if snapshot.empty:
             return []
         for _, row in snapshot.iterrows():
