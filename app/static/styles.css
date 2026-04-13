@@ -490,10 +490,36 @@ button:disabled {
 }
 
 /* ── 规则引擎 ── */
+.rule-engine-card {
+  overflow: hidden;
+}
+
+.rule-engine-toggle {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0 !important;
+}
+
+.rule-engine-toggle:hover {
+  background: rgba(34, 211, 238, 0.04);
+  border-radius: 8px;
+}
+
+.rule-engine-arrow {
+  font-size: 12px;
+  color: var(--muted);
+  transition: transform 0.2s;
+}
+
 .rules-engine {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  margin-top: 10px;
+}
+
+.rules-engine.collapsed {
+  display: none;
 }
 
 .rules-loading {

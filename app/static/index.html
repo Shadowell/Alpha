@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413e" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260413f" />
 </head>
 <body>
   <header class="topbar">
@@ -27,12 +27,11 @@
       </section>
 
       <nav class="tab-bar">
-        <button class="tab-btn active" data-tab="funnel">漏斗选股</button>
+        <button class="tab-btn active" data-tab="funnel">策略选股</button>
         <button class="tab-btn" data-tab="notice">公告选股</button>
-        <button class="tab-btn" data-tab="rules">规则引擎</button>
       </nav>
 
-      <!-- ========== 漏斗选股 Tab ========== -->
+      <!-- ========== 策略选股 Tab ========== -->
       <section id="tab-funnel" class="tab-content active">
         <section class="panel card">
           <h2>热门概念大盘</h2>
@@ -91,16 +90,20 @@
           </div>
         </section>
       </section>
-
-      <!-- ========== 规则引擎 Tab ========== -->
-      <section id="tab-rules" class="tab-content">
-        <div id="rulesEngine" class="rules-engine">
-          <div class="rules-loading">加载规则引擎配置...</div>
-        </div>
-      </section>
     </section>
 
     <aside class="right-panel">
+      <!-- 规则引擎配置（可折叠） -->
+      <section class="panel card rule-engine-card">
+        <div class="panel-title-row rule-engine-toggle" id="ruleEngineToggle">
+          <h2>规则引擎</h2>
+          <span class="rule-engine-arrow">&#9660;</span>
+        </div>
+        <div id="rulesEngine" class="rules-engine collapsed">
+          <div class="rules-loading">点击展开加载配置...</div>
+        </div>
+      </section>
+
       <section class="panel card">
         <div class="panel-title-row">
           <h2>历史同步</h2>
@@ -138,6 +141,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413e"></script>
+  <script src="/static/app.js?v=20260413f"></script>
 </body>
 </html>
