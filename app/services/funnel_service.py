@@ -334,7 +334,7 @@ class FunnelService:
             stock_map = {s: self.entries.get(s, {}).get("concept_candidates", []) for s in symbols}
 
         selected_symbols = {s for s, e in self.entries.items() if e.get("pool") in VALID_POOLS}
-        self.hot_concepts = build_hot_concepts_payload(concept_heat_df, selected_symbols, stock_map, top_n=20)
+        self.hot_concepts = build_hot_concepts_payload(concept_heat_df, selected_symbols, stock_map, top_n=10)
 
     async def _refresh_hot_stocks(self, force: bool = False) -> None:
         if self.frozen and is_after_close(now_cn()) and not force:
@@ -438,6 +438,11 @@ class FunnelService:
             await self.ensure_trade_date(trade_date)
             if not self.hot_concepts:
                 await self._refresh_concepts(force=True)
+                self.updated_at = now_cn().isoformat()
+                self._save_state()
+            elif len(self.hot_concepts) > 10:
+                # Backward compatibility for old persisted snapshots.
+                self.hot_concepts = self.hot_concepts[:10]
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
             return HotConceptResponse(

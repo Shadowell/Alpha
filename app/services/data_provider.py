@@ -140,10 +140,39 @@ class AkshareDataProvider:
                 adjust=adjust,
             )
             if df is None or df.empty:
-                return pd.DataFrame()
+                raise ValueError("empty from stock_zh_a_hist")
             return df.copy()
         except Exception as exc:
             print(f"[data_provider] get_hist failed for {symbol}: {exc}")
+        # Fallback: Tencent daily history is often more resilient in unstable network conditions.
+        try:
+            tx_symbol = _to_tx_symbol(symbol)
+            tx_df = ak.stock_zh_a_hist_tx(
+                symbol=tx_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
+            if tx_df is None or tx_df.empty:
+                return pd.DataFrame()
+            payload = tx_df.copy()
+            rename_map = {
+                "date": "日期",
+                "open": "开盘",
+                "close": "收盘",
+                "high": "最高",
+                "low": "最低",
+                "amount": "成交量",
+            }
+            payload = payload.rename(columns=rename_map)
+            for col in ["开盘", "收盘", "最高", "最低", "成交量"]:
+                if col in payload.columns:
+                    payload[col] = pd.to_numeric(payload[col], errors="coerce").fillna(0.0)
+            if "成交额" not in payload.columns:
+                payload["成交额"] = 0.0
+            return payload
+        except Exception as tx_exc:
+            print(f"[data_provider] get_hist tx fallback failed for {symbol}: {tx_exc}")
             return pd.DataFrame()
 
     def get_all_concepts(self, cache_seconds: int = 30) -> pd.DataFrame:
@@ -352,6 +381,17 @@ def normalize_symbol(value: Any) -> str:
     if raw.startswith(("SZ", "SH", "BJ")) and len(raw) > 2:
         raw = raw[2:]
     return raw
+
+
+def _to_tx_symbol(value: Any) -> str:
+    raw = normalize_symbol(value)
+    if raw.startswith(("60", "68")):
+        return f"sh{raw}"
+    if raw.startswith(("00", "30")):
+        return f"sz{raw}"
+    if raw.startswith(("43", "83", "87", "92")):
+        return f"bj{raw}"
+    return raw.lower()
 
 
 def normalize_hot_stocks_df(df: pd.DataFrame) -> pd.DataFrame:

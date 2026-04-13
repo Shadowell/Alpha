@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.models import MovePoolRequest, RecomputeRequest
-from app.services.data_provider import AkshareDataProvider
+from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
 from app.services.notice_service import NoticeService
@@ -187,12 +187,16 @@ async def get_kline_cache_log_detail(task_id: str):
 
 @app.get("/api/kline/{symbol}")
 async def get_cached_kline(symbol: str, days: int = 30):
-    items = kline_cache_service.get_kline(symbol=symbol, days=days)
+    clean_symbol = normalize_symbol(symbol)
+    items = kline_cache_service.get_kline(symbol=clean_symbol, days=days)
     if not items:
         trade_days = provider.get_trade_days()
         try:
             start_date, end_date = get_last_n_trade_window(trade_days, now_cn().date().isoformat(), max(10, min(days, 180)))
-            hist = provider.get_hist(symbol=symbol, start_date=start_date, end_date=end_date)
+            hist = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_hist, clean_symbol, start_date, end_date),
+                timeout=8.0,
+            )
         except Exception:
             hist = None
         if hist is not None and not hist.empty:
@@ -209,7 +213,7 @@ async def get_cached_kline(symbol: str, days: int = 30):
                     }
                 )
     return {
-        "symbol": symbol,
+        "symbol": clean_symbol,
         "days": max(1, min(days, 365)),
         "count": len(items),
         "items": items,

@@ -21,3 +21,27 @@ def test_refresh_concepts_keeps_previous_hot_concepts_when_source_empty(tmp_path
     asyncio.run(service._refresh_concepts(force=True))
 
     assert service.hot_concepts == [{"name": "旧概念", "heat": 0.88, "change_pct": 2.1}]
+
+
+def test_get_hot_concepts_clips_legacy_snapshot_to_top10(tmp_path):
+    provider = EmptyConceptProvider()
+    service = FunnelService(provider=provider, persist_db_path=str(tmp_path / "state.db"))
+    service.hot_concepts = [
+        {
+            "name": f"概念{i}",
+            "heat": 1.0 - i * 0.01,
+            "change_pct": 1.2,
+            "limit_up_count": 2,
+            "up_count": 20,
+            "down_count": 10,
+            "leader": f"龙头{i}",
+            "selected_count": i,
+        }
+        for i in range(15)
+    ]
+
+    payload = asyncio.run(service.get_hot_concepts())
+
+    assert len(payload.items) == 10
+    assert payload.items[0].name == "概念0"
+    assert payload.items[-1].name == "概念9"
