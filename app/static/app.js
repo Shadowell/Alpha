@@ -725,46 +725,6 @@ async function init() {
     }
   };
 
-  document.getElementById('btnEod').onclick = async () => {
-    const btn = document.getElementById('btnEod');
-    btn.disabled = true;
-    const oldText = btn.textContent;
-    btn.textContent = '执行中...';
-    setStatus('盘后筛选执行中...', 'info');
-    try {
-      const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
-      await reloadFunnel();
-      setStatus(`盘后筛选完成: 候选${payload.candidate_count || 0}只 · 来源${payload.source_used || '-'} · ${payload.elapsed_ms || 0}ms`, 'success');
-    } catch (err) {
-      setStatus(`盘后筛选失败: ${err.message}`, 'error');
-    } finally {
-      btn.textContent = oldText;
-      btn.disabled = false;
-    }
-  };
-
-  document.getElementById('btnRunNotice').onclick = async () => {
-    const btn = document.getElementById('btnRunNotice');
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '执行中...';
-    setStatus('公告筛选执行中...', 'info');
-    if (state.activeTab !== 'notice') switchTab('notice');
-    try {
-      const today = new Date();
-      const y = today.getFullYear();
-      const m = String(today.getMonth() + 1).padStart(2, '0');
-      const d = String(today.getDate()).padStart(2, '0');
-      const payload = await request(`/api/jobs/notice-screen?notice_date=${y}${m}${d}&limit=50`, { method: 'POST' });
-      await reloadNotice();
-      setStatus(`公告筛选完成: ${payload.candidate_count || 0}只 · 源:${payload.source || '-'}`, 'success');
-    } catch (err) {
-      setStatus(`公告筛选失败: ${err.message}`, 'error');
-    } finally {
-      btn.textContent = old;
-      btn.disabled = false;
-    }
-  };
 
   const syncDateInput = document.getElementById('syncDate');
   const today = new Date();
