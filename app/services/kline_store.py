@@ -457,6 +457,73 @@ class KlineSQLiteStore:
             "db_size_mb": round(db_size_bytes / (1024 * 1024), 2),
         }
 
+    def get_trade_dates_from_db(self, limit: int = 3000) -> list[str]:
+        """从 kline_daily 提取所有不重复的交易日（升序）。"""
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT trade_date FROM kline_daily ORDER BY trade_date ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [r["trade_date"] for r in rows]
+
+    def get_all_symbols(self) -> list[str]:
+        """从 kline_daily 提取所有不重复的 symbol。"""
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT symbol FROM kline_daily ORDER BY symbol ASC"
+            ).fetchall()
+        return [r["symbol"] for r in rows]
+
+    def get_latest_snapshot(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        """从 kline_daily 构建最近交易日的类行情快照，用于替代实时接口。"""
+        with self._connect() as conn:
+            self._init_schema(conn)
+            if not trade_date:
+                row = conn.execute("SELECT MAX(trade_date) AS d FROM kline_daily").fetchone()
+                trade_date = row["d"] if row and row["d"] else ""
+            if not trade_date:
+                return []
+
+            rows = conn.execute(
+                """
+                WITH latest AS (
+                    SELECT symbol, trade_date, open, high, low, close, volume, amount
+                    FROM kline_daily WHERE trade_date = ?
+                ),
+                prev AS (
+                    SELECT k.symbol, k.close AS prev_close
+                    FROM kline_daily k
+                    INNER JOIN (
+                        SELECT symbol, MAX(trade_date) AS td
+                        FROM kline_daily WHERE trade_date < ?
+                        GROUP BY symbol
+                    ) p ON k.symbol = p.symbol AND k.trade_date = p.td
+                )
+                SELECT l.symbol, l.open, l.high, l.low, l.close, l.volume, l.amount,
+                       COALESCE(p.prev_close, l.close) AS prev_close
+                FROM latest l
+                LEFT JOIN prev p ON l.symbol = p.symbol
+                """,
+                (trade_date, trade_date),
+            ).fetchall()
+
+        return [
+            {
+                "symbol": r["symbol"],
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "volume": float(r["volume"]),
+                "amount": float(r["amount"]),
+                "prev_close": float(r["prev_close"]),
+                "trade_date": trade_date,
+            }
+            for r in rows
+        ]
+
     def get_existing_pairs(self, trade_dates: list[str]) -> set[tuple[str, str]]:
         """Return set of (symbol, trade_date) that already exist in kline_daily."""
         if not trade_dates:

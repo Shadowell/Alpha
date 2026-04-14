@@ -295,27 +295,6 @@ class NoticeService:
                 }
                 for r in rows
             ]
-        if not kline and self.provider is not None:
-            try:
-                from app.services.time_utils import now_cn
-                from app.services.strategy_engine import get_last_n_trade_window
-                trade_days = await self.provider.get_trade_days()
-                start_date, end_date = get_last_n_trade_window(
-                    trade_days, now_cn().date().isoformat(), max(10, min(days, 180)),
-                )
-                hist = await self.provider.get_hist(symbol, start_date, end_date)
-                if hist is not None and not hist.empty:
-                    for _, row in hist.tail(days).iterrows():
-                        kline.append({
-                            "date": str(row.get("日期", "")),
-                            "open": float(row.get("开盘", 0)),
-                            "high": float(row.get("最高", 0)),
-                            "low": float(row.get("最低", 0)),
-                            "close": float(row.get("收盘", 0)),
-                            "volume": float(row.get("成交量", 0)),
-                        })
-            except Exception:
-                pass
         return NoticeDetailResponse(
             symbol=entry["symbol"],
             name=entry["name"],
