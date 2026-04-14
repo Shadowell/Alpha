@@ -460,15 +460,36 @@ window.addEventListener('resize', () => {
   if (state.marketChart) state.marketChart.resize();
 });
 
+function _calcMA(closes, period) {
+  const result = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += closes[i - j];
+    result.push(+(sum / period).toFixed(2));
+  }
+  return result;
+}
+
 function _klineOption(rows) {
   const categoryData = rows.map((x) => x.date);
   const candleData = rows.map((x) => [x.open, x.close, x.low, x.high]);
   const volumeData = rows.map((x, idx) => [idx, x.volume, x.close >= x.open ? 1 : -1]);
+  const closes = rows.map((x) => x.close);
+  const ma5 = _calcMA(closes, 5);
+  const ma10 = _calcMA(closes, 10);
+  const ma30 = _calcMA(closes, 30);
   return {
-    animation: false, backgroundColor: 'transparent', legend: { show: false },
+    animation: false, backgroundColor: 'transparent',
+    legend: {
+      show: true, top: 0, right: 20,
+      textStyle: { color: '#8da2bb', fontSize: 11 },
+      itemWidth: 14, itemHeight: 2, itemGap: 12,
+      data: ['MA5', 'MA10', 'MA30'],
+    },
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#334155' } },
-    grid: [{ left: 52, right: 18, top: 14, height: '62%' }, { left: 52, right: 18, top: '77%', height: '16%' }],
+    grid: [{ left: 52, right: 18, top: 28, height: '58%' }, { left: 52, right: 18, top: '77%', height: '16%' }],
     xAxis: [
       { type: 'category', data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
       { type: 'category', gridIndex: 1, data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { show: false }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
@@ -483,6 +504,9 @@ function _klineOption(rows) {
     ],
     series: [
       { name: '日K', type: 'candlestick', data: candleData, itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' } },
+      { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fbbf24' }, connectNulls: false },
+      { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
+      { name: 'MA30', type: 'line', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#a78bfa' }, connectNulls: false },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumeData, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
     ],
   };
