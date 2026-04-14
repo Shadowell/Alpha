@@ -14,8 +14,6 @@ const state = {
   noticeSelectedSymbol: null,
   noticeKeywords: [],
   activeKeywords: new Set(),
-  rulesEngine: null,
-  rulesDirty: {},
   predictChart: null,
 };
 
@@ -36,8 +34,6 @@ function setMeta() {
     if (!state.noticeFunnel) { meta.textContent = '暂无数据'; return; }
     const nf = state.noticeFunnel;
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
-  } else if (state.activeTab === 'rules') {
-    meta.textContent = '调整选股宇宙、形态识别、评分权重、池迁移等参数';
   } else if (state.activeTab === 'agent') {
     meta.textContent = 'Hermes 投研代理 — 观察系统表现、产出优化提案、人工审批执行';
   }
@@ -80,7 +76,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎', agent: 'Hermes Agent' };
+const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', agent: 'Hermes Agent' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -102,9 +98,6 @@ function switchTab(tab) {
   if (tab === 'notice') {
     loadNoticeKeywords();
     if (!state.noticeFunnel) reloadNotice();
-  }
-  if (tab === 'rules' && !state.rulesEngine) {
-    loadRulesEngine();
   }
   if (tab === 'agent') {
     loadAgentData();
@@ -495,175 +488,6 @@ async function selectNoticeSymbol(symbol) {
   } catch (err) {
     document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
     renderChartPlaceholder(`加载失败: ${err.message}`);
-  }
-}
-
-/* ==================== Rules Engine ==================== */
-
-async function loadRulesEngine() {
-  const root = document.getElementById('rulesEngine');
-  root.innerHTML = '<div class="rules-loading">加载规则引擎配置...</div>';
-  try {
-    state.rulesEngine = await request('/api/rules/engine');
-    state.rulesDirty = {};
-    renderRulesEngine();
-  } catch (err) {
-    root.innerHTML = `<div class="rules-loading">加载失败: ${err.message}</div>`;
-  }
-}
-
-function formatDisplayValue(val, fieldMeta) {
-  if (fieldMeta.display_divisor) {
-    return Number((val / fieldMeta.display_divisor).toFixed(2));
-  }
-  return val;
-}
-
-function parseInputValue(inputVal, fieldMeta) {
-  const n = Number(inputVal);
-  if (fieldMeta.display_divisor) {
-    return n * fieldMeta.display_divisor;
-  }
-  return n;
-}
-
-function renderRulesEngine() {
-  const root = document.getElementById('rulesEngine');
-  if (!state.rulesEngine) { root.innerHTML = '<div class="rules-loading">暂无数据</div>'; return; }
-  const { config, groups } = state.rulesEngine;
-  root.innerHTML = '';
-
-  groups.forEach((group) => {
-    const section = document.createElement('div');
-    section.className = 'rule-group';
-    const header = document.createElement('div');
-    header.className = 'rule-group-header';
-    header.innerHTML = `
-      <div><span class="rule-group-title">${group.label}</span><span class="rule-group-desc">${group.description}</span></div>
-      <span class="rule-group-toggle">&#9660;</span>
-    `;
-    header.onclick = () => section.classList.toggle('collapsed');
-
-    const body = document.createElement('div');
-    body.className = 'rule-group-body';
-
-    group.fields.forEach((f) => {
-      const val = config[f.key];
-      if (f.type === 'boolean') {
-        const wrap = document.createElement('div');
-        wrap.className = 'rule-field';
-        const toggle = document.createElement('div');
-        toggle.className = 'rule-toggle';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = `rule-${f.key}`;
-        cb.checked = !!val;
-        cb.onchange = () => { state.rulesDirty[f.key] = cb.checked; markDirtyFields(); };
-        const lbl = document.createElement('label');
-        lbl.htmlFor = `rule-${f.key}`;
-        lbl.textContent = f.label;
-        toggle.appendChild(cb);
-        toggle.appendChild(lbl);
-        wrap.appendChild(toggle);
-        body.appendChild(wrap);
-      } else {
-        const wrap = document.createElement('div');
-        wrap.className = 'rule-field';
-        const lbl = document.createElement('label');
-        lbl.htmlFor = `rule-${f.key}`;
-        lbl.textContent = f.label + (f.display_unit ? ` (${f.display_unit})` : f.unit ? ` (${f.unit})` : '');
-        const inp = document.createElement('input');
-        inp.type = 'number';
-        inp.id = `rule-${f.key}`;
-        inp.value = formatDisplayValue(val, f);
-        inp.dataset.key = f.key;
-        if (f.step != null) inp.step = f.display_divisor ? f.step / f.display_divisor : f.step;
-        if (f.min != null) inp.min = f.display_divisor ? f.min / f.display_divisor : f.min;
-        if (f.max != null) inp.max = f.display_divisor ? f.max / f.display_divisor : f.max;
-        inp.oninput = () => {
-          const newVal = parseInputValue(inp.value, f);
-          if (newVal !== val) {
-            state.rulesDirty[f.key] = newVal;
-            inp.classList.add('changed');
-          } else {
-            delete state.rulesDirty[f.key];
-            inp.classList.remove('changed');
-          }
-          markDirtyFields();
-        };
-        wrap.appendChild(lbl);
-        wrap.appendChild(inp);
-        body.appendChild(wrap);
-      }
-    });
-
-    section.appendChild(header);
-    section.appendChild(body);
-    root.appendChild(section);
-  });
-
-  const actions = document.createElement('div');
-  actions.className = 'rules-actions';
-  actions.innerHTML = `
-    <button id="btnSaveRules" class="btn-primary" disabled>保存修改</button>
-    <button id="btnResetRules" class="btn-reset">恢复默认</button>
-  `;
-  root.appendChild(actions);
-
-  document.getElementById('btnSaveRules').onclick = saveRules;
-  document.getElementById('btnResetRules').onclick = resetRules;
-}
-
-function markDirtyFields() {
-  const btn = document.getElementById('btnSaveRules');
-  if (!btn) return;
-  const hasDirty = Object.keys(state.rulesDirty).length > 0;
-  btn.disabled = !hasDirty;
-  btn.textContent = hasDirty ? `保存修改 (${Object.keys(state.rulesDirty).length}项)` : '保存修改';
-}
-
-async function saveRules() {
-  if (!Object.keys(state.rulesDirty).length) return;
-  const btn = document.getElementById('btnSaveRules');
-  btn.disabled = true;
-  btn.textContent = '保存中...';
-  try {
-    const result = await request('/api/rules/engine', {
-      method: 'PUT',
-      body: JSON.stringify(state.rulesDirty),
-    });
-    state.rulesEngine = result;
-    state.rulesDirty = {};
-    renderRulesEngine();
-    setStatus('规则引擎参数已保存', 'success');
-  } catch (err) {
-    setStatus(`保存失败: ${err.message}`, 'error');
-    btn.disabled = false;
-    btn.textContent = '保存修改';
-  }
-}
-
-async function resetRules() {
-  if (!confirm('确定恢复所有参数为默认值？')) return;
-  const btn = document.getElementById('btnResetRules');
-  btn.disabled = true;
-  btn.textContent = '重置中...';
-  try {
-    const defaultConfig = {};
-    const groups = state.rulesEngine?.groups || [];
-    groups.forEach((g) => g.fields.forEach((f) => { defaultConfig[f.key] = undefined; }));
-    const result = await request('/api/rules/engine', {
-      method: 'PUT',
-      body: JSON.stringify({ _reset: true }),
-    });
-    state.rulesEngine = result;
-    state.rulesDirty = {};
-    renderRulesEngine();
-    setStatus('规则引擎已恢复默认值', 'success');
-  } catch (err) {
-    setStatus(`重置失败: ${err.message}`, 'error');
-    btn.disabled = false;
-    btn.textContent = '恢复默认';
   }
 }
 
@@ -1097,9 +921,6 @@ async function init() {
     } else if (state.activeTab === 'notice') {
       await reloadNotice();
       setStatus('公告池已刷新', 'success');
-    } else if (state.activeTab === 'rules') {
-      await loadRulesEngine();
-      setStatus('规则引擎配置已刷新', 'success');
     } else if (state.activeTab === 'agent') {
       await loadAgentData();
       setStatus('Agent 数据已刷新', 'success');

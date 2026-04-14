@@ -45,9 +45,6 @@ class HermesRuntime:
     async def _tool_get_strategy_profile(self) -> dict:
         return await self.funnel.get_strategy_profile()
 
-    async def _tool_get_rule_engine(self) -> dict:
-        return await self.funnel.get_rule_engine()
-
     async def _tool_get_kline_sync_status(self) -> dict:
         return self.kline.get_sync_state()
 

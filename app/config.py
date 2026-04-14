@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 @dataclass
 class StrategyConfig:
-    """规则引擎配置 — 所有参数均可通过 API 动态调整。"""
+    """策略参数配置 — 所有参数均可通过 API 动态调整。"""
 
     # ── 选股宇宙预筛 ──
     close_price_threshold: float = 5.0
@@ -68,74 +68,6 @@ class StrategyConfig:
             if k in valid_fields:
                 current[k] = v
         return self.__class__(**current)
-
-
-# ── 规则分组元信息（用于前端渲染） ──
-RULE_GROUPS: list[dict[str, Any]] = [
-    {
-        "key": "universe",
-        "label": "选股宇宙",
-        "description": "预筛条件，过滤哪些股票进入分析范围",
-        "fields": [
-            {"key": "close_price_threshold", "label": "最低股价", "type": "number", "step": 0.5, "min": 0, "unit": "元"},
-            {"key": "market_capital_low", "label": "最低市值", "type": "number", "step": 1e8, "min": 0, "unit": "元", "display_divisor": 1e8, "display_unit": "亿"},
-            {"key": "market_capital_high", "label": "最高市值", "type": "number", "step": 1e8, "min": 0, "unit": "元", "display_divisor": 1e8, "display_unit": "亿"},
-            {"key": "exclude_st", "label": "排除 ST", "type": "boolean"},
-            {"key": "exclude_gem", "label": "排除创业板", "type": "boolean"},
-            {"key": "exclude_star", "label": "排除科创板", "type": "boolean"},
-            {"key": "universe_top_n", "label": "成交额 Top N", "type": "number", "step": 50, "min": 100, "max": 2000},
-        ],
-    },
-    {
-        "key": "pattern",
-        "label": "形态识别",
-        "description": "调整期缩量横盘突破形态的判定参数",
-        "fields": [
-            {"key": "period_days", "label": "回看天数", "type": "number", "step": 1, "min": 5, "max": 60},
-            {"key": "box_range_threshold", "label": "箱体振幅上限", "type": "number", "step": 0.01, "min": 0.01, "max": 1.0},
-            {"key": "amp_ratio_threshold", "label": "近5日振幅比上限", "type": "number", "step": 0.05, "min": 0.1, "max": 2.0},
-            {"key": "volume_shrink_threshold", "label": "缩量比上限", "type": "number", "step": 0.05, "min": 0.1, "max": 2.0},
-            {"key": "volume_recover_threshold", "label": "量能恢复比下限", "type": "number", "step": 0.05, "min": 0.1, "max": 2.0},
-            {"key": "pre_breakout_buffer", "label": "突破位缓冲系数", "type": "number", "step": 0.001, "min": 0.9, "max": 1.0},
-            {"key": "shadow_support_threshold", "label": "下影线支撑比", "type": "number", "step": 0.001, "min": 0},
-            {"key": "chase_risk_return", "label": "追高涨幅阈值", "type": "number", "step": 0.01, "min": 0, "max": 0.2},
-            {"key": "chase_risk_vol_ratio", "label": "追高量比阈值", "type": "number", "step": 0.1, "min": 0},
-        ],
-    },
-    {
-        "key": "scoring",
-        "label": "评分权重",
-        "description": "盘中实时评分各维度的权重和惩罚力度",
-        "fields": [
-            {"key": "score_weight_breakout", "label": "突破强度权重", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "score_weight_volume", "label": "量能质量权重", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "score_weight_above_vwap", "label": "高于VWAP权重", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "score_weight_close_ge_open", "label": "收>=开权重", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "score_weight_drawdown", "label": "回撤控制权重", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "penalty_gap_up", "label": "高开惩罚力度", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "penalty_drawdown", "label": "冲高回落惩罚", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "penalty_near_limit", "label": "接近涨停惩罚", "type": "number", "step": 1, "min": 0, "max": 50},
-            {"key": "near_limit_pct", "label": "涨停判定涨幅", "type": "number", "step": 0.1, "min": 5, "max": 20, "unit": "%"},
-        ],
-    },
-    {
-        "key": "transition",
-        "label": "池迁移规则",
-        "description": "股票在候选/重点/买入池之间自动迁移的阈值",
-        "fields": [
-            {"key": "focus_score_threshold", "label": "进入重点池分数", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "focus_score_immediate", "label": "立即进重点池分数", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "focus_consecutive_minutes", "label": "重点池连续确认(分钟)", "type": "number", "step": 1, "min": 1, "max": 30},
-            {"key": "buy_score_threshold", "label": "进入买入池分数", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "buy_breakout_price_buffer", "label": "买入突破缓冲系数", "type": "number", "step": 0.001, "min": 1.0, "max": 1.1},
-            {"key": "buy_volume_ratio_threshold", "label": "买入量比阈值", "type": "number", "step": 0.1, "min": 0},
-            {"key": "buy_breakout_consecutive_minutes", "label": "买入连续确认(分钟)", "type": "number", "step": 1, "min": 1, "max": 30},
-            {"key": "downgrade_score_threshold", "label": "降级分数阈值", "type": "number", "step": 1, "min": 0, "max": 100},
-            {"key": "downgrade_consecutive_minutes", "label": "降级连续确认(分钟)", "type": "number", "step": 1, "min": 1, "max": 60},
-            {"key": "buy_pool_max_size", "label": "买入池最大数量", "type": "number", "step": 1, "min": 1, "max": 20},
-        ],
-    },
-]
 
 
 APP_TZ = ZoneInfo("Asia/Shanghai")
