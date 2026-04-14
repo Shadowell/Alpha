@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Alpha</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260413r" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260414a" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -28,6 +28,10 @@
       <a class="sidebar-item" data-tab="rules" title="规则引擎">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         <span>规则引擎</span>
+      </a>
+      <a class="sidebar-item" data-tab="agent" title="Agent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>Agent</span>
       </a>
     </div>
     <div class="sidebar-bottom">
@@ -132,6 +136,27 @@
           </div>
         </section>
 
+        <!-- ========== Hermes Agent ========== -->
+        <section id="tab-agent" class="tab-content">
+          <div class="agent-page">
+            <div class="agent-status-bar" id="agentStatusBar">
+              <span class="agent-status-dot" id="agentStatusDot"></span>
+              <span id="agentStatusText">加载中...</span>
+              <button id="btnAgentRun" class="btn-action" style="margin-left:auto">手动触发复盘</button>
+            </div>
+
+            <div class="agent-section">
+              <h3>待审批提案 <span id="agentPendingCount" class="pool-count">0</span></h3>
+              <div id="agentProposals" class="agent-proposals"></div>
+            </div>
+
+            <div class="agent-section">
+              <h3>最近运行记录</h3>
+              <div id="agentTasks" class="agent-tasks"></div>
+            </div>
+          </div>
+        </section>
+
       </section>
 
       <aside class="right-panel">
@@ -171,6 +196,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260413r"></script>
+  <script src="/static/app.js?v=20260414a"></script>
 </body>
 </html>

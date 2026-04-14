@@ -37,6 +37,8 @@ function setMeta() {
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
   } else if (state.activeTab === 'rules') {
     meta.textContent = '调整选股宇宙、形态识别、评分权重、池迁移等参数';
+  } else if (state.activeTab === 'agent') {
+    meta.textContent = 'Hermes 投研代理 — 观察系统表现、产出优化提案、人工审批执行';
   }
 }
 
@@ -77,7 +79,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎' };
+const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', rules: '规则引擎', agent: 'Hermes Agent' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -102,6 +104,9 @@ function switchTab(tab) {
   }
   if (tab === 'rules' && !state.rulesEngine) {
     loadRulesEngine();
+  }
+  if (tab === 'agent') {
+    loadAgentData();
   }
 }
 
@@ -716,6 +721,122 @@ async function reload() {
   if (state.noticeFunnel) await reloadNotice();
 }
 
+/* ==================== Hermes Agent ==================== */
+
+async function loadAgentData() {
+  await Promise.all([loadAgentStatus(), loadAgentProposals(), loadAgentTasks()]);
+}
+
+async function loadAgentStatus() {
+  try {
+    const data = await request('/api/agent/status');
+    const dot = document.getElementById('agentStatusDot');
+    const txt = document.getElementById('agentStatusText');
+    dot.className = 'agent-status-dot ' + (data.running ? 'running' : (data.llm_available ? 'ok' : 'error'));
+    const parts = [];
+    if (data.running) parts.push('运行中');
+    else parts.push('就绪');
+    parts.push(data.llm_available ? 'LLM 可用' : 'LLM 未配置');
+    if (data.last_run) {
+      const t = data.last_run.finished_at ? data.last_run.finished_at.slice(11, 16) : '--';
+      parts.push(`上次: ${data.last_run.task_type} ${data.last_run.status} ${t}`);
+    }
+    txt.textContent = parts.join(' · ');
+    const cnt = document.getElementById('agentPendingCount');
+    cnt.textContent = data.stats?.pending_proposals ?? 0;
+  } catch { /* ignore */ }
+}
+
+async function loadAgentProposals() {
+  const container = document.getElementById('agentProposals');
+  try {
+    const data = await request('/api/agent/proposals?limit=20');
+    if (!data.items || data.items.length === 0) {
+      container.innerHTML = '<div class="agent-empty">暂无提案</div>';
+      return;
+    }
+    container.innerHTML = data.items.map(p => {
+      const riskCls = `risk-${p.risk_level || 'medium'}`;
+      const statusCls = `status-${p.status}`;
+      const diffStr = p.diff_payload ? JSON.stringify(p.diff_payload, null, 2) : '';
+      const isPending = p.status === 'pending';
+      const statusLabel = { pending: '待审批', approved: '已批准', rejected: '已驳回', deferred: '已暂缓' }[p.status] || p.status;
+      return `
+        <div class="agent-proposal-card ${statusCls}">
+          <div class="agent-proposal-title">${esc(p.title)}</div>
+          <div class="agent-proposal-meta">
+            <span>类型: ${esc(p.type)}</span>
+            <span class="${riskCls}">风险: ${esc(p.risk_level)}</span>
+            <span>置信度: ${Math.round((p.confidence || 0) * 100)}%</span>
+            <span>状态: ${statusLabel}</span>
+            <span>${(p.created_at || '').slice(0, 16)}</span>
+          </div>
+          ${p.reasoning ? `<div class="agent-proposal-reasoning">${esc(p.reasoning)}</div>` : ''}
+          ${diffStr ? `<div class="agent-proposal-diff">${esc(diffStr)}</div>` : ''}
+          ${isPending ? `
+            <div class="agent-proposal-actions">
+              <button class="btn-approve" onclick="approveProposal(${p.id})">批准</button>
+              <button class="btn-reject" onclick="rejectProposal(${p.id})">驳回</button>
+            </div>
+          ` : ''}
+        </div>`;
+    }).join('');
+  } catch {
+    container.innerHTML = '<div class="agent-empty">加载失败</div>';
+  }
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function loadAgentTasks() {
+  const container = document.getElementById('agentTasks');
+  try {
+    const data = await request('/api/agent/tasks?limit=10');
+    if (!data.items || data.items.length === 0) {
+      container.innerHTML = '<div class="agent-empty">暂无运行记录</div>';
+      return;
+    }
+    container.innerHTML = data.items.map(t => {
+      const typeLabel = { daily_review: '盘后复盘', notice_review: '公告复盘', full_diagnosis: '全面诊断' }[t.task_type] || t.task_type;
+      const statusLabel = { success: '成功', failed: '失败', timeout: '超时', running: '运行中' }[t.status] || t.status;
+      const time = (t.finished_at || t.started_at || '').slice(11, 16);
+      const elapsed = t.elapsed_ms ? `${(t.elapsed_ms / 1000).toFixed(1)}s` : '--';
+      return `
+        <div class="agent-task-row">
+          <span class="agent-task-type">${typeLabel}</span>
+          <span class="agent-task-status ${t.status}">${statusLabel}</span>
+          <span class="agent-task-time">${time}</span>
+          <span class="agent-task-elapsed">${elapsed}</span>
+          <span class="agent-task-time">${t.trigger || ''}</span>
+        </div>`;
+    }).join('');
+  } catch {
+    container.innerHTML = '<div class="agent-empty">加载失败</div>';
+  }
+}
+
+async function approveProposal(id) {
+  if (!confirm('确认批准此提案？参数将自动应用。')) return;
+  try {
+    await request(`/api/agent/proposals/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+    setStatus('提案已批准并应用', 'success');
+    await loadAgentData();
+  } catch (err) {
+    setStatus(`批准失败: ${err.message}`, 'error');
+  }
+}
+
+async function rejectProposal(id) {
+  const note = prompt('驳回原因（可选）：') || '';
+  try {
+    await request(`/api/agent/proposals/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
+    setStatus('提案已驳回', 'success');
+    await loadAgentData();
+  } catch (err) {
+    setStatus(`驳回失败: ${err.message}`, 'error');
+  }
+}
+
 /* ==================== WebSocket ==================== */
 
 function connectWs() {
@@ -761,6 +882,9 @@ async function init() {
     } else if (state.activeTab === 'rules') {
       await loadRulesEngine();
       setStatus('规则引擎配置已刷新', 'success');
+    } else if (state.activeTab === 'agent') {
+      await loadAgentData();
+      setStatus('Agent 数据已刷新', 'success');
     }
   };
 
@@ -855,6 +979,23 @@ async function init() {
       setStatus(`公告筛选失败: ${err.message}`, 'error');
     } finally {
       btn.textContent = old;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnAgentRun').onclick = async () => {
+    const btn = document.getElementById('btnAgentRun');
+    btn.disabled = true;
+    btn.textContent = '运行中...';
+    setStatus('Hermes 复盘执行中...', 'info');
+    try {
+      const payload = await request('/api/agent/run', { method: 'POST', body: JSON.stringify({ task_type: 'full_diagnosis' }) });
+      setStatus(`复盘完成: ${payload.summary?.proposals_created || 0} 个提案`, 'success');
+      await loadAgentData();
+    } catch (err) {
+      setStatus(`复盘失败: ${err.message}`, 'error');
+    } finally {
+      btn.textContent = '手动触发复盘';
       btn.disabled = false;
     }
   };
