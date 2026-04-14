@@ -350,16 +350,6 @@ async def get_strategy_profile():
     return await service.get_strategy_profile()
 
 
-@app.get("/api/rules/engine")
-async def get_rule_engine():
-    return await service.get_rule_engine()
-
-
-@app.put("/api/rules/engine")
-async def update_rule_engine(body: dict):
-    return await service.update_rule_engine(body)
-
-
 @app.get("/api/notice/funnel")
 async def get_notice_funnel(trade_date: str | None = None):
     return await notice_service.get_notice_funnel(trade_date)
@@ -443,20 +433,6 @@ async def approve_agent_proposal(proposal_id: int, body: dict | None = None):
         raise HTTPException(status_code=404, detail="提案不存在")
     if proposal["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"提案状态为 {proposal['status']}，无法审批")
-
-    diff = proposal.get("diff_payload")
-    if diff and isinstance(diff, dict) and proposal.get("type") == "rule_patch":
-        overrides = {}
-        for key, val in diff.items():
-            if isinstance(val, dict) and "to" in val:
-                overrides[key] = val["to"]
-            else:
-                overrides[key] = val
-        if overrides:
-            try:
-                await service.update_rule_engine(overrides)
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"应用参数失败: {exc}")
 
     hermes_memory.update_proposal_status(proposal_id, "approved", approved_by="user")
     hermes_memory.record_feedback(proposal_id, "approve", note)

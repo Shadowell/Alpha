@@ -444,34 +444,6 @@ class FunnelService:
             self.strategy_profile = self._ensure_strategy_profile()
             return self.strategy_profile
 
-    async def get_rule_engine(self) -> dict[str, Any]:
-        async with self.lock:
-            from app.config import RULE_GROUPS
-            return {
-                "config": self.config.to_dict(),
-                "groups": RULE_GROUPS,
-            }
-
-    async def update_rule_engine(self, overrides: dict[str, Any]) -> dict[str, Any]:
-        async with self.lock:
-            if overrides.get("_reset"):
-                self.config = StrategyConfig()
-            else:
-                self.config = self.config.merge(overrides)
-            config_payload = self.config.to_dict()
-            self.strategy_profile = self.state_store.upsert_single_active_strategy_profile(
-                name="alpha_rule_engine",
-                config=config_payload,
-                updated_at=now_cn().isoformat(),
-            )
-            self._save_state()
-            from app.config import RULE_GROUPS
-            return {
-                "config": config_payload,
-                "groups": RULE_GROUPS,
-                "message": "规则引擎参数已更新",
-            }
-
     async def get_hot_concepts(self, trade_date: str | None = None) -> HotConceptResponse:
         async with self.lock:
             await self.ensure_trade_date(trade_date)

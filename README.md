@@ -9,7 +9,6 @@ Alpha 是一个面向 A 股市场的量化选股 Web 平台，将多维度数据
 | **大盘总览** | 热门概念 Top10（涨幅/涨停数/领涨股）、热门个股 Top10（实时价格/涨跌幅） |
 | **策略选股** | 盘后自动筛选调整期未突破股票，三池漏斗管理（候选池 → 重点池 → 买入池） |
 | **公告选股** | 抓取当日公告 → 规则打分（+可选 LLM 打分）→ 关键词标签过滤（分红/回购/重组等） |
-| **规则引擎** | 可视化查看和调整 35+ 策略参数（选股宇宙、形态识别、评分权重、实时监控等） |
 | **K 线缓存** | 每日 15:20 自动同步主板股票日 K（并发调度），同步完成飞书群通知 |
 | **实时推送** | WebSocket 实时推送概念行情与个股评分更新 |
 
@@ -35,12 +34,6 @@ Alpha 是一个面向 A 股市场的量化选股 Web 平台，将多维度数据
 
 ![公告候选池](docs/screenshots/notice-list.png)
 
-### 规则引擎
-
-可视化调整 35+ 策略参数，包括选股宇宙、形态识别、评分权重、池迁移阈值等。
-
-![规则引擎](docs/screenshots/rules.png)
-
 ## 技术栈
 
 - **后端**：Python 3.11+ / FastAPI / Uvicorn
@@ -57,7 +50,7 @@ Alpha 是一个面向 A 股市场的量化选股 Web 平台，将多维度数据
 Alpha/
 ├── app/
 │   ├── main.py                 # FastAPI 入口、后台调度循环
-│   ├── config.py               # StrategyConfig（35+ 可调参数）& 规则分组元数据
+│   ├── config.py               # StrategyConfig（策略参数配置）
 │   ├── models.py               # Pydantic 数据模型
 │   ├── services/
 │   │   ├── funnel_service.py   # 策略选股漏斗核心逻辑
@@ -73,7 +66,7 @@ Alpha/
 │   │   ├── sqlite_store.py     # SQLite 状态持久化
 │   │   └── time_utils.py       # 中国时区工具
 │   └── static/
-│       ├── index.html          # 主页面（大盘/策略/公告/规则引擎）
+│       ├── index.html          # 主页面（大盘/策略/公告/Agent）
 │       ├── app.js              # 前端交互逻辑
 │       └── styles.css          # UI 样式
 ├── strategy/
@@ -161,12 +154,10 @@ pip3 install -r requirements.txt
 | GET | `/api/jobs/kline-cache/progress` | 同步进度 |
 | GET | `/api/jobs/kline-cache/logs` | 同步日志 |
 
-### 规则引擎
+### 策略配置
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/rules/engine` | 获取当前策略参数 |
-| POST | `/api/rules/engine` | 更新策略参数 |
 | GET | `/api/strategy/profile` | 策略概要信息 |
 
 ### 实时推送
