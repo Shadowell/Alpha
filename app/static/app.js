@@ -92,10 +92,13 @@ function switchTab(tab) {
   noticeCard.style.display = tab === 'notice' ? '' : 'none';
   const rightPanel = document.querySelector('.right-panel');
   const layout = document.querySelector('.layout');
-  const showKline = tab !== 'data' && tab !== 'agent';
   const twoCol = tab === 'funnel' || tab === 'notice';
-  if (rightPanel) rightPanel.style.display = showKline ? '' : 'none';
+  if (rightPanel) rightPanel.style.display = twoCol ? '' : 'none';
   if (layout) layout.classList.toggle('two-col', twoCol);
+  if (twoCol) {
+    renderChartPlaceholder('点击左侧股票查看');
+    document.getElementById('stockSummary').textContent = '点击左侧股票查看';
+  }
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
   if (tab === 'data') {
@@ -113,7 +116,10 @@ function switchTab(tab) {
   if (tab === 'agent') {
     loadAgentData();
   }
-  setTimeout(() => { if (state.chart) state.chart.resize(); }, 50);
+  setTimeout(() => {
+    if (state.chart) state.chart.resize();
+    if (state.marketChart) state.marketChart.resize();
+  }, 50);
 }
 
 /* ==================== Funnel tab ==================== */
@@ -436,35 +442,29 @@ function renderDcLogStream(logs) {
   `).join('');
 }
 
-/* ==================== Chart (shared) ==================== */
+/* ==================== Chart ==================== */
 
-function ensureChart() {
-  if (state.chart) return state.chart;
-  const dom = document.getElementById('klineChart');
+function _initChart(domId, stateKey) {
+  if (state[stateKey]) return state[stateKey];
+  const dom = document.getElementById(domId);
   if (!dom || !window.echarts) return null;
-  state.chart = window.echarts.init(dom);
-  window.addEventListener('resize', () => { if (state.chart) state.chart.resize(); });
-  return state.chart;
+  state[stateKey] = window.echarts.init(dom);
+  return state[stateKey];
 }
 
-function renderChartPlaceholder(text) {
-  const chart = ensureChart();
-  if (!chart) return;
-  chart.clear();
-  chart.setOption({
-    animation: false, xAxis: { show: false }, yAxis: { show: false }, series: [],
-    graphic: { type: 'text', left: 'center', top: 'middle', style: { text, fill: '#94a3b8', font: '14px sans-serif' } },
-  });
-}
+function ensureChart() { return _initChart('klineChart', 'chart'); }
+function ensureMarketChart() { return _initChart('marketKlineChart', 'marketChart'); }
 
-function renderKlineChart(rows) {
-  const chart = ensureChart();
-  if (!chart) return;
-  if (!rows.length) { renderChartPlaceholder('暂无K线数据'); return; }
+window.addEventListener('resize', () => {
+  if (state.chart) state.chart.resize();
+  if (state.marketChart) state.marketChart.resize();
+});
+
+function _klineOption(rows) {
   const categoryData = rows.map((x) => x.date);
   const candleData = rows.map((x) => [x.open, x.close, x.low, x.high]);
   const volumeData = rows.map((x, idx) => [idx, x.volume, x.close >= x.open ? 1 : -1]);
-  chart.setOption({
+  return {
     animation: false, backgroundColor: 'transparent', legend: { show: false },
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#334155' } },
@@ -485,7 +485,42 @@ function renderKlineChart(rows) {
       { name: '日K', type: 'candlestick', data: candleData, itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' } },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumeData, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
     ],
-  }, true);
+  };
+}
+
+function _placeholderOption(text) {
+  return {
+    animation: false, xAxis: { show: false }, yAxis: { show: false }, series: [],
+    graphic: { type: 'text', left: 'center', top: 'middle', style: { text, fill: '#94a3b8', font: '14px sans-serif' } },
+  };
+}
+
+function renderChartPlaceholder(text) {
+  const chart = ensureChart();
+  if (!chart) return;
+  chart.clear();
+  chart.setOption(_placeholderOption(text));
+}
+
+function renderKlineChart(rows) {
+  const chart = ensureChart();
+  if (!chart) return;
+  if (!rows.length) { renderChartPlaceholder('暂无K线数据'); return; }
+  chart.setOption(_klineOption(rows), true);
+}
+
+function renderMarketChartPlaceholder(text) {
+  const chart = ensureMarketChart();
+  if (!chart) return;
+  chart.clear();
+  chart.setOption(_placeholderOption(text));
+}
+
+function renderMarketKlineChart(rows) {
+  const chart = ensureMarketChart();
+  if (!chart) return;
+  if (!rows.length) { renderMarketChartPlaceholder('暂无K线数据'); return; }
+  chart.setOption(_klineOption(rows), true);
 }
 
 function renderStockSummary(detail) {
@@ -495,7 +530,7 @@ function renderStockSummary(detail) {
 }
 
 function renderStockSummaryLite(item, klinePayload) {
-  const root = document.getElementById('stockSummary');
+  const root = document.getElementById('marketStockSummary');
   root.textContent = `${item.name}(${item.symbol})  现价:${fmtNum(item.latest_price, 2)}  涨跌:${fmtNum(item.change_pct, 2)}%  K线:${Number(klinePayload?.count || 0)}日`;
 }
 
@@ -522,7 +557,7 @@ async function selectSymbol(symbol) {
 async function selectHotStock(item) {
   state.selectedHotSymbol = item.symbol;
   renderHotStocks();
-  renderChartPlaceholder('加载中...');
+  renderMarketChartPlaceholder('加载中...');
   try {
     let payload = await request(`/api/kline/${item.symbol}?days=30`);
     if (!payload?.items?.length) {
@@ -532,10 +567,10 @@ async function selectHotStock(item) {
       } catch (_) {}
     }
     renderStockSummaryLite(item, payload || {});
-    renderKlineChart(payload?.items || []);
+    renderMarketKlineChart(payload?.items || []);
     setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
   } catch (err) {
-    renderChartPlaceholder(`加载失败: ${err.message}`);
+    renderMarketChartPlaceholder(`加载失败: ${err.message}`);
     setStatus(`热门个股加载失败: ${err.message}`, 'error');
   }
 }

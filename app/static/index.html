@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260414h" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260414i" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -66,6 +66,13 @@
           <section class="panel card">
             <h2>热门个股 Top10</h2>
             <div id="hotStocks" class="hot-stock-list"></div>
+          </section>
+          <section class="panel card">
+            <div class="panel-title-row">
+              <h2>日K + 成交量（30日）</h2>
+              <div id="marketStockSummary" class="summary">点击上方热门个股查看</div>
+            </div>
+            <div id="marketKlineChart" class="kline-chart"></div>
           </section>
         </section>
 
@@ -239,6 +246,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260414h"></script>
+  <script src="/static/app.js?v=20260414i"></script>
 </body>
 </html>
