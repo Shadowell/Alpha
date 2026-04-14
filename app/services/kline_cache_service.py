@@ -617,7 +617,7 @@ class KlineCacheService:
             n = str(name).upper()
             if not code or "ST" in n:
                 continue
-            if code.startswith(("00", "60")):
+            if code.startswith(("00", "30", "60", "68")):
                 symbols.append(code)
 
         if symbols:
@@ -633,7 +633,7 @@ class KlineCacheService:
             name = str(row.get("名称", "")).strip().upper()
             if not code or "ST" in name:
                 continue
-            if code.startswith(("00", "60")):
+            if code.startswith(("00", "30", "60", "68")):
                 symbols.append(code)
         return sorted(set(symbols))
 
