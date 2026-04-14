@@ -219,9 +219,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── Layout ── */
 .layout {
   display: grid;
-  grid-template-columns: 1fr 420px;
+  grid-template-columns: 1fr;
   gap: 24px; padding: 24px;
   flex: 1;
+}
+.layout.two-col {
+  grid-template-columns: 1fr 420px;
 }
 
 .center-main {
@@ -628,7 +631,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Responsive ── */
 @media (max-width: 1280px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout, .layout.two-col { grid-template-columns: 1fr; }
   .funnel-grid { min-height: auto; }
   .hot-list { grid-template-columns: 1fr; }
   .kline-chart { height: 420px; }

@@ -91,7 +91,11 @@ function switchTab(tab) {
   const noticeCard = document.getElementById('noticeDetailCard');
   noticeCard.style.display = tab === 'notice' ? '' : 'none';
   const rightPanel = document.querySelector('.right-panel');
-  if (rightPanel) rightPanel.style.display = tab === 'data' ? 'none' : '';
+  const layout = document.querySelector('.layout');
+  const showKline = tab !== 'data' && tab !== 'agent';
+  const twoCol = tab === 'funnel' || tab === 'notice';
+  if (rightPanel) rightPanel.style.display = showKline ? '' : 'none';
+  if (layout) layout.classList.toggle('two-col', twoCol);
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
   if (tab === 'data') {
@@ -109,6 +113,7 @@ function switchTab(tab) {
   if (tab === 'agent') {
     loadAgentData();
   }
+  setTimeout(() => { if (state.chart) state.chart.resize(); }, 50);
 }
 
 /* ==================== Funnel tab ==================== */
