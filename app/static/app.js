@@ -737,11 +737,15 @@ function renderChartPlaceholder(text) {
   chart.setOption(_placeholderOption(text));
 }
 
-function renderKlineChart(rows) {
+function renderKlineChart(rows, predStartIdx) {
   const chart = ensureChart();
   if (!chart) return;
   if (!rows.length) { renderChartPlaceholder('暂无K线数据'); return; }
-  chart.setOption(_klineOption(rows), true);
+  if (predStartIdx != null && predStartIdx > 0) {
+    chart.setOption(_klinePredictOption(rows, predStartIdx), true);
+  } else {
+    chart.setOption(_klineOption(rows), true);
+  }
 }
 
 function renderMarketChartPlaceholder(text) {
@@ -971,9 +975,33 @@ async function selectNoticeSymbol(symbol) {
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
     renderKlineChart(kline);
+    setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
+    _fetchAndRenderNoticePredict(symbol, detail.name);
   } catch (err) {
     document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
     renderChartPlaceholder(`加载失败: ${err.message}`);
+  }
+}
+
+async function _fetchAndRenderNoticePredict(symbol, name) {
+  const summaryEl = document.getElementById('stockSummary');
+  try {
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    if (pred.merged_kline && pred.merged_kline.length) {
+      renderKlineChart(pred.merged_kline, pred.prediction_start_index);
+      const pk = pred.predicted_kline || [];
+      const hk = pred.history_kline || [];
+      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
+      if (pk.length && lastClose) {
+        const day3Close = pk[pk.length - 1].close;
+        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
+        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
+        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
+      }
+      setStatus(`${name} 预测已加载`, 'success');
+    }
+  } catch (err) {
+    setStatus(`预测请求失败: ${err.message}`, 'error');
   }
 }
 
