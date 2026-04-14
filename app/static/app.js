@@ -950,11 +950,7 @@ async function selectNoticeSymbol(symbol) {
   document.getElementById('noticeDetail').textContent = '加载中...';
   try {
     const detail = await request(`/api/notice/${symbol}/detail?days=30`);
-    let kline = detail.kline || [];
-    if (!kline.length) {
-      const fallback = await request(`/api/kline/${symbol}?days=30`);
-      kline = fallback.items || [];
-    }
+    const kline = detail.kline || [];
     document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
     const first = (detail.notices || [])[0] || {};
     const kwHighlight = (text) => {
@@ -974,8 +970,13 @@ async function selectNoticeSymbol(symbol) {
       <div class="metrics"><a href="${first.url || '#'}" target="_blank" style="color:var(--brand)">公告链接</a></div>
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
-    renderKlineChart(kline);
-    setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
+    if (kline.length) {
+      renderKlineChart(kline);
+      setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
+    } else {
+      renderChartPlaceholder('K线数据未同步，请先执行数据同步');
+      setStatus(`${detail.name} 暂无K线缓存`, 'info');
+    }
     _fetchAndRenderNoticePredict(symbol, detail.name);
   } catch (err) {
     document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
