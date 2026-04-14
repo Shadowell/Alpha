@@ -172,17 +172,45 @@ class HermesRuntime:
         obs["metrics"] = metrics
         return obs
 
-    # ── LLM 调用 ──
+    # ── LLM 调用（优先本地 hermes-agent API Server）──
+
+    _HERMES_AGENT_BASE = os.environ.get("HERMES_AGENT_URL", "http://127.0.0.1:8642/v1")
+
+    async def _check_hermes_agent(self) -> bool:
+        """检测本地 hermes-agent API Server 是否可用。"""
+        import httpx
+        health_url = self._HERMES_AGENT_BASE.replace("/v1", "/health")
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(health_url)
+                return resp.status_code == 200
+        except Exception:
+            return False
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> dict | None:
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            return None
-
-        model = os.environ.get("HERMES_MODEL", "gpt-4o-mini")
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-
         import httpx
+        import json as _json
+
+        hermes_available = await self._check_hermes_agent()
+
+        if hermes_available:
+            base_url = self._HERMES_AGENT_BASE
+            api_key = os.environ.get("API_SERVER_KEY", "")
+            model = "hermes-agent"
+            timeout = 90
+            print("[hermes] using local hermes-agent API Server")
+        else:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                return None
+            model = os.environ.get("HERMES_MODEL", "gpt-4o-mini")
+            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            timeout = 30
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
         payload = {
             "model": model,
             "messages": [
@@ -190,20 +218,32 @@ class HermesRuntime:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.3,
-            "response_format": {"type": "json_object"},
         }
+        if not hermes_available:
+            payload["response_format"] = {"type": "json_object"}
+
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers=headers,
                     json=payload,
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 content = data["choices"][0]["message"]["content"]
-                import json
-                return json.loads(content)
+                return _json.loads(content)
+        except _json.JSONDecodeError:
+            print(f"[hermes] LLM returned non-JSON, extracting...")
+            try:
+                raw = data["choices"][0]["message"]["content"]
+                start = raw.find("{")
+                end = raw.rfind("}") + 1
+                if start >= 0 and end > start:
+                    return _json.loads(raw[start:end])
+            except Exception:
+                pass
+            return None
         except Exception as e:
             print(f"[hermes] LLM call failed: {e}")
             return None
@@ -462,6 +502,25 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         }
 
     # ── 状态查询 ──
+
+    async def get_status_async(self) -> dict:
+        last = self.memory.get_last_task()
+        counts = self.memory.count_by_status()
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        hermes_ok = await self._check_hermes_agent()
+        return {
+            "running": self._running,
+            "llm_available": hermes_ok or bool(api_key),
+            "hermes_agent_available": hermes_ok,
+            "hermes_agent_url": self._HERMES_AGENT_BASE,
+            "last_run": _format_last_run(last) if last else None,
+            "stats": {
+                "total_proposals": sum(counts.values()),
+                "pending_proposals": counts.get("pending", 0),
+                "approved_proposals": counts.get("approved", 0),
+                "rejected_proposals": counts.get("rejected", 0),
+            },
+        }
 
     def get_status(self) -> dict:
         last = self.memory.get_last_task()

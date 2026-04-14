@@ -1043,7 +1043,9 @@ async function loadAgentStatus() {
     const parts = [];
     if (data.running) parts.push('运行中');
     else parts.push('就绪');
-    parts.push(data.llm_available ? 'LLM 可用' : 'LLM 未配置');
+    if (data.hermes_agent_available) parts.push('Hermes Agent ✓');
+    else if (data.llm_available) parts.push('LLM 可用');
+    else parts.push('LLM 未配置');
     if (data.last_run) {
       const t = data.last_run.finished_at ? data.last_run.finished_at.slice(11, 16) : '--';
       parts.push(`上次: ${data.last_run.task_type} ${data.last_run.status} ${t}`);
