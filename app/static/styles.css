@@ -308,14 +308,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
-  min-height: calc(100vh - 240px);
+  height: calc(100vh - 240px);
 }
 
 .pool-column {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--card-nested);
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column;
+  min-height: 0; max-height: 100%;
+  overflow: hidden;
   transition: border-color var(--transition);
 }
 
@@ -346,7 +348,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: var(--font-mono);
 }
 
-.pool-list { padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.pool-list { padding: 14px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 
 /* ── Stock cards ── */
 .stock-card {
