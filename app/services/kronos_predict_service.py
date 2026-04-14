@@ -122,7 +122,7 @@ class KronosPredictService:
             T=1.0,
             top_k=0,
             top_p=0.9,
-            sample_count=1,
+            sample_count=100,
             verbose=False,
         )
         return pred_df
@@ -153,6 +153,8 @@ class KronosPredictService:
         for i, date_str in enumerate(future_dates):
             r = pred_df.iloc[i]
             o, h, l, c = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
+            v = float(r["volume"]) if "volume" in pred_df.columns else 0
+            a = float(r["amount"]) if "amount" in pred_df.columns else 0
             h = max(h, o, c)
             l = min(l, o, c)
             predicted_kline.append({
@@ -161,8 +163,8 @@ class KronosPredictService:
                 "high": round(h, 4),
                 "low": round(l, 4),
                 "close": round(c, 4),
-                "volume": 0,
-                "amount": 0,
+                "volume": round(v, 2),
+                "amount": round(a, 2),
                 "type": "predicted",
             })
 
