@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260414k" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260414n" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -59,6 +59,7 @@
       <section class="center-main">
         <!-- ========== 大盘 ========== -->
         <section id="tab-market" class="tab-content active">
+          <div id="marketSummary" class="page-summary"></div>
           <section class="panel card">
             <h2>热门概念 Top10</h2>
             <div id="hotConcepts" class="hot-list"></div>
@@ -80,55 +81,53 @@
 
         <!-- ========== 数据中心 ========== -->
         <section id="tab-data" class="tab-content">
+          <div id="dataSummary" class="page-summary"></div>
           <div class="dc-stats-grid" id="dcStatsGrid"></div>
-          <div class="dc-body">
-            <div class="dc-left">
-              <section class="dc-control card panel">
-                <div class="panel-title-row">
-                  <h2>同步控制</h2>
-                </div>
-                <div class="dc-control-btns">
-                  <button id="btnDcFullSync" class="btn-action">全量同步（智能补缺）</button>
-                  <div class="dc-incr-row">
-                    <input type="date" id="dcSyncDate" class="sync-date-input" />
-                    <button id="btnDcIncrSync" class="btn-incremental">增量同步</button>
-                  </div>
-                </div>
-                <div class="dc-progress-section" id="dcProgressSection" style="display:none">
-                  <div id="dcProgressText" class="dc-progress-text"></div>
-                  <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
-                </div>
-              </section>
-              <section class="dc-tasks card panel">
-                <div class="panel-title-row">
-                  <h2>任务历史</h2>
-                </div>
-                <div id="dcTaskList" class="dc-task-list"></div>
-                <div id="dcTaskPager" class="dc-task-pager"></div>
-              </section>
+          <section class="dc-control card-solid panel">
+            <div class="panel-title-row">
+              <h2>同步控制</h2>
             </div>
-            <div class="dc-right">
-              <section class="dc-report card panel">
-                <div class="panel-title-row">
-                  <h2>数据完整性检查</h2>
-                  <button id="btnDcCheck" class="btn-action">手动检查</button>
-                </div>
-                <div id="dcReportContent" class="dc-report-content">
-                  <div class="detail-empty">暂无检查报告</div>
-                </div>
-              </section>
-              <section class="dc-logs card panel">
-                <div class="panel-title-row">
-                  <h2>同步日志流</h2>
-                </div>
-                <div id="dcLogStream" class="dc-log-stream"></div>
-              </section>
+            <div class="dc-control-btns">
+              <button id="btnDcFullSync" class="btn-primary">全量同步（智能补缺）</button>
+              <div class="dc-incr-row">
+                <input type="date" id="dcSyncDate" class="sync-date-input" />
+                <button id="btnDcIncrSync" class="btn-incremental">增量同步</button>
+              </div>
             </div>
-          </div>
+            <div class="dc-progress-section" id="dcProgressSection" style="display:none">
+              <div id="dcProgressText" class="dc-progress-text"></div>
+              <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
+            </div>
+          </section>
+          <section class="dc-tasks card panel">
+            <div class="panel-title-row">
+              <h2>任务历史</h2>
+              <div id="dcTaskFilters" class="dc-task-filters"></div>
+            </div>
+            <div id="dcTaskList" class="dc-task-list"></div>
+            <div id="dcTaskPager" class="dc-task-pager"></div>
+          </section>
+          <section class="dc-report card panel">
+            <div class="panel-title-row">
+              <h2>数据完整性检查</h2>
+              <button id="btnDcCheck" class="btn-primary">手动检查</button>
+            </div>
+            <div id="dcReportContent" class="dc-report-content">
+              <div class="empty-state"><div class="empty-state-text">点击「手动检查」生成数据完整性报告</div></div>
+            </div>
+          </section>
+          <section class="dc-logs card-light panel" id="dcLogsSection">
+            <div class="panel-title-row">
+              <h2>同步日志流</h2>
+              <button id="btnDcLogsToggle" class="collapse-toggle">展开全部</button>
+            </div>
+            <div id="dcLogStream" class="dc-log-stream"></div>
+          </section>
         </section>
 
         <!-- ========== 策略选股 ========== -->
         <section id="tab-funnel" class="tab-content">
+          <div id="funnelSummary" class="page-summary"></div>
           <div class="tab-toolbar">
             <div class="filter-line">
               <span>概念筛选：</span>
@@ -158,6 +157,7 @@
 
         <!-- ========== 公告选股 ========== -->
         <section id="tab-notice" class="tab-content">
+          <div id="noticeSummaryBar" class="page-summary"></div>
           <div class="tab-toolbar notice-toolbar">
             <div class="notice-toolbar-top">
               <div class="panel-title-row" style="margin-bottom:0">
@@ -193,20 +193,24 @@
         <!-- ========== Hermes Agent ========== -->
         <section id="tab-agent" class="tab-content">
           <div class="agent-page">
+            <div id="agentSummary" class="page-summary"></div>
             <div class="agent-status-bar" id="agentStatusBar">
               <span class="agent-status-dot" id="agentStatusDot"></span>
               <span id="agentStatusText">加载中...</span>
-              <button id="btnAgentRun" class="btn-action" style="margin-left:auto">手动触发复盘</button>
+              <button id="btnAgentRun" class="btn-primary" style="margin-left:auto">手动触发复盘</button>
             </div>
 
-            <div class="agent-section">
-              <h3>待审批提案 <span id="agentPendingCount" class="pool-count">0</span></h3>
-              <div id="agentProposals" class="agent-proposals"></div>
-            </div>
-
-            <div class="agent-section">
-              <h3>最近运行记录</h3>
-              <div id="agentTasks" class="agent-tasks"></div>
+            <div class="agent-body">
+              <div class="agent-section card-solid">
+                <h3>待审批提案 <span id="agentPendingCount" class="pool-count">0</span></h3>
+                <div id="agentProposals" class="agent-proposals"></div>
+              </div>
+              <div class="agent-right">
+                <div class="agent-section card-light">
+                  <h3>最近运行记录</h3>
+                  <div id="agentTasks" class="agent-tasks"></div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -248,6 +252,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260414m"></script>
+  <script src="/static/app.js?v=20260414n"></script>
 </body>
 </html>
