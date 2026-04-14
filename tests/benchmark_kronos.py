@@ -45,6 +45,7 @@ MODELS = [
 LOOKBACK = 30
 HORIZON = 5
 SYMBOL = "000001"
+SAMPLE_COUNTS = [1, 10, 20, 50, 100]
 
 
 def get_history(lookback: int) -> list[dict]:
@@ -61,7 +62,13 @@ def build_future_dates(history: list[dict], horizon: int) -> list[str]:
     return [d.strftime("%Y-%m-%d") for d in dates]
 
 
-def run_inference(predictor: KronosPredictor, history: list[dict], future_dates: list[str], horizon: int) -> pd.DataFrame:
+def run_inference(
+    predictor: KronosPredictor,
+    history: list[dict],
+    future_dates: list[str],
+    horizon: int,
+    sample_count: int = 1,
+) -> pd.DataFrame:
     df = pd.DataFrame(history)
     x_df = df[["open", "high", "low", "close", "volume", "amount"]].copy()
     hist_dates = pd.to_datetime(df["date"])
@@ -75,14 +82,13 @@ def run_inference(predictor: KronosPredictor, history: list[dict], future_dates:
         T=1.0,
         top_k=0,
         top_p=0.9,
-        sample_count=1,
+        sample_count=sample_count,
         verbose=False,
     )
     return pred_df
 
 
 def calc_metrics(history: list[dict], pred_df: pd.DataFrame) -> dict:
-    """基于最后一根历史 K 线计算预测指标。"""
     last = history[-1]
     last_close = last["close"]
     pred_closes = pred_df["close"].values
@@ -104,7 +110,10 @@ def calc_metrics(history: list[dict], pred_df: pd.DataFrame) -> dict:
     }
 
 
-def benchmark_model(cfg: dict, history: list[dict], future_dates: list[str]) -> dict:
+def benchmark_model_sample_counts(
+    cfg: dict, history: list[dict], future_dates: list[str]
+) -> dict:
+    """对一个模型跑全部 sample_count 档位的 benchmark。"""
     name = cfg["name"]
     print(f"\n{'='*60}")
     print(f"  Benchmarking: {name} ({cfg['params']})")
@@ -115,43 +124,49 @@ def benchmark_model(cfg: dict, history: list[dict], future_dates: list[str]) -> 
     t0 = time.perf_counter()
     tokenizer = KronosTokenizer.from_pretrained(cfg["tokenizer_id"])
     t_tok = time.perf_counter() - t0
-    print(f"  Tokenizer loaded in {t_tok:.2f}s")
 
     print(f"  Loading model: {cfg['model_id']} ...")
     t0 = time.perf_counter()
     model = Kronos.from_pretrained(cfg["model_id"])
     t_model = time.perf_counter() - t0
-    print(f"  Model loaded in {t_model:.2f}s")
 
     t0 = time.perf_counter()
     predictor = KronosPredictor(model, tokenizer, device=None, max_context=cfg["max_context"])
     t_init = time.perf_counter() - t0
     device = predictor.device
-    print(f"  Predictor initialized on {device} in {t_init:.2f}s")
-
     load_total = t_tok + t_model + t_init
+    print(f"  Loaded on {device} in {load_total:.2f}s")
 
-    # --- Warmup inference ---
-    print("  Warmup inference...")
+    # --- Warmup ---
+    print("  Warmup inference (sample_count=1)...")
     try:
-        _ = run_inference(predictor, history, future_dates, HORIZON)
+        _ = run_inference(predictor, history, future_dates, HORIZON, sample_count=1)
     except Exception as e:
         print(f"  [ERROR] warmup failed: {e}")
 
-    # --- Timed inference (3 runs) ---
-    infer_times = []
-    pred_df = None
+    # --- Test each sample_count ---
+    sc_results = []
     n_runs = 3
-    print(f"  Running {n_runs} inference passes...")
-    for i in range(n_runs):
-        t0 = time.perf_counter()
-        pred_df = run_inference(predictor, history, future_dates, HORIZON)
-        elapsed = time.perf_counter() - t0
-        infer_times.append(elapsed)
-        print(f"    run {i+1}: {elapsed:.2f}s")
+    for sc in SAMPLE_COUNTS:
+        print(f"\n  --- sample_count={sc} ({n_runs} runs) ---")
+        infer_times = []
+        pred_df = None
+        for i in range(n_runs):
+            t0 = time.perf_counter()
+            pred_df = run_inference(predictor, history, future_dates, HORIZON, sample_count=sc)
+            elapsed = time.perf_counter() - t0
+            infer_times.append(elapsed)
+            print(f"    run {i+1}: {elapsed:.2f}s")
 
-    avg_infer = np.mean(infer_times)
-    metrics = calc_metrics(history, pred_df) if pred_df is not None else {}
+        avg_infer = float(np.mean(infer_times))
+        metrics = calc_metrics(history, pred_df) if pred_df is not None else {}
+        sc_results.append({
+            "sample_count": sc,
+            "avg_infer_sec": round(avg_infer, 2),
+            "infer_times": [round(t, 2) for t in infer_times],
+            **metrics,
+        })
+        print(f"    avg={avg_infer:.2f}s  D1={metrics.get('day1_chg_pct','?')}%  D5={metrics.get('day5_chg_pct','?')}%  vol={metrics.get('avg_volatility_pct','?')}%")
 
     # --- Cleanup ---
     del predictor, model, tokenizer
@@ -159,22 +174,19 @@ def benchmark_model(cfg: dict, history: list[dict], future_dates: list[str]) -> 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    result = {
+    return {
         "model": name,
         "params": cfg["params"],
         "device": str(device),
         "max_context": cfg["max_context"],
         "load_time_sec": round(load_total, 2),
-        "avg_infer_sec": round(avg_infer, 2),
-        "infer_times": [round(t, 2) for t in infer_times],
-        **metrics,
+        "sample_count_results": sc_results,
     }
-    print(f"  Result: load={load_total:.2f}s  infer_avg={avg_infer:.2f}s")
-    return result
 
 
 def main():
     print(f"Kronos Benchmark: lookback={LOOKBACK}, horizon={HORIZON}, symbol={SYMBOL}")
+    print(f"Sample counts: {SAMPLE_COUNTS}")
     print(f"PyTorch: {torch.__version__}, Device: ", end="")
     if torch.cuda.is_available():
         print(f"CUDA ({torch.cuda.get_device_name(0)})")
@@ -193,26 +205,41 @@ def main():
     results = []
     for cfg in MODELS:
         try:
-            r = benchmark_model(cfg, history, future_dates)
+            r = benchmark_model_sample_counts(cfg, history, future_dates)
             results.append(r)
         except Exception as e:
             print(f"  [FATAL] {cfg['name']} benchmark failed: {e}")
             results.append({"model": cfg["name"], "params": cfg["params"], "error": str(e)})
 
-    print(f"\n{'='*60}")
-    print("  BENCHMARK RESULTS")
-    print(f"{'='*60}")
-    print(f"{'Model':<16} {'Params':<10} {'Load(s)':<10} {'Infer(s)':<10} {'D1 Chg%':<10} {'D5 Chg%':<10} {'Volatility%':<12}")
-    print("-" * 78)
+    # --- Summary table ---
+    print(f"\n{'='*80}")
+    print("  BENCHMARK RESULTS — sample_count scaling")
+    print(f"{'='*80}")
+    header = f"{'Model':<16} {'SC':<6} {'Infer(s)':<10} {'D1 Chg%':<10} {'D5 Chg%':<10} {'Vol%':<8}"
+    print(header)
+    print("-" * len(header))
     for r in results:
         if "error" in r:
-            print(f"{r['model']:<16} {r['params']:<10} ERROR: {r['error']}")
-        else:
-            print(f"{r['model']:<16} {r['params']:<10} {r['load_time_sec']:<10} {r['avg_infer_sec']:<10} {r.get('day1_chg_pct','N/A'):<10} {r.get('day5_chg_pct','N/A'):<10} {r.get('avg_volatility_pct','N/A'):<12}")
+            print(f"{r['model']:<16} ERROR: {r['error']}")
+            continue
+        for sc_r in r["sample_count_results"]:
+            print(
+                f"{r['model']:<16} {sc_r['sample_count']:<6} "
+                f"{sc_r['avg_infer_sec']:<10} "
+                f"{sc_r.get('day1_chg_pct','N/A'):<10} "
+                f"{sc_r.get('day5_chg_pct','N/A'):<10} "
+                f"{sc_r.get('avg_volatility_pct','N/A'):<8}"
+            )
 
     out_path = "tests/benchmark_kronos_results.json"
     with open(out_path, "w") as f:
-        json.dump({"lookback": LOOKBACK, "horizon": HORIZON, "symbol": SYMBOL, "results": results}, f, indent=2, ensure_ascii=False)
+        json.dump({
+            "lookback": LOOKBACK,
+            "horizon": HORIZON,
+            "symbol": SYMBOL,
+            "sample_counts": SAMPLE_COUNTS,
+            "results": results,
+        }, f, indent=2, ensure_ascii=False)
     print(f"\nResults saved to {out_path}")
 
 
