@@ -6,10 +6,10 @@
   --card-bg: rgba(14, 24, 46, 0.92);
   --line: rgba(60, 90, 140, 0.18);
   --line-strong: rgba(80, 120, 180, 0.28);
-  --text: #eaf0f8;
-  --text-secondary: #b8c8dc;
-  --muted: #6b7f99;
-  --text-dim: #4a5d78;
+  --text: #f1f5fb;
+  --text-secondary: #d0daea;
+  --muted: #8da2bb;
+  --text-dim: #6880a0;
   --brand: #60a5fa;
   --brand-soft: rgba(96, 165, 250, 0.12);
   --brand-glow: rgba(96, 165, 250, 0.08);
