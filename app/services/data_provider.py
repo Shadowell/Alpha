@@ -17,6 +17,7 @@ class AkshareDataProvider:
     realtime_snapshot_cache: tuple[datetime, pd.DataFrame] | None = None
     hot_stocks_cache: tuple[datetime, pd.DataFrame] | None = None
     symbol_name_cache: tuple[datetime, dict[str, str]] | None = None
+    kline_store: Any = None
 
     async def get_realtime_snapshot(
         self,
@@ -24,11 +25,44 @@ class AkshareDataProvider:
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
     ) -> pd.DataFrame:
-        return await self.get_snapshot_em(
-            retries=retries,
-            retry_wait_seconds=retry_wait_seconds,
-            cache_ttl_seconds=cache_ttl_seconds,
-        )
+        if self.kline_store is not None:
+            try:
+                rows = self.kline_store.get_latest_snapshot()
+                if rows:
+                    name_map: dict[str, str] = {}
+                    if self.symbol_name_cache is not None:
+                        _, name_map = self.symbol_name_cache
+                    items = []
+                    for r in rows:
+                        s = r["symbol"]
+                        close = r["close"]
+                        prev = r["prev_close"]
+                        pct = ((close / max(prev, 0.01)) - 1) * 100
+                        items.append({
+                            "代码": s,
+                            "名称": name_map.get(s, s),
+                            "最新价": close,
+                            "涨跌额": round(close - prev, 4),
+                            "涨跌幅": round(pct, 4),
+                            "昨收": prev,
+                            "今开": r["open"],
+                            "最高": r["high"],
+                            "最低": r["low"],
+                            "成交量": r["volume"],
+                            "成交额": r["amount"],
+                            "总市值": pd.NA,
+                        })
+                    df = pd.DataFrame(items)
+                    if not df.empty:
+                        self.realtime_snapshot_cache = (datetime.now(), df)
+                        return df
+            except Exception as exc:
+                print(f"[data_provider] DB snapshot fallback failed: {exc}")
+
+        if self.realtime_snapshot_cache is not None:
+            ts, cached = self.realtime_snapshot_cache
+            return cached.copy()
+        return pd.DataFrame()
 
     def _normalize_snapshot(self, df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
@@ -101,30 +135,16 @@ class AkshareDataProvider:
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
     ) -> pd.DataFrame:
-        last_exc: Exception | None = None
-        for idx in range(retries + 1):
-            try:
-                df = await asyncio.to_thread(ak.stock_zh_a_spot)
-                payload = self._normalize_snapshot(df)
-                if not payload.empty:
-                    self.realtime_snapshot_cache = (datetime.now(), payload.copy())
-                    return payload
-            except Exception as exc:
-                last_exc = exc
-                if idx < retries:
-                    await asyncio.sleep(retry_wait_seconds * (idx + 1))
-
-        if self.realtime_snapshot_cache is not None:
-            ts, cached = self.realtime_snapshot_cache
-            age = (datetime.now() - ts).total_seconds()
-            if age <= cache_ttl_seconds:
-                print("[data_provider] stock_zh_a_spot fallback to cached data")
-                return cached.copy()
-        if last_exc is not None:
-            print(f"[data_provider] get_snapshot_spot failed: {last_exc}")
-        return pd.DataFrame()
+        return await self.get_realtime_snapshot(cache_ttl_seconds=cache_ttl_seconds)
 
     async def get_trade_days(self) -> pd.DataFrame:
+        if self.kline_store is not None:
+            try:
+                dates = self.kline_store.get_trade_dates_from_db()
+                if dates:
+                    return pd.DataFrame({"trade_date": dates})
+            except Exception:
+                pass
         try:
             df = await asyncio.to_thread(ak.tool_trade_date_hist_sina)
             if df is None or df.empty:
@@ -135,6 +155,39 @@ class AkshareDataProvider:
             return pd.DataFrame(columns=["trade_date"])
 
     async def get_hist(self, symbol: str, start_date: str, end_date: str, adjust: str = "qfq") -> pd.DataFrame:
+        if self.kline_store is not None:
+            try:
+                import sqlite3
+                s_fmt = start_date.replace("-", "")
+                e_fmt = end_date.replace("-", "")
+                s_iso = f"{s_fmt[:4]}-{s_fmt[4:6]}-{s_fmt[6:8]}" if len(s_fmt) == 8 else start_date
+                e_iso = f"{e_fmt[:4]}-{e_fmt[4:6]}-{e_fmt[6:8]}" if len(e_fmt) == 8 else end_date
+                conn = sqlite3.connect(str(self.kline_store.db_path))
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """SELECT trade_date, open, high, low, close, volume, amount
+                       FROM kline_daily
+                       WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                       ORDER BY trade_date ASC""",
+                    (symbol, s_iso, e_iso),
+                ).fetchall()
+                conn.close()
+                if rows:
+                    items = []
+                    for r in rows:
+                        items.append({
+                            "日期": r["trade_date"],
+                            "开盘": float(r["open"]),
+                            "最高": float(r["high"]),
+                            "最低": float(r["low"]),
+                            "收盘": float(r["close"]),
+                            "成交量": float(r["volume"]),
+                            "成交额": float(r["amount"]),
+                        })
+                    return pd.DataFrame(items)
+            except Exception as exc:
+                print(f"[data_provider] get_hist DB read failed for {symbol}: {exc}")
+
         try:
             df = await asyncio.to_thread(
                 ak.stock_zh_a_hist,
@@ -181,108 +234,19 @@ class AkshareDataProvider:
             return pd.DataFrame()
 
     async def get_all_concepts(self, cache_seconds: int = 30) -> pd.DataFrame:
-        now = datetime.now()
-        if self.concept_snapshot_cache is not None:
-            ts, cached = self.concept_snapshot_cache
-            if (now - ts).total_seconds() < cache_seconds:
-                return cached.copy()
-
-        last_exc: Exception | None = None
-        for idx in range(3):
-            try:
-                df = await asyncio.to_thread(ak.stock_board_concept_name_em)
-                if df is not None and not df.empty:
-                    payload = df.copy()
-                    payload["数据源"] = "em"
-                    self.concept_snapshot_cache = (now, payload)
-                    return payload
-            except Exception as exc:
-                last_exc = exc
-                if idx < 2:
-                    await asyncio.sleep(1.0 * (idx + 1))
-
-        ths_df = await self.get_all_concepts_ths(max_items=20, cache_seconds=600)
-        if not ths_df.empty:
-            self.concept_snapshot_cache = (now, ths_df.copy())
-            return ths_df
-
         if self.concept_snapshot_cache is not None:
             _, cached = self.concept_snapshot_cache
             if not cached.empty:
-                print("[data_provider] get_all_concepts fallback to stale cached data")
                 return cached.copy()
-
-        if last_exc is not None:
-            print(f"[data_provider] get_all_concepts failed: {last_exc}")
         return pd.DataFrame()
 
     async def get_all_concepts_ths(self, max_items: int = 40, cache_seconds: int = 600) -> pd.DataFrame:
-        now = datetime.now()
-        if self.concept_snapshot_cache is not None:
-            ts, cached = self.concept_snapshot_cache
-            if (now - ts).total_seconds() < cache_seconds and not cached.empty and "数据源" in cached.columns:
-                if str(cached["数据源"].iloc[0]) == "ths":
-                    return cached.copy()
-
-        try:
-            names_df = await asyncio.to_thread(ak.stock_board_concept_name_ths)
-            if names_df is None or names_df.empty or "name" not in names_df.columns:
-                return pd.DataFrame()
-        except Exception as exc:
-            print(f"[data_provider] get_all_concepts_ths names failed: {exc}")
-            return pd.DataFrame()
-
-        leader_map: dict[str, str] = {}
-        try:
-            summary_df = await asyncio.to_thread(ak.stock_board_concept_summary_ths)
-            if summary_df is not None and not summary_df.empty:
-                for _, row in summary_df.iterrows():
-                    key = str(row.get("概念名称", "")).strip()
-                    if key and key not in leader_map:
-                        leader_map[key] = str(row.get("龙头股", "")).strip()
-        except Exception:
-            pass
-
-        items: list[dict[str, Any]] = []
-        for name in names_df["name"].astype(str).head(max_items).tolist():
-            try:
-                info_df = await asyncio.to_thread(ak.stock_board_concept_info_ths, symbol=name)
-            except Exception:
-                continue
-
-            if info_df is None or info_df.empty:
-                continue
-            info_map = {str(row.get("项目", "")).strip(): str(row.get("值", "")).strip() for _, row in info_df.iterrows()}
-            change_pct = _parse_percent(info_map.get("板块涨幅", "0"))
-            up_count, down_count = _parse_up_down(info_map.get("涨跌家数", "0/0"))
-            items.append(
-                {
-                    "板块名称": name,
-                    "涨跌幅": change_pct,
-                    "上涨家数": up_count,
-                    "下跌家数": down_count,
-                    "领涨股票": leader_map.get(name, ""),
-                    "涨停家数": 0,
-                    "数据源": "ths",
-                }
-            )
-
-        if not items:
-            return pd.DataFrame()
-        out = pd.DataFrame(items).sort_values("涨跌幅", ascending=False).reset_index(drop=True)
-        return out
+        return await self.get_all_concepts(cache_seconds=cache_seconds)
 
     async def get_concept_constituents(self, concept_name: str) -> pd.DataFrame:
         if concept_name in self.concept_constituents_cache:
             return self.concept_constituents_cache[concept_name].copy()
-
-        try:
-            df = await asyncio.to_thread(ak.stock_board_concept_cons_em, symbol=concept_name)
-        except Exception:
-            df = pd.DataFrame()
-
-        self.concept_constituents_cache[concept_name] = df.copy()
-        return df
+        return pd.DataFrame()
 
     async def get_hot_stocks(
         self,
@@ -291,30 +255,9 @@ class AkshareDataProvider:
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
     ) -> pd.DataFrame:
-        last_exc: Exception | None = None
-        for idx in range(retries + 1):
-            try:
-                raw = await asyncio.to_thread(ak.stock_hot_rank_em)
-                if raw is not None and not raw.empty:
-                    normalized = normalize_hot_stocks_df(raw)
-                    if not normalized.empty:
-                        normalized = normalized.head(top_n).copy()
-                        self.hot_stocks_cache = (datetime.now(), normalized)
-                        return normalized
-            except Exception as exc:
-                last_exc = exc
-                if idx < retries:
-                    await asyncio.sleep(retry_wait_seconds * (idx + 1))
-
         if self.hot_stocks_cache is not None:
-            ts, cached = self.hot_stocks_cache
-            age = (datetime.now() - ts).total_seconds()
-            if age <= cache_ttl_seconds:
-                print("[data_provider] hot stocks fallback to cached data")
-                return cached.head(top_n).copy()
-
-        if last_exc is not None:
-            print(f"[data_provider] get_hot_stocks failed: {last_exc}")
+            _, cached = self.hot_stocks_cache
+            return cached.head(top_n).copy()
         return pd.DataFrame(columns=["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"])
 
     async def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
@@ -323,19 +266,6 @@ class AkshareDataProvider:
             ts, payload = self.symbol_name_cache
             if (now - ts).total_seconds() <= cache_ttl_seconds:
                 return dict(payload)
-
-        try:
-            df = await asyncio.to_thread(ak.stock_info_a_code_name)
-            if df is not None and not df.empty and {"code", "name"}.issubset(set(df.columns)):
-                mapping = {
-                    normalize_symbol(code): str(name)
-                    for code, name in zip(df["code"].tolist(), df["name"].tolist())
-                    if str(code).strip()
-                }
-                self.symbol_name_cache = (now, mapping)
-                return mapping
-        except Exception as exc:
-            print(f"[data_provider] get_symbol_name_map failed: {exc}")
 
         if self.symbol_name_cache is not None:
             _, payload = self.symbol_name_cache

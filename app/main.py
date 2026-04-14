@@ -25,8 +25,11 @@ from app.routers.kline import init_kline_router, kline_cache_loop
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-provider = AkshareDataProvider()
-kline_cache_service = KlineCacheService(provider=provider)
+from app.services.kline_store import KlineSQLiteStore as _KlineSQLiteStore
+
+_kline_store = _KlineSQLiteStore()
+provider = AkshareDataProvider(kline_store=_kline_store)
+kline_cache_service = KlineCacheService(provider=provider, store=_kline_store)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service, provider=provider)
 hub = RealtimeHub()

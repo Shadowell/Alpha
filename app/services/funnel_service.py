@@ -155,54 +155,30 @@ class FunnelService:
             return pd.DataFrame()
 
     async def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
-        now = now_cn()
-        after_close = is_after_close(now)
-        if after_close:
-            cache_df = self._build_cache_snapshot(self.trade_date)
-            if not cache_df.empty:
-                return cache_df, "history_cache"
-            spot_df = await self.provider.get_snapshot_spot()
-            if not spot_df.empty:
-                return spot_df, "spot"
-            cache_fallback = await self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
-            if not cache_fallback.empty:
-                return cache_fallback, "realtime_cache"
-            return pd.DataFrame(), "none"
-
-        realtime_df = await self.provider.get_realtime_snapshot()
-        if not realtime_df.empty:
-            return realtime_df, "realtime"
-        spot_df = await self.provider.get_snapshot_spot()
-        if not spot_df.empty:
-            return spot_df, "spot"
-        cache_fallback = await self.provider.get_realtime_snapshot(cache_ttl_seconds=24 * 3600)
-        if not cache_fallback.empty:
-            return cache_fallback, "realtime_cache"
+        cache_df = self._build_cache_snapshot(self.trade_date)
+        if not cache_df.empty:
+            return cache_df, "history_cache"
+        snapshot_df = await self.provider.get_realtime_snapshot()
+        if not snapshot_df.empty:
+            return snapshot_df, "db_snapshot"
         return pd.DataFrame(), "none"
 
     async def _warmup_name_cache(self) -> None:
-        """预热股票名称缓存，确保 build_snapshot_for_screen 有名称数据。"""
-        try:
-            await self.provider.get_symbol_name_map()
-        except Exception:
-            pass
+        """从已有 entries 构建名称缓存，不再调用外部接口。"""
+        if self.provider.symbol_name_cache is None:
+            name_map: dict[str, str] = {}
+            for symbol, entry in self.entries.items():
+                n = entry.get("name", "")
+                if n and n != symbol:
+                    name_map[symbol] = n
+            if name_map:
+                from datetime import datetime
+                self.provider.symbol_name_cache = (datetime.now(), name_map)
 
     async def backfill_names(self) -> int:
-        """为 entries 中名称缺失（名称==代码）的股票补填真实名称。"""
-        name_map = await self.provider.get_symbol_name_map()
-        if not name_map:
-            return 0
-        fixed = 0
-        for symbol, entry in self.entries.items():
-            cur_name = entry.get("name", "")
-            if not cur_name or cur_name == symbol:
-                real_name = name_map.get(symbol, "")
-                if real_name and real_name != symbol:
-                    entry["name"] = real_name
-                    fixed += 1
-        if fixed:
-            self._save_state()
-        return fixed
+        """从已有 entries 构建名称缓存（不调用外部接口）。"""
+        await self._warmup_name_cache()
+        return 0
 
     async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
         started = time.time()
@@ -517,55 +493,24 @@ class FunnelService:
             return now_cn().date().isoformat()
 
     async def _build_today_bar(self, symbol: str) -> dict | None:
-        import akshare as ak
-
-        trade_date = await self._get_latest_trade_date()
-        if not trade_date:
+        """从 DB 缓存的 K 线取最后一天作为当日柱，不再调用实时接口。"""
+        if self.kline_cache_service is None:
             return None
-
-        bar = None
         try:
-            raw_symbol = symbol.replace("sh", "").replace("sz", "").replace("bj", "")
-            df = await asyncio.to_thread(ak.stock_bid_ask_em, symbol=raw_symbol)
-            if df is not None and not df.empty:
-                lookup = dict(zip(df["item"], df["value"]))
-                price = float(lookup.get("最新", 0))
-                open_ = float(lookup.get("今开", 0))
-                if price > 0 and open_ > 0:
-                    volume_hands = float(lookup.get("总手", 0))
-                    bar = {
-                        "date": trade_date,
-                        "open": open_,
-                        "high": float(lookup.get("最高", price)),
-                        "low": float(lookup.get("最低", price)),
-                        "close": price,
-                        "volume": volume_hands * 100,
-                    }
+            rows = self.kline_cache_service.get_kline(symbol, 1)
+            if rows:
+                r = rows[-1]
+                return {
+                    "date": str(r.get("date", "")),
+                    "open": float(r.get("open", 0)),
+                    "high": float(r.get("high", 0)),
+                    "low": float(r.get("low", 0)),
+                    "close": float(r.get("close", 0)),
+                    "volume": float(r.get("volume", 0)),
+                }
         except Exception:
             pass
-
-        if bar is None:
-            try:
-                snapshot = await self.provider.get_realtime_snapshot(cache_ttl_seconds=300)
-                if not snapshot.empty:
-                    row = snapshot[snapshot["代码"] == symbol]
-                    if not row.empty:
-                        r = row.iloc[0]
-                        price = float(r.get("最新价", 0))
-                        open_ = float(r.get("今开", 0))
-                        if price > 0 and open_ > 0:
-                            bar = {
-                                "date": trade_date,
-                                "open": open_,
-                                "high": float(r.get("最高", price)),
-                                "low": float(r.get("最低", price)),
-                                "close": price,
-                                "volume": float(r.get("成交量", 0)),
-                            }
-            except Exception:
-                pass
-
-        return bar
+        return None
 
     async def get_stock_detail(
         self, symbol: str, trade_date: str | None = None, kline_days: int = 30

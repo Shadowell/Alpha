@@ -657,27 +657,18 @@ class KlineCacheService:
         return selected.iloc[0].strftime("%Y%m%d"), selected.iloc[-1].strftime("%Y%m%d")
 
     async def _load_symbol_list(self) -> list[str]:
-        symbols: list[str] = []
+        all_symbols = self.store.get_all_symbols()
+        symbols = [
+            s for s in all_symbols
+            if s.startswith(("00", "30", "60", "68"))
+        ]
+        if symbols:
+            return sorted(set(symbols))
+
         name_map = await self.provider.get_symbol_name_map()
         for code, name in name_map.items():
             n = str(name).upper()
             if not code or "ST" in n:
-                continue
-            if code.startswith(("00", "30", "60", "68")):
-                symbols.append(code)
-
-        if symbols:
-            return sorted(set(symbols))
-
-        snapshot = await self.provider.get_snapshot_spot()
-        if snapshot.empty:
-            snapshot = await self.provider.get_realtime_snapshot()
-        if snapshot.empty:
-            return []
-        for _, row in snapshot.iterrows():
-            code = str(row.get("代码", "")).strip()
-            name = str(row.get("名称", "")).strip().upper()
-            if not code or "ST" in name:
                 continue
             if code.startswith(("00", "30", "60", "68")):
                 symbols.append(code)
