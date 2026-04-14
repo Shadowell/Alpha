@@ -18,6 +18,8 @@ from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.strategy_engine import get_last_n_trade_window
 from app.services.time_utils import now_cn
+from app.services.hermes_memory import HermesMemory
+from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -27,6 +29,14 @@ kline_cache_service = KlineCacheService(provider=provider)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service)
 hub = RealtimeHub()
+
+hermes_memory = HermesMemory()
+hermes_runtime = HermesRuntime(
+    memory=hermes_memory,
+    funnel_service=service,
+    notice_service=notice_service,
+    kline_cache_service=kline_cache_service,
+)
 
 
 async def _broadcast_snapshot() -> None:
@@ -157,8 +167,9 @@ async def _build_today_bar(symbol: str) -> dict | None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(_kline_cache_loop())
+    app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
     yield
-    for key in ["ticker_task", "kline_cache_task"]:
+    for key in ["ticker_task", "kline_cache_task", "hermes_task"]:
         task = getattr(app.state, key, None)
         if task:
             task.cancel()
@@ -365,6 +376,93 @@ async def get_notice_detail(symbol: str, days: int = 30):
         return await notice_service.get_notice_detail(symbol, days=days)
     except KeyError:
         raise HTTPException(status_code=404, detail="symbol not found in notice funnel")
+
+
+# ── Hermes Agent API ──
+
+
+@app.get("/api/agent/status")
+async def get_agent_status():
+    return hermes_runtime.get_status()
+
+
+@app.post("/api/agent/run")
+async def run_agent_task(body: dict):
+    task_type = body.get("task_type", "daily_review")
+    params = body.get("params", {})
+    valid_types = {"daily_review", "notice_review", "full_diagnosis"}
+    if task_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"无效任务类型，可选: {valid_types}")
+    result = await hermes_runtime.run_task(task_type, trigger="manual", params=params)
+    if not result.get("success"):
+        raise HTTPException(status_code=503, detail=result.get("message", "任务执行失败"))
+    return result
+
+
+@app.get("/api/agent/proposals")
+async def list_agent_proposals(status: str | None = None, type: str | None = None, limit: int = 20, offset: int = 0):
+    items, total = hermes_memory.list_proposals(status=status, proposal_type=type, limit=limit, offset=offset)
+    return {"items": items, "total": total}
+
+
+@app.get("/api/agent/proposals/{proposal_id}")
+async def get_agent_proposal(proposal_id: int):
+    p = hermes_memory.get_proposal(proposal_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="提案不存在")
+    feedbacks = hermes_memory.get_feedback_for_proposal(proposal_id)
+    p["feedbacks"] = feedbacks
+    return p
+
+
+@app.post("/api/agent/proposals/{proposal_id}/approve")
+async def approve_agent_proposal(proposal_id: int, body: dict | None = None):
+    body = body or {}
+    note = body.get("note", "")
+    proposal = hermes_memory.get_proposal(proposal_id)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="提案不存在")
+    if proposal["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"提案状态为 {proposal['status']}，无法审批")
+
+    diff = proposal.get("diff_payload")
+    if diff and isinstance(diff, dict) and proposal.get("type") == "rule_patch":
+        overrides = {}
+        for key, val in diff.items():
+            if isinstance(val, dict) and "to" in val:
+                overrides[key] = val["to"]
+            else:
+                overrides[key] = val
+        if overrides:
+            try:
+                await service.update_rule_engine(overrides)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"应用参数失败: {exc}")
+
+    hermes_memory.update_proposal_status(proposal_id, "approved", approved_by="user")
+    hermes_memory.record_feedback(proposal_id, "approve", note)
+    return {"success": True, "message": "提案已批准并应用"}
+
+
+@app.post("/api/agent/proposals/{proposal_id}/reject")
+async def reject_agent_proposal(proposal_id: int, body: dict | None = None):
+    body = body or {}
+    note = body.get("note", "")
+    proposal = hermes_memory.get_proposal(proposal_id)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="提案不存在")
+    if proposal["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"提案状态为 {proposal['status']}，无法操作")
+
+    hermes_memory.update_proposal_status(proposal_id, "rejected")
+    hermes_memory.record_feedback(proposal_id, "reject", note)
+    return {"success": True, "message": "提案已驳回"}
+
+
+@app.get("/api/agent/tasks")
+async def list_agent_tasks(limit: int = 10):
+    tasks = hermes_memory.get_recent_tasks(limit)
+    return {"items": tasks}
 
 
 @app.websocket("/ws/realtime")
