@@ -180,8 +180,34 @@ class FunnelService:
             return cache_fallback, "realtime_cache"
         return pd.DataFrame(), "none"
 
+    async def _warmup_name_cache(self) -> None:
+        """预热股票名称缓存，确保 build_snapshot_for_screen 有名称数据。"""
+        try:
+            await self.provider.get_symbol_name_map()
+        except Exception:
+            pass
+
+    async def backfill_names(self) -> int:
+        """为 entries 中名称缺失（名称==代码）的股票补填真实名称。"""
+        name_map = await self.provider.get_symbol_name_map()
+        if not name_map:
+            return 0
+        fixed = 0
+        for symbol, entry in self.entries.items():
+            cur_name = entry.get("name", "")
+            if not cur_name or cur_name == symbol:
+                real_name = name_map.get(symbol, "")
+                if real_name and real_name != symbol:
+                    entry["name"] = real_name
+                    fixed += 1
+        if fixed:
+            self._save_state()
+        return fixed
+
     async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
         started = time.time()
+
+        await self._warmup_name_cache()
 
         async with self.lock:
             await self.ensure_trade_date(trade_date)

@@ -28,7 +28,7 @@ STATIC_DIR = BASE_DIR / "static"
 provider = AkshareDataProvider()
 kline_cache_service = KlineCacheService(provider=provider)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
-notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service)
+notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service, provider=provider)
 hub = RealtimeHub()
 
 kronos_service = KronosPredictService(
@@ -73,6 +73,9 @@ async def _ticker_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    fixed = await service.backfill_names()
+    if fixed:
+        print(f"[startup] backfilled {fixed} stock names")
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(kline_cache_loop(kline_cache_service))
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
