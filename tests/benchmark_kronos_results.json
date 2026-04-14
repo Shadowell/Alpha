@@ -1,0 +1,61 @@
+{
+  "lookback": 30,
+  "horizon": 5,
+  "symbol": "000001",
+  "results": [
+    {
+      "model": "Kronos-mini",
+      "params": "4.1M",
+      "device": "mps",
+      "max_context": 2048,
+      "load_time_sec": 1.36,
+      "avg_infer_sec": 0.16,
+      "infer_times": [
+        0.17,
+        0.15,
+        0.16
+      ],
+      "pred_day1_close": 11.0565,
+      "pred_day5_close": 11.0999,
+      "day1_chg_pct": -0.12,
+      "day5_chg_pct": 0.27,
+      "avg_volatility_pct": 1.3
+    },
+    {
+      "model": "Kronos-small",
+      "params": "24.7M",
+      "device": "mps",
+      "max_context": 512,
+      "load_time_sec": 1.57,
+      "avg_infer_sec": 0.25,
+      "infer_times": [
+        0.21,
+        0.25,
+        0.3
+      ],
+      "pred_day1_close": 11.058,
+      "pred_day5_close": 11.1983,
+      "day1_chg_pct": -0.11,
+      "day5_chg_pct": 1.16,
+      "avg_volatility_pct": 0.98
+    },
+    {
+      "model": "Kronos-base",
+      "params": "102.3M",
+      "device": "mps",
+      "max_context": 512,
+      "load_time_sec": 3.14,
+      "avg_infer_sec": 0.27,
+      "infer_times": [
+        0.27,
+        0.27,
+        0.27
+      ],
+      "pred_day1_close": 11.0641,
+      "pred_day5_close": 10.8609,
+      "day1_chg_pct": -0.05,
+      "day5_chg_pct": -1.89,
+      "avg_volatility_pct": 1.35
+    }
+  ]
+}
