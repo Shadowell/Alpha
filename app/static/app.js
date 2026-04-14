@@ -15,6 +15,10 @@ const state = {
   noticeKeywords: [],
   activeKeywords: new Set(),
   predictChart: null,
+  dcStats: null,
+  dcReport: null,
+  dcTaskFilter: 'all',
+  dcLogsExpanded: false,
 };
 
 function fmtNum(v, digits = 2) {
@@ -51,6 +55,98 @@ function setStatus(text, tone = 'info') {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
   }, tone === 'error' ? 4000 : 2500);
+}
+
+/* ==================== Page Summary Bars ==================== */
+
+function _psItem(label, value, cls = '') {
+  return `<span class="ps-item">${label} <span class="ps-value ${cls}">${value}</span></span>`;
+}
+function _psSep() { return '<span class="ps-sep">|</span>'; }
+
+function renderMarketSummary() {
+  const el = document.getElementById('marketSummary');
+  if (!el) return;
+  const concepts = state.hotConcepts?.items || [];
+  const stocks = state.hotStocks?.items || [];
+  const upCount = concepts.filter(c => Number(c.change_pct || 0) > 0).length;
+  const leader = stocks.length ? stocks[0].name : '--';
+  const topChg = stocks.length ? Number(stocks[0].change_pct || 0) : 0;
+  const mood = upCount >= 7 ? '偏强' : (upCount >= 4 ? '中性' : '偏弱');
+  const moodCls = upCount >= 7 ? 'up' : (upCount >= 4 ? '' : 'down');
+  el.innerHTML = [
+    _psItem('上涨概念', `${upCount}/${concepts.length}`, upCount >= 5 ? 'success' : 'warning'),
+    _psSep(),
+    _psItem('龙头', `${leader} ${topChg >= 0 ? '+' : ''}${fmtNum(topChg, 2)}%`, topChg >= 0 ? 'up' : 'down'),
+    _psSep(),
+    _psItem('市场情绪', mood, moodCls),
+  ].join('');
+}
+
+function renderDataSummary() {
+  const el = document.getElementById('dataSummary');
+  if (!el) return;
+  const stats = state.dcStats || {};
+  const report = state.dcReport;
+  const syncSt = state.syncStatus || {};
+  const cov = report?.coverage_pct;
+  const covCls = cov != null ? (cov >= 99 ? 'success' : (cov >= 90 ? 'warning' : 'error')) : '';
+  el.innerHTML = [
+    _psItem('股票数', (stats.symbol_count || 0).toLocaleString(), 'brand'),
+    _psSep(),
+    _psItem('最近同步', syncSt.last_success_trade_date || '--', 'brand'),
+    _psSep(),
+    _psItem('数据覆盖率', cov != null ? cov.toFixed(1) + '%' : '--', covCls),
+    _psSep(),
+    _psItem('状态', { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[syncSt.status] || '--',
+      syncSt.status === 'running' ? 'warning' : (syncSt.status === 'success' ? 'success' : '')),
+  ].join('');
+}
+
+function renderFunnelSummary() {
+  const el = document.getElementById('funnelSummary');
+  if (!el) return;
+  if (!state.funnel) { el.innerHTML = ''; return; }
+  const s = state.funnel.stats;
+  el.innerHTML = [
+    _psItem('候选', s.candidate + '只'),
+    _psSep(),
+    _psItem('重点关注', s.focus + '只', 'warning'),
+    _psSep(),
+    _psItem('买入池', s.buy + '只', 'success'),
+    _psSep(),
+    _psItem('更新', state.funnel.updated_at || '--'),
+  ].join('');
+}
+
+function renderNoticeSummaryBar() {
+  const el = document.getElementById('noticeSummaryBar');
+  if (!el) return;
+  if (!state.noticeFunnel) { el.innerHTML = ''; return; }
+  const nf = state.noticeFunnel;
+  const kwList = state.activeKeywords.size > 0 ? [...state.activeKeywords].join(' + ') : '全部';
+  el.innerHTML = [
+    _psItem('已筛选', kwList, 'brand'),
+    _psSep(),
+    _psItem('候选', nf.stats.candidate + '条'),
+    _psSep(),
+    _psItem('买入池', nf.stats.buy + '只', 'success'),
+    _psSep(),
+    _psItem('打分源', nf.source || '--'),
+  ].join('');
+}
+
+function renderAgentSummary() {
+  const el = document.getElementById('agentSummary');
+  if (!el) return;
+  const dot = document.getElementById('agentStatusDot');
+  const isRunning = dot && dot.classList.contains('running');
+  const pendingCount = document.getElementById('agentPendingCount')?.textContent || '0';
+  el.innerHTML = [
+    _psItem('状态', isRunning ? '运行中' : '空闲', isRunning ? 'warning' : 'success'),
+    _psSep(),
+    _psItem('待审批', pendingCount + '条', Number(pendingCount) > 0 ? 'warning' : ''),
+  ].join('');
 }
 
 async function request(path, options = {}) {
@@ -192,7 +288,7 @@ function renderPool(poolName, list) {
     });
     root.appendChild(div);
   });
-  if (!filtered.length) root.innerHTML = '<div class="detail-empty">暂无股票</div>';
+  if (!filtered.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚未运行筛选，点击上方「盘后筛选」开始</div></div>';
 }
 
 function renderFunnel() {
@@ -201,6 +297,7 @@ function renderFunnel() {
   renderPool('candidate', state.funnel.pools.candidate || []);
   renderPool('focus', state.funnel.pools.focus || []);
   renderPool('buy', state.funnel.pools.buy || []);
+  renderFunnelSummary();
   if (state.activeTab === 'funnel') setMeta();
 }
 
@@ -228,7 +325,8 @@ function renderHotConcepts() {
     `;
     root.appendChild(div);
   });
-  if (!items.length) root.innerHTML = '<div class="detail-empty">暂无概念数据</div>';
+  if (!items.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无概念数据</div></div>';
+  renderMarketSummary();
 }
 
 function renderHotStocks() {
@@ -247,7 +345,7 @@ function renderHotStocks() {
     `;
     root.appendChild(card);
   });
-  if (!items.length) root.innerHTML = '<div class="detail-empty">暂无热门个股数据</div>';
+  if (!items.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无热门个股数据</div></div>';
 }
 
 /* ==================== 数据中心 ==================== */
@@ -268,12 +366,15 @@ async function loadDataCenter() {
 
   state.syncStatus = syncStatus;
   state.syncLogs = logs;
+  state.dcStats = stats;
+  state.dcReport = report;
 
   renderDcStats(stats, syncStatus, report);
   renderDcProgress(syncStatus);
   renderDcReport(report);
   renderDcTaskList(logs);
   renderDcLogStream(logs);
+  renderDataSummary();
 }
 
 function renderDcStats(stats, syncStatus, report) {
@@ -390,26 +491,56 @@ function renderDcReport(report) {
   container.innerHTML = html;
 }
 
+function renderDcTaskFilters() {
+  const container = document.getElementById('dcTaskFilters');
+  if (!container) return;
+  const filters = [
+    { key: 'all', label: '全部' },
+    { key: 'success', label: '成功' },
+    { key: 'failed', label: '失败' },
+    { key: 'running', label: '运行中' },
+  ];
+  container.innerHTML = filters.map(f => {
+    const active = state.dcTaskFilter === f.key ? ' btn-secondary active' : ' btn-secondary';
+    return `<button class="${active}" data-filter="${f.key}">${f.label}</button>`;
+  }).join('');
+  container.querySelectorAll('button').forEach(btn => {
+    btn.onclick = () => {
+      state.dcTaskFilter = btn.dataset.filter;
+      renderDcTaskFilters();
+      renderDcTaskList(state.syncLogs || { items: [], total: 0 });
+    };
+  });
+}
+
 function renderDcTaskList(logs) {
   const container = document.getElementById('dcTaskList');
   const pager = document.getElementById('dcTaskPager');
-  const items = logs.items || [];
+  let items = logs.items || [];
+
+  renderDcTaskFilters();
+
+  if (state.dcTaskFilter !== 'all') {
+    items = items.filter(t => t.status === state.dcTaskFilter);
+  }
 
   if (!items.length) {
-    container.innerHTML = '<div class="detail-empty">暂无任务记录</div>';
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无历史任务，点击上方按钮发起同步</div></div>';
     pager.innerHTML = '';
     return;
   }
 
   container.innerHTML = items.map(t => {
     const time = (t.started_at || '').slice(11, 16);
+    const failInfo = t.status === 'failed' && t.message ? `<div class="dc-task-error" style="font-size:11px;color:var(--status-error);margin-top:4px;padding-left:18px">${esc(t.message)}</div>` : '';
     return `
-      <div class="dc-task-item">
-        <span class="dc-task-status ${t.status}"></span>
+      <div class="dc-task-item" style="flex-wrap:wrap">
+        <span class="status-dot status-dot--${t.status === 'success' ? 'success' : (t.status === 'running' ? 'warning' : (t.status === 'failed' ? 'error' : 'progress'))}"></span>
         <span class="dc-task-date">${t.trade_date}</span>
         <span class="dc-task-mode">${t.trigger_mode}</span>
         <span class="dc-task-counts">${t.success_symbols || 0}✓ ${t.failed_symbols || 0}✗ / ${t.total_symbols || 0}</span>
         <span class="dc-task-time">${time}</span>
+        ${failInfo}
       </div>`;
   }).join('');
 
@@ -432,14 +563,22 @@ function dcTaskPageNav(delta) {
 
 function renderDcLogStream(logs) {
   const container = document.getElementById('dcLogStream');
+  const toggleBtn = document.getElementById('btnDcLogsToggle');
   const items = logs.items || [];
   if (!items.length) {
-    container.innerHTML = '<div class="detail-empty">暂无日志</div>';
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无同步日志，发起同步后将实时显示</div></div>';
+    if (toggleBtn) toggleBtn.style.display = 'none';
     return;
   }
-  container.innerHTML = items.slice(0, 10).map(t => `
+  const showCount = state.dcLogsExpanded ? items.length : Math.min(5, items.length);
+  container.innerHTML = items.slice(0, showCount).map(t => `
     <div class="sync-log-item">[${t.status}] ${t.trade_date} ${t.synced_symbols}/${t.total_symbols} (${t.trigger_mode}) ${t.message || ''}</div>
   `).join('');
+  if (toggleBtn) {
+    toggleBtn.style.display = items.length > 5 ? '' : 'none';
+    toggleBtn.textContent = state.dcLogsExpanded ? '收起日志' : `展开全部 (${items.length})`;
+    toggleBtn.className = 'collapse-toggle' + (state.dcLogsExpanded ? ' expanded' : '');
+  }
 }
 
 /* ==================== Chart ==================== */
@@ -785,7 +924,7 @@ function renderNoticePool(poolName, list) {
     });
     root.appendChild(card);
   });
-  if (!list.length) root.innerHTML = '<div class="detail-empty">暂无股票</div>';
+  if (!list.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚未运行公告筛选</div></div>';
 }
 
 function renderNoticeFunnel() {
@@ -795,6 +934,7 @@ function renderNoticeFunnel() {
   renderNoticePool('focus', state.noticeFunnel.pools.focus || []);
   renderNoticePool('buy', state.noticeFunnel.pools.buy || []);
   renderNoticeMeta();
+  renderNoticeSummaryBar();
   if (state.activeTab === 'notice') setMeta();
 }
 
@@ -813,11 +953,20 @@ async function selectNoticeSymbol(symbol) {
     }
     document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
     const first = (detail.notices || [])[0] || {};
+    const kwHighlight = (text) => {
+      if (!text || state.activeKeywords.size === 0) return esc(text || '-');
+      let result = esc(text);
+      for (const kw of state.activeKeywords) {
+        const regex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        result = result.replace(regex, '<span class="notice-keyword-hit">$&</span>');
+      }
+      return result;
+    };
     document.getElementById('noticeDetail').innerHTML = `
-      <div class="metrics"><b>${first.title || '-'}</b></div>
+      <div class="metrics"><b>${kwHighlight(first.title)}</b></div>
       <div class="metrics">类型: ${first.notice_type || '-'}</div>
-      <div class="metrics">理由: ${detail.reason || '-'}</div>
-      <div class="metrics">风险: ${detail.risk || '-'}</div>
+      <div class="metrics">理由: ${kwHighlight(detail.reason)}</div>
+      <div class="metrics">风险: ${kwHighlight(detail.risk)}</div>
       <div class="metrics"><a href="${first.url || '#'}" target="_blank" style="color:var(--brand)">公告链接</a></div>
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
@@ -869,7 +1018,7 @@ async function reloadNotice() {
   renderNoticeFunnel();
   if (!state.noticeSelectedSymbol) {
     document.getElementById('noticeSummary').textContent = '点击左侧股票查看';
-    document.getElementById('noticeDetail').innerHTML = '<div class="detail-empty">暂无详情</div>';
+    document.getElementById('noticeDetail').innerHTML = '<div class="empty-state"><div class="empty-state-text">请点击左侧股票查看公告详情</div></div>';
     if (state.activeTab === 'notice') renderChartPlaceholder('点击左侧股票查看');
   }
 }
@@ -905,12 +1054,29 @@ async function loadAgentStatus() {
   } catch { /* ignore */ }
 }
 
+function _highlightDiff(diffStr) {
+  return diffStr.split('\n').map(line => {
+    if (line.startsWith('+')) return `<span class="diff-line-add">${esc(line)}</span>`;
+    if (line.startsWith('-')) return `<span class="diff-line-del">${esc(line)}</span>`;
+    return `<span class="diff-line-ctx">${esc(line)}</span>`;
+  }).join('\n');
+}
+
+function _toggleCollapse(btn) {
+  const target = btn.parentElement.querySelector('.collapsible');
+  if (!target) return;
+  const expanded = target.classList.toggle('expanded');
+  btn.classList.toggle('expanded', expanded);
+  btn.textContent = expanded ? '收起' : btn.dataset.label;
+}
+
 async function loadAgentProposals() {
   const container = document.getElementById('agentProposals');
   try {
     const data = await request('/api/agent/proposals?limit=20');
     if (!data.items || data.items.length === 0) {
-      container.innerHTML = '<div class="agent-empty">暂无提案</div>';
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无待审批提案，Agent 空闲中</div></div>';
+      renderAgentSummary();
       return;
     }
     container.innerHTML = data.items.map(p => {
@@ -919,6 +1085,15 @@ async function loadAgentProposals() {
       const diffStr = p.diff_payload ? JSON.stringify(p.diff_payload, null, 2) : '';
       const isPending = p.status === 'pending';
       const statusLabel = { pending: '待审批', approved: '已批准', rejected: '已驳回', deferred: '已暂缓' }[p.status] || p.status;
+      const statusBadgeCls = { pending: 'badge--warning', approved: 'badge--success', rejected: 'badge--error' }[p.status] || '';
+      const reasoningHtml = p.reasoning
+        ? `<button class="collapse-toggle" data-label="查看推理过程" onclick="_toggleCollapse(this)">查看推理过程</button>
+           <div class="collapsible"><div class="agent-proposal-reasoning">${esc(p.reasoning)}</div></div>`
+        : '';
+      const diffHtml = diffStr
+        ? `<button class="collapse-toggle" data-label="查看变更" onclick="_toggleCollapse(this)">查看变更</button>
+           <div class="collapsible"><div class="agent-proposal-diff">${_highlightDiff(diffStr)}</div></div>`
+        : '';
       return `
         <div class="agent-proposal-card ${statusCls}">
           <div class="agent-proposal-title">${esc(p.title)}</div>
@@ -926,21 +1101,22 @@ async function loadAgentProposals() {
             <span>类型: ${esc(p.type)}</span>
             <span class="${riskCls}">风险: ${esc(p.risk_level)}</span>
             <span>置信度: ${Math.round((p.confidence || 0) * 100)}%</span>
-            <span>状态: ${statusLabel}</span>
+            <span class="badge ${statusBadgeCls}" style="margin:0;display:inline-block">${statusLabel}</span>
             <span>${(p.created_at || '').slice(0, 16)}</span>
           </div>
-          ${p.reasoning ? `<div class="agent-proposal-reasoning">${esc(p.reasoning)}</div>` : ''}
-          ${diffStr ? `<div class="agent-proposal-diff">${esc(diffStr)}</div>` : ''}
+          ${reasoningHtml}
+          ${diffHtml}
           ${isPending ? `
-            <div class="agent-proposal-actions">
-              <button class="btn-approve" onclick="approveProposal(${p.id})">批准</button>
-              <button class="btn-reject" onclick="rejectProposal(${p.id})">驳回</button>
+            <div class="agent-proposal-actions" style="margin-top:10px">
+              <button class="btn-primary" onclick="approveProposal(${p.id})">批准</button>
+              <button class="btn-danger" onclick="rejectProposal(${p.id})">驳回</button>
             </div>
           ` : ''}
         </div>`;
     }).join('');
+    renderAgentSummary();
   } catch {
-    container.innerHTML = '<div class="agent-empty">加载失败</div>';
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">提案加载失败</div></div>';
   }
 }
 
@@ -951,25 +1127,31 @@ async function loadAgentTasks() {
   try {
     const data = await request('/api/agent/tasks?limit=10');
     if (!data.items || data.items.length === 0) {
-      container.innerHTML = '<div class="agent-empty">暂无运行记录</div>';
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚无运行记录，点击上方「手动触发复盘」启动</div></div>';
       return;
     }
     container.innerHTML = data.items.map(t => {
       const typeLabel = { daily_review: '盘后复盘', notice_review: '公告复盘', full_diagnosis: '全面诊断' }[t.task_type] || t.task_type;
       const statusLabel = { success: '成功', failed: '失败', timeout: '超时', running: '运行中' }[t.status] || t.status;
+      const statusDotCls = { success: 'success', failed: 'error', timeout: 'warning', running: 'progress' }[t.status] || 'progress';
       const time = (t.finished_at || t.started_at || '').slice(11, 16);
       const elapsed = t.elapsed_ms ? `${(t.elapsed_ms / 1000).toFixed(1)}s` : '--';
+      const failDetail = t.status === 'failed' && t.error
+        ? `<div style="grid-column:1/-1;font-size:11px;color:var(--status-error);padding-left:20px;margin-top:-4px">${esc(t.error)}</div>`
+        : '';
       return `
-        <div class="agent-task-row">
+        <div class="agent-task-row" style="flex-wrap:wrap">
+          <span class="status-dot status-dot--${statusDotCls}"></span>
           <span class="agent-task-type">${typeLabel}</span>
           <span class="agent-task-status ${t.status}">${statusLabel}</span>
           <span class="agent-task-time">${time}</span>
           <span class="agent-task-elapsed">${elapsed}</span>
           <span class="agent-task-time">${t.trigger || ''}</span>
+          ${failDetail}
         </div>`;
     }).join('');
   } catch {
-    container.innerHTML = '<div class="agent-empty">加载失败</div>';
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">运行记录加载失败</div></div>';
   }
 }
 
@@ -1228,6 +1410,21 @@ function connectWs() {
   ws.onclose = () => { setTimeout(connectWs, 2000); };
 }
 
+/* ==================== Button Loading Helper ==================== */
+
+function _btnStart(btn, loadingText) {
+  btn.disabled = true;
+  btn._origText = btn.textContent;
+  btn.textContent = loadingText || '处理中...';
+  btn.classList.add('btn-loading');
+}
+
+function _btnEnd(btn) {
+  btn.textContent = btn._origText || '操作';
+  btn.disabled = false;
+  btn.classList.remove('btn-loading');
+}
+
 /* ==================== Init ==================== */
 
 async function init() {
@@ -1268,9 +1465,7 @@ async function init() {
 
   document.getElementById('btnDcFullSync').onclick = async () => {
     const btn = document.getElementById('btnDcFullSync');
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '同步中...';
+    _btnStart(btn, '同步中...');
     setStatus('全量同步（智能补缺）执行中...', 'info');
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
@@ -1280,8 +1475,7 @@ async function init() {
       setStatus(`同步失败: ${err.message}`, 'error');
       await loadDataCenter();
     } finally {
-      btn.textContent = old;
-      btn.disabled = false;
+      _btnEnd(btn);
     }
   };
 
@@ -1289,9 +1483,7 @@ async function init() {
     const btn = document.getElementById('btnDcIncrSync');
     const dateVal = dcSyncDate.value;
     if (!dateVal) { setStatus('请选择同步日期', 'error'); return; }
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '同步中...';
+    _btnStart(btn, '同步中...');
     setStatus(`增量同步 ${dateVal} 执行中...`, 'info');
     try {
       const payload = await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dateVal}&trigger_mode=manual`, { method: 'POST' });
@@ -1301,26 +1493,28 @@ async function init() {
       setStatus(`增量同步失败: ${err.message}`, 'error');
       await loadDataCenter();
     } finally {
-      btn.textContent = old;
-      btn.disabled = false;
+      _btnEnd(btn);
     }
+  };
+
+  document.getElementById('btnDcLogsToggle').onclick = () => {
+    state.dcLogsExpanded = !state.dcLogsExpanded;
+    renderDcLogStream(state.syncLogs || { items: [], total: 0 });
   };
 
   document.getElementById('btnDcCheck').onclick = async () => {
     const btn = document.getElementById('btnDcCheck');
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '检查中...';
+    _btnStart(btn, '检查中...');
     setStatus('数据完整性检查中...', 'info');
     try {
       const report = await request('/api/jobs/kline-cache/check', { method: 'POST' });
       setStatus(`检查完成: 覆盖率 ${report.coverage_pct || 0}% 缺失 ${report.total_missing || 0} 条`, 'success');
       await loadDataCenter();
+      document.getElementById('dcReportContent')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (err) {
       setStatus(`检查失败: ${err.message}`, 'error');
     } finally {
-      btn.textContent = old;
-      btn.disabled = false;
+      _btnEnd(btn);
     }
   };
 
@@ -1332,9 +1526,7 @@ async function init() {
 
   document.getElementById('btnEodScreen').onclick = async () => {
     const btn = document.getElementById('btnEodScreen');
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '执行中...';
+    _btnStart(btn, '执行中...');
     setStatus('盘后筛选执行中...', 'info');
     try {
       const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
@@ -1343,16 +1535,13 @@ async function init() {
     } catch (err) {
       setStatus(`盘后筛选失败: ${err.message}`, 'error');
     } finally {
-      btn.textContent = old;
-      btn.disabled = false;
+      _btnEnd(btn);
     }
   };
 
   document.getElementById('btnNoticeScreen').onclick = async () => {
     const btn = document.getElementById('btnNoticeScreen');
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = '执行中...';
+    _btnStart(btn, '执行中...');
     setStatus('公告筛选执行中...', 'info');
     try {
       const today = new Date();
@@ -1369,15 +1558,13 @@ async function init() {
     } catch (err) {
       setStatus(`公告筛选失败: ${err.message}`, 'error');
     } finally {
-      btn.textContent = old;
-      btn.disabled = false;
+      _btnEnd(btn);
     }
   };
 
   document.getElementById('btnAgentRun').onclick = async () => {
     const btn = document.getElementById('btnAgentRun');
-    btn.disabled = true;
-    btn.textContent = '运行中...';
+    _btnStart(btn, '运行中...');
     setStatus('Hermes 复盘执行中...', 'info');
     try {
       const payload = await request('/api/agent/run', { method: 'POST', body: JSON.stringify({ task_type: 'full_diagnosis' }) });
@@ -1386,8 +1573,7 @@ async function init() {
     } catch (err) {
       setStatus(`复盘失败: ${err.message}`, 'error');
     } finally {
-      btn.textContent = '手动触发复盘';
-      btn.disabled = false;
+      _btnEnd(btn);
     }
   };
 
