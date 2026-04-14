@@ -85,6 +85,25 @@ async def get_kline_cache_log_detail(task_id: str):
     return payload
 
 
+@router.get("/jobs/kline-cache/stats")
+async def get_kline_cache_stats():
+    return _kline_cache_service.get_stats()
+
+
+@router.post("/jobs/kline-cache/check")
+async def run_kline_data_check():
+    report = await _kline_cache_service.check_data_integrity(days=30)
+    return report
+
+
+@router.get("/jobs/kline-cache/report")
+async def get_kline_check_report():
+    report = _kline_cache_service.get_latest_check_report()
+    if report is None:
+        return {"status": "none", "message": "暂无检查报告"}
+    return report
+
+
 # ── K 线查询路由 ──────────────────────────────────────────
 
 
@@ -241,7 +260,7 @@ async def _fetch_today_bar_from_snapshot(symbol: str, trade_date: str) -> dict |
 
 
 async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
-    """后台循环：每 10 分钟检测是否需要自动同步 K 线。"""
+    """后台循环：每 10 分钟检测是否需要自动同步 K 线，同步后自动检查数据完整性。"""
     from app.services.feishu_notify import notify_sync_complete
 
     await asyncio.sleep(10)
@@ -250,14 +269,25 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
             result = await kline_cache_service.run_if_due()
             if result is not None:
                 print(f"[kline-cache] daily sync completed: {result.get('message')}")
+
+                report = None
                 try:
+                    report = await kline_cache_service.check_data_integrity(days=30)
+                    print(f"[kline-cache] integrity check: {report.get('status')} coverage={report.get('coverage_pct')}%")
+                except Exception as chk_exc:
+                    print(f"[kline-cache] integrity check failed: {chk_exc}")
+
+                try:
+                    integrity_summary = ""
+                    if report:
+                        integrity_summary = f" | 完整性: {report.get('coverage_pct', 0)}% 缺失{report.get('total_missing', 0)}条"
                     await notify_sync_complete(
                         trade_date=result.get("trade_date", ""),
                         success_count=result.get("success_symbols", result.get("symbol_count", 0)),
                         failed_count=result.get("failed_symbols", 0),
                         total=result.get("total_symbols", 0),
                         elapsed_sec=result.get("elapsed_sec", 0),
-                        mode="全量",
+                        mode=f"智能补缺{integrity_summary}",
                     )
                     print("[kline-cache] feishu notification sent")
                 except Exception as notify_exc:

@@ -93,7 +93,7 @@ class KlineCacheService:
             task_id=None,
             trigger_mode=trigger_mode,
             updated_at=now_cn().isoformat(),
-            message="开始同步",
+            message="检查数据缺失...",
         )
 
         symbols = await self._load_symbol_list()
@@ -114,8 +114,8 @@ class KlineCacheService:
             )
             return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
-        start_date, end_date = await self._resolve_window(target_trade_date, self.window_days)
-        if not start_date or not end_date:
+        trade_dates_list = await self._resolve_trade_dates(target_trade_date, self.window_days)
+        if not trade_dates_list:
             self.store.set_sync_state(
                 attempt_trade_date=target_trade_date,
                 success_trade_date=state.get("last_success_trade_date"),
@@ -132,9 +132,63 @@ class KlineCacheService:
             )
             return {"success": False, "message": "交易窗口计算失败", "trade_date": target_trade_date, "symbol_count": 0}
 
+        existing_pairs = self.store.get_existing_pairs(trade_dates_list)
+        missing_by_date: dict[str, list[str]] = {}
+        for td in trade_dates_list:
+            missing_symbols = [s for s in symbols if (s, td) not in existing_pairs]
+            if missing_symbols:
+                missing_by_date[td] = missing_symbols
+
+        total_missing = sum(len(v) for v in missing_by_date.values())
+        if total_missing == 0:
+            self.store.set_sync_state(
+                attempt_trade_date=target_trade_date,
+                success_trade_date=target_trade_date,
+                status="success",
+                symbol_count=len(symbols),
+                total_symbols=len(symbols),
+                synced_symbols=0,
+                success_symbols=0,
+                failed_symbols=0,
+                task_id=None,
+                trigger_mode=trigger_mode,
+                updated_at=now_cn().isoformat(),
+                message="数据完整，无需同步",
+            )
+            return {
+                "success": True,
+                "message": "数据完整，无需同步",
+                "trade_date": target_trade_date,
+                "symbol_count": len(symbols),
+                "total_symbols": len(symbols),
+                "synced_symbols": 0,
+                "success_symbols": 0,
+                "failed_symbols": 0,
+                "missing_filled": 0,
+                "elapsed_sec": round(pytime.time() - t0, 1),
+            }
+
+        unique_missing_symbols = sorted({s for syms in missing_by_date.values() for s in syms})
+        start_date = min(missing_by_date.keys()).replace("-", "")
+        end_date = max(missing_by_date.keys()).replace("-", "")
+
         task_id = uuid.uuid4().hex
         started_at = now_cn().isoformat()
-        total = len(symbols)
+        total = len(unique_missing_symbols)
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=0,
+            total_symbols=total,
+            synced_symbols=0,
+            success_symbols=0,
+            failed_symbols=0,
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message=f"补缺 {total_missing} 条({len(missing_by_date)}天×{total}股)",
+        )
         self.store.start_sync_task(
             task_id=task_id,
             trigger_mode=trigger_mode,
@@ -143,7 +197,7 @@ class KlineCacheService:
             started_at=started_at,
         )
         result = await self._concurrent_fetch(
-            symbols=symbols,
+            symbols=unique_missing_symbols,
             start_date=start_date,
             end_date=end_date,
             task_id=task_id,
@@ -151,12 +205,12 @@ class KlineCacheService:
             state=state,
             trigger_mode=trigger_mode,
             total=total,
-            label="同步",
+            label="补缺同步",
         )
         completed, success_count, failed_count = result
 
         final_status = "success" if completed > 0 else "failed"
-        final_msg = "同步完成" if completed > 0 else "同步失败"
+        final_msg = f"补缺同步完成(缺失{total_missing}条)" if completed > 0 else "补缺同步失败"
         self.store.finish_sync_task(
             task_id=task_id,
             status=final_status,
@@ -187,6 +241,7 @@ class KlineCacheService:
             "synced_symbols": success_count + failed_count,
             "success_symbols": success_count,
             "failed_symbols": failed_count,
+            "missing_filled": total_missing,
             "elapsed_sec": round(pytime.time() - t0, 1),
         }
 
@@ -454,6 +509,84 @@ class KlineCacheService:
                 }
             )
         return pd.DataFrame(rows)
+
+    # ── 数据完整性检查 ─────────────────────────────────────
+
+    async def check_data_integrity(self, days: int = 30) -> dict[str, Any]:
+        """交叉比对交易日历×股票列表与实际DB记录，生成完整性报告。"""
+        check_time = now_cn().isoformat()
+
+        base_date = await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        if not base_date:
+            return {"check_time": check_time, "status": "error", "message": "无法确定交易日"}
+
+        trade_dates_list = await self._resolve_trade_dates(base_date, days)
+        if not trade_dates_list:
+            return {"check_time": check_time, "status": "error", "message": "交易日历为空"}
+
+        symbols = await self._load_symbol_list()
+        if not symbols:
+            return {"check_time": check_time, "status": "error", "message": "股票列表为空"}
+
+        symbol_set = set(symbols)
+        total_expected = len(trade_dates_list) * len(symbols)
+        existing_pairs = self.store.get_existing_pairs(trade_dates_list)
+        total_actual = len(existing_pairs)
+        total_missing = total_expected - total_actual
+
+        missing_by_date: list[dict[str, Any]] = []
+        symbol_miss_count: dict[str, int] = {}
+
+        for td in trade_dates_list:
+            missing_symbols = [s for s in symbols if (s, td) not in existing_pairs]
+            if missing_symbols:
+                missing_by_date.append({
+                    "date": td,
+                    "missing_count": len(missing_symbols),
+                    "total": len(symbols),
+                    "coverage_pct": round((1 - len(missing_symbols) / len(symbols)) * 100, 2),
+                })
+                for s in missing_symbols:
+                    symbol_miss_count[s] = symbol_miss_count.get(s, 0) + 1
+
+        worst_symbols = sorted(symbol_miss_count.items(), key=lambda x: -x[1])[:20]
+        coverage_pct = round((total_actual / total_expected) * 100, 2) if total_expected > 0 else 100.0
+        status = "complete" if total_missing == 0 else "incomplete"
+
+        report: dict[str, Any] = {
+            "check_time": check_time,
+            "trade_days_checked": len(trade_dates_list),
+            "total_symbols": len(symbols),
+            "total_expected": total_expected,
+            "total_actual": total_actual,
+            "total_missing": total_missing,
+            "coverage_pct": coverage_pct,
+            "status": status,
+            "missing_by_date": missing_by_date,
+            "missing_dates_summary": [d["date"] for d in missing_by_date],
+            "worst_symbols": [{"symbol": s, "missing_days": c} for s, c in worst_symbols],
+        }
+
+        self.store.save_check_report(report)
+        return report
+
+    def get_latest_check_report(self) -> dict[str, Any] | None:
+        return self.store.get_latest_check_report()
+
+    def get_stats(self) -> dict[str, Any]:
+        return self.store.get_stats()
+
+    # ── 日期工具 ─────────────────────────────────────────────
+
+    async def _resolve_trade_dates(self, trade_date: str, days: int) -> list[str]:
+        """返回截至 trade_date 最近 days 个交易日的 ISO 日期列表。"""
+        trade_days = await self.provider.get_trade_days()
+        if trade_days.empty or "trade_date" not in trade_days.columns:
+            return []
+        dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        target = pd.to_datetime(trade_date).date()
+        selected = dates[dates <= target].tail(days)
+        return [d.isoformat() for d in selected]
 
     async def _resolve_latest_trade_date(self, base_date: str) -> str:
         trade_days = await self.provider.get_trade_days()

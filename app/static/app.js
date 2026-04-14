@@ -27,6 +27,8 @@ function setMeta() {
   if (state.activeTab === 'market') {
     if (!state.funnel) { meta.textContent = '加载中...'; return; }
     meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+  } else if (state.activeTab === 'data') {
+    meta.textContent = '数据同步 · 完整性检查 · 任务管理';
   } else if (state.activeTab === 'funnel') {
     if (!state.funnel) { meta.textContent = '暂无数据'; return; }
     meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
@@ -76,7 +78,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', funnel: '策略选股', notice: '公告选股', agent: 'Hermes Agent' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: 'Hermes Agent' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -88,8 +90,13 @@ function switchTab(tab) {
   });
   const noticeCard = document.getElementById('noticeDetailCard');
   noticeCard.style.display = tab === 'notice' ? '' : 'none';
+  const rightPanel = document.querySelector('.right-panel');
+  if (rightPanel) rightPanel.style.display = tab === 'data' ? 'none' : '';
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
+  if (tab === 'data') {
+    loadDataCenter();
+  }
   if (tab === 'funnel') {
     const chip = document.getElementById('activeConcept');
     if (chip) chip.textContent = state.selectedConcept || '全部';
@@ -232,26 +239,196 @@ function renderHotStocks() {
   if (!items.length) root.innerHTML = '<div class="detail-empty">暂无热门个股数据</div>';
 }
 
-function renderSyncPanel() {
-  const summary = document.getElementById('syncSummary');
-  const bar = document.getElementById('syncProgressBar');
-  const logsRoot = document.getElementById('syncLogs');
-  const sync = state.syncStatus || {};
-  const status = sync.status || 'idle';
-  const synced = Number(sync.synced_symbols || 0);
-  const total = Number(sync.total_symbols || 0);
-  const pct = Number(sync.progress_pct || 0);
-  summary.textContent = `状态:${status} · 进度:${synced}/${total} (${pct.toFixed(2)}%) · 最近:${sync.updated_at || '-'}`;
-  bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  const logs = state.syncLogs?.items || [];
-  logsRoot.innerHTML = '';
-  logs.slice(0, 8).forEach((item) => {
-    const div = document.createElement('div');
-    div.className = 'sync-log-item';
-    div.textContent = `[${item.status}] ${item.trade_date} ${item.synced_symbols}/${item.total_symbols} (${item.trigger_mode}) ${item.message || ''}`;
-    logsRoot.appendChild(div);
-  });
-  if (!logs.length) logsRoot.innerHTML = '<div class="detail-empty">暂无同步日志</div>';
+/* ==================== 数据中心 ==================== */
+
+let _dcTaskPage = 1;
+
+async function loadDataCenter() {
+  const [statsRes, statusRes, reportRes, logsRes] = await Promise.allSettled([
+    request('/api/jobs/kline-cache/stats'),
+    request('/api/jobs/kline-cache/status'),
+    request('/api/jobs/kline-cache/report'),
+    request('/api/jobs/kline-cache/logs?page=' + _dcTaskPage + '&page_size=15'),
+  ]);
+  const stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
+  const syncStatus = statusRes.status === 'fulfilled' ? statusRes.value : {};
+  const report = reportRes.status === 'fulfilled' ? reportRes.value : null;
+  const logs = logsRes.status === 'fulfilled' ? logsRes.value : { items: [], total: 0 };
+
+  state.syncStatus = syncStatus;
+  state.syncLogs = logs;
+
+  renderDcStats(stats, syncStatus, report);
+  renderDcProgress(syncStatus);
+  renderDcReport(report);
+  renderDcTaskList(logs);
+  renderDcLogStream(logs);
+}
+
+function renderDcStats(stats, syncStatus, report) {
+  const grid = document.getElementById('dcStatsGrid');
+  const statusText = syncStatus.status || 'idle';
+  const statusCls = statusText === 'running' ? 'warning' : (statusText === 'success' ? 'success' : 'brand');
+  const statusLabel = { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[statusText] || statusText;
+  const coverage = report?.coverage_pct ?? '--';
+  const coverageCls = (typeof coverage === 'number') ? (coverage >= 99 ? 'success' : (coverage >= 90 ? 'warning' : 'error')) : 'brand';
+
+  grid.innerHTML = `
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">同步状态</span>
+      <span class="dc-stat-value ${statusCls}">${statusLabel}</span>
+      <span class="dc-stat-sub">${syncStatus.updated_at ? syncStatus.updated_at.slice(0, 16).replace('T', ' ') : '--'}</span>
+    </div>
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">最近同步日</span>
+      <span class="dc-stat-value brand">${syncStatus.last_success_trade_date || '--'}</span>
+      <span class="dc-stat-sub">${syncStatus.trigger_mode || '--'}</span>
+    </div>
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">缓存股票数</span>
+      <span class="dc-stat-value">${(stats.symbol_count || 0).toLocaleString()}</span>
+      <span class="dc-stat-sub">只</span>
+    </div>
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">K线总条数</span>
+      <span class="dc-stat-value">${(stats.row_count || 0).toLocaleString()}</span>
+      <span class="dc-stat-sub">${stats.min_date || '--'} ~ ${stats.max_date || '--'}</span>
+    </div>
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">数据覆盖率</span>
+      <span class="dc-stat-value ${coverageCls}">${typeof coverage === 'number' ? coverage.toFixed(1) + '%' : coverage}</span>
+      <span class="dc-stat-sub">最近30个交易日</span>
+    </div>
+    <div class="dc-stat-card">
+      <span class="dc-stat-label">数据库大小</span>
+      <span class="dc-stat-value">${stats.db_size_mb ?? '--'}</span>
+      <span class="dc-stat-sub">MB</span>
+    </div>
+  `;
+}
+
+function renderDcProgress(syncStatus) {
+  const section = document.getElementById('dcProgressSection');
+  const textEl = document.getElementById('dcProgressText');
+  const barEl = document.getElementById('dcProgressBar');
+  if (!syncStatus || syncStatus.status !== 'running') {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const synced = Number(syncStatus.synced_symbols || 0);
+  const total = Number(syncStatus.total_symbols || 0);
+  const pct = Number(syncStatus.progress_pct || 0);
+  textEl.textContent = `${syncStatus.message || '同步中'} · ${synced}/${total} (${pct.toFixed(1)}%)`;
+  barEl.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+
+function renderDcReport(report) {
+  const container = document.getElementById('dcReportContent');
+  if (!report || report.status === 'none' || report.status === 'error') {
+    container.innerHTML = `<div class="detail-empty">${report?.message || '暂无检查报告，点击上方按钮执行检查'}</div>`;
+    return;
+  }
+
+  const pct = report.coverage_pct || 0;
+  const circumference = 2 * Math.PI * 26;
+  const offset = circumference * (1 - pct / 100);
+  const ringColor = pct >= 99 ? '#22c55e' : (pct >= 90 ? '#f59e0b' : '#ef4444');
+
+  let html = `
+    <div class="dc-coverage-bar">
+      <div class="dc-coverage-ring">
+        <svg viewBox="0 0 64 64">
+          <circle class="ring-bg" cx="32" cy="32" r="26"/>
+          <circle class="ring-fg" cx="32" cy="32" r="26"
+            stroke="${ringColor}"
+            stroke-dasharray="${circumference}"
+            stroke-dashoffset="${offset}"/>
+        </svg>
+        <div class="dc-coverage-pct">${pct.toFixed(1)}%</div>
+      </div>
+      <div class="dc-coverage-info">
+        <div class="dc-info-row">检查时间: <strong>${(report.check_time || '').slice(0, 16).replace('T', ' ')}</strong></div>
+        <div class="dc-info-row">检查范围: <strong>${report.trade_days_checked || 0}</strong> 个交易日 × <strong>${(report.total_symbols || 0).toLocaleString()}</strong> 只股票</div>
+        <div class="dc-info-row">期望: <strong>${(report.total_expected || 0).toLocaleString()}</strong> 条 · 实际: <strong>${(report.total_actual || 0).toLocaleString()}</strong> 条 · 缺失: <strong style="color:${report.total_missing ? '#f59e0b' : '#22c55e'}">${(report.total_missing || 0).toLocaleString()}</strong> 条</div>
+      </div>
+    </div>
+  `;
+
+  const missingDates = report.missing_by_date || [];
+  if (missingDates.length > 0) {
+    html += `<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-top:4px">缺失日期明细 (${missingDates.length}天)</div>`;
+    html += '<div class="dc-missing-list">';
+    for (const d of missingDates) {
+      const barPct = d.coverage_pct || 0;
+      const barColor = barPct >= 99 ? '#22c55e' : (barPct >= 90 ? '#f59e0b' : '#ef4444');
+      html += `
+        <div class="dc-missing-row">
+          <span class="dc-missing-date">${d.date}</span>
+          <span class="dc-missing-count">缺${d.missing_count}</span>
+          <div class="dc-missing-bar-wrap"><div class="dc-missing-bar-fill" style="width:${barPct}%;background:${barColor}"></div></div>
+          <span class="dc-missing-pct">${barPct.toFixed(1)}%</span>
+        </div>`;
+    }
+    html += '</div>';
+  } else {
+    html += '<div style="color:#22c55e;font-size:13px;font-weight:600;padding:8px 0">数据完整，无缺失</div>';
+  }
+
+  html += `<div class="dc-report-meta">状态: ${report.status} · 检查于 ${(report.check_time || '').replace('T', ' ')}</div>`;
+  container.innerHTML = html;
+}
+
+function renderDcTaskList(logs) {
+  const container = document.getElementById('dcTaskList');
+  const pager = document.getElementById('dcTaskPager');
+  const items = logs.items || [];
+
+  if (!items.length) {
+    container.innerHTML = '<div class="detail-empty">暂无任务记录</div>';
+    pager.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = items.map(t => {
+    const time = (t.started_at || '').slice(11, 16);
+    return `
+      <div class="dc-task-item">
+        <span class="dc-task-status ${t.status}"></span>
+        <span class="dc-task-date">${t.trade_date}</span>
+        <span class="dc-task-mode">${t.trigger_mode}</span>
+        <span class="dc-task-counts">${t.success_symbols || 0}✓ ${t.failed_symbols || 0}✗ / ${t.total_symbols || 0}</span>
+        <span class="dc-task-time">${time}</span>
+      </div>`;
+  }).join('');
+
+  const totalPages = Math.ceil((logs.total || 0) / 15);
+  if (totalPages > 1) {
+    pager.innerHTML = `
+      <button ${_dcTaskPage <= 1 ? 'disabled' : ''} onclick="dcTaskPageNav(-1)">上一页</button>
+      <span>${_dcTaskPage}/${totalPages}</span>
+      <button ${_dcTaskPage >= totalPages ? 'disabled' : ''} onclick="dcTaskPageNav(1)">下一页</button>
+    `;
+  } else {
+    pager.innerHTML = '';
+  }
+}
+
+function dcTaskPageNav(delta) {
+  _dcTaskPage = Math.max(1, _dcTaskPage + delta);
+  loadDataCenter();
+}
+
+function renderDcLogStream(logs) {
+  const container = document.getElementById('dcLogStream');
+  const items = logs.items || [];
+  if (!items.length) {
+    container.innerHTML = '<div class="detail-empty">暂无日志</div>';
+    return;
+  }
+  container.innerHTML = items.slice(0, 10).map(t => `
+    <div class="sync-log-item">[${t.status}] ${t.trade_date} ${t.synced_symbols}/${t.total_symbols} (${t.trigger_mode}) ${t.message || ''}</div>
+  `).join('');
 }
 
 /* ==================== Chart (shared) ==================== */
@@ -494,25 +671,20 @@ async function selectNoticeSymbol(symbol) {
 /* ==================== Data loading ==================== */
 
 async function reloadFunnel() {
-  const [funnelRes, hotConceptsRes, hotStocksRes, syncRes, logsRes, strategyRes] = await Promise.allSettled([
+  const [funnelRes, hotConceptsRes, hotStocksRes, strategyRes] = await Promise.allSettled([
     request('/api/funnel'),
     request('/api/market/hot-concepts'),
     request('/api/market/hot-stocks'),
-    request('/api/jobs/kline-cache/progress'),
-    request('/api/jobs/kline-cache/logs?page=1&page_size=20'),
     request('/api/strategy/profile'),
   ]);
   if (funnelRes.status === 'fulfilled') state.funnel = funnelRes.value;
   if (hotConceptsRes.status === 'fulfilled') state.hotConcepts = hotConceptsRes.value;
   if (hotStocksRes.status === 'fulfilled') state.hotStocks = hotStocksRes.value;
-  if (syncRes.status === 'fulfilled') state.syncStatus = syncRes.value;
-  if (logsRes.status === 'fulfilled') state.syncLogs = logsRes.value;
   if (strategyRes.status === 'fulfilled') state.strategyProfile = strategyRes.value;
 
   renderHotConcepts();
   renderHotStocks();
   renderFunnel();
-  renderSyncPanel();
   if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {
     const found = ['candidate', 'focus', 'buy']
@@ -914,6 +1086,9 @@ async function init() {
     if (state.activeTab === 'market') {
       await reloadFunnel();
       setStatus('大盘数据已刷新', 'success');
+    } else if (state.activeTab === 'data') {
+      await loadDataCenter();
+      setStatus('数据中心已刷新', 'success');
     } else if (state.activeTab === 'funnel') {
       await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
       await reloadFunnel();
@@ -927,33 +1102,32 @@ async function init() {
     }
   };
 
-
-  const syncDateInput = document.getElementById('syncDate');
+  const dcSyncDate = document.getElementById('dcSyncDate');
   const today = new Date();
-  syncDateInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  dcSyncDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  document.getElementById('btnSyncKline').onclick = async () => {
-    const btn = document.getElementById('btnSyncKline');
+  document.getElementById('btnDcFullSync').onclick = async () => {
+    const btn = document.getElementById('btnDcFullSync');
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = '同步中...';
-    setStatus('全量同步执行中...', 'info');
+    setStatus('全量同步（智能补缺）执行中...', 'info');
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
-      setStatus(`全量同步完成: ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
-      await reloadFunnel();
+      setStatus(`同步完成: ${payload.message || ''} ${payload.success_symbols || 0}/${payload.total_symbols || 0}`, 'success');
+      await loadDataCenter();
     } catch (err) {
-      setStatus(`全量同步失败: ${err.message}`, 'error');
-      await reloadFunnel();
+      setStatus(`同步失败: ${err.message}`, 'error');
+      await loadDataCenter();
     } finally {
       btn.textContent = old;
       btn.disabled = false;
     }
   };
 
-  document.getElementById('btnIncrementalSync').onclick = async () => {
-    const btn = document.getElementById('btnIncrementalSync');
-    const dateVal = syncDateInput.value;
+  document.getElementById('btnDcIncrSync').onclick = async () => {
+    const btn = document.getElementById('btnDcIncrSync');
+    const dateVal = dcSyncDate.value;
     if (!dateVal) { setStatus('请选择同步日期', 'error'); return; }
     btn.disabled = true;
     const old = btn.textContent;
@@ -962,10 +1136,28 @@ async function init() {
     try {
       const payload = await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dateVal}&trigger_mode=manual`, { method: 'POST' });
       setStatus(`增量同步完成: ${dateVal} · ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
-      await reloadFunnel();
+      await loadDataCenter();
     } catch (err) {
       setStatus(`增量同步失败: ${err.message}`, 'error');
-      await reloadFunnel();
+      await loadDataCenter();
+    } finally {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  };
+
+  document.getElementById('btnDcCheck').onclick = async () => {
+    const btn = document.getElementById('btnDcCheck');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '检查中...';
+    setStatus('数据完整性检查中...', 'info');
+    try {
+      const report = await request('/api/jobs/kline-cache/check', { method: 'POST' });
+      setStatus(`检查完成: 覆盖率 ${report.coverage_pct || 0}% 缺失 ${report.total_missing || 0} 条`, 'success');
+      await loadDataCenter();
+    } catch (err) {
+      setStatus(`检查失败: ${err.message}`, 'error');
     } finally {
       btn.textContent = old;
       btn.disabled = false;
@@ -1044,17 +1236,20 @@ async function init() {
 
   await reload();
   connectWs();
-  setInterval(async () => {
-    try {
-      const [sync, logs] = await Promise.all([
-        request('/api/jobs/kline-cache/progress'),
-        request('/api/jobs/kline-cache/logs?page=1&page_size=20'),
-      ]);
-      state.syncStatus = sync;
-      state.syncLogs = logs;
-      renderSyncPanel();
-    } catch (_) {}
-  }, 8000);
+
+  let _dcPollTimer = null;
+  function startDcPolling() {
+    if (_dcPollTimer) return;
+    _dcPollTimer = setInterval(async () => {
+      if (state.activeTab !== 'data') { clearInterval(_dcPollTimer); _dcPollTimer = null; return; }
+      try { await loadDataCenter(); } catch (_) {}
+    }, 3000);
+  }
+  const _origSwitchTab = switchTab;
+  switchTab = function(tab) {
+    _origSwitchTab(tab);
+    if (tab === 'data') startDcPolling();
+  };
 }
 
 init().catch((err) => {

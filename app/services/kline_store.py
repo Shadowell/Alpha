@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -92,6 +94,16 @@ class KlineSQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_kline_sync_task_details_task_id ON kline_sync_task_details(task_id, id DESC)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_symbol_date ON kline_daily(symbol, trade_date DESC)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kline_check_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                check_time TEXT NOT NULL,
+                report_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_check_reports_time ON kline_check_reports(check_time DESC)")
         conn.commit()
 
     @staticmethod
@@ -415,3 +427,72 @@ class KlineSQLiteStore:
                 for row in details
             ],
         }
+
+    # ── 数据统计 ─────────────────────────────────────────────
+
+    def get_stats(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT symbol) AS symbol_count,
+                    COUNT(*) AS row_count,
+                    MIN(trade_date) AS min_date,
+                    MAX(trade_date) AS max_date
+                FROM kline_daily
+                """
+            ).fetchone()
+        db_size_bytes = 0
+        try:
+            db_size_bytes = os.path.getsize(str(self.db_path))
+        except OSError:
+            pass
+        return {
+            "symbol_count": int(row["symbol_count"] or 0),
+            "row_count": int(row["row_count"] or 0),
+            "min_date": row["min_date"] or "",
+            "max_date": row["max_date"] or "",
+            "db_size_bytes": db_size_bytes,
+            "db_size_mb": round(db_size_bytes / (1024 * 1024), 2),
+        }
+
+    def get_existing_pairs(self, trade_dates: list[str]) -> set[tuple[str, str]]:
+        """Return set of (symbol, trade_date) that already exist in kline_daily."""
+        if not trade_dates:
+            return set()
+        with self._connect() as conn:
+            self._init_schema(conn)
+            placeholders = ",".join("?" for _ in trade_dates)
+            rows = conn.execute(
+                f"SELECT symbol, trade_date FROM kline_daily WHERE trade_date IN ({placeholders})",
+                trade_dates,
+            ).fetchall()
+        return {(r["symbol"], r["trade_date"]) for r in rows}
+
+    # ── 检查报告持久化 ───────────────────────────────────────
+
+    def save_check_report(self, report: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                "INSERT INTO kline_check_reports(check_time, report_json) VALUES (?, ?)",
+                (report.get("check_time", ""), json.dumps(report, ensure_ascii=False)),
+            )
+            conn.execute(
+                "DELETE FROM kline_check_reports WHERE id NOT IN (SELECT id FROM kline_check_reports ORDER BY id DESC LIMIT 50)"
+            )
+            conn.commit()
+
+    def get_latest_check_report(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute(
+                "SELECT report_json FROM kline_check_reports ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["report_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None

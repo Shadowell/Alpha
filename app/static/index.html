@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260414d" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260414e" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -19,6 +19,10 @@
       <a class="sidebar-item active" data-tab="market" title="大盘">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><polyline points="18 9 13 14 9 10 3 16"/></svg>
         <span>大盘</span>
+      </a>
+      <a class="sidebar-item" data-tab="data" title="数据中心">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>
+        <span>数据中心</span>
       </a>
       <a class="sidebar-item" data-tab="funnel" title="策略选股">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -63,6 +67,55 @@
             <h2>热门个股 Top10</h2>
             <div id="hotStocks" class="hot-stock-list"></div>
           </section>
+        </section>
+
+        <!-- ========== 数据中心 ========== -->
+        <section id="tab-data" class="tab-content">
+          <div class="dc-stats-grid" id="dcStatsGrid"></div>
+          <div class="dc-body">
+            <div class="dc-left">
+              <section class="dc-control card panel">
+                <div class="panel-title-row">
+                  <h2>同步控制</h2>
+                </div>
+                <div class="dc-control-btns">
+                  <button id="btnDcFullSync" class="btn-action">全量同步（智能补缺）</button>
+                  <div class="dc-incr-row">
+                    <input type="date" id="dcSyncDate" class="sync-date-input" />
+                    <button id="btnDcIncrSync" class="btn-incremental">增量同步</button>
+                  </div>
+                </div>
+                <div class="dc-progress-section" id="dcProgressSection" style="display:none">
+                  <div id="dcProgressText" class="dc-progress-text"></div>
+                  <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
+                </div>
+              </section>
+              <section class="dc-tasks card panel">
+                <div class="panel-title-row">
+                  <h2>任务历史</h2>
+                </div>
+                <div id="dcTaskList" class="dc-task-list"></div>
+                <div id="dcTaskPager" class="dc-task-pager"></div>
+              </section>
+            </div>
+            <div class="dc-right">
+              <section class="dc-report card panel">
+                <div class="panel-title-row">
+                  <h2>数据完整性检查</h2>
+                  <button id="btnDcCheck" class="btn-action">手动检查</button>
+                </div>
+                <div id="dcReportContent" class="dc-report-content">
+                  <div class="detail-empty">暂无检查报告</div>
+                </div>
+              </section>
+              <section class="dc-logs card panel">
+                <div class="panel-title-row">
+                  <h2>同步日志流</h2>
+                </div>
+                <div id="dcLogStream" class="dc-log-stream"></div>
+              </section>
+            </div>
+          </div>
         </section>
 
         <!-- ========== 策略选股 ========== -->
@@ -152,22 +205,6 @@
       </section>
 
       <aside class="right-panel">
-        <section class="panel card">
-          <div class="panel-title-row">
-            <h2>K线同步</h2>
-            <button id="btnSyncKline" title="全量同步（30日窗口）">全量同步</button>
-          </div>
-          <div class="sync-row">
-            <input type="date" id="syncDate" class="sync-date-input" />
-            <button id="btnIncrementalSync" class="btn-incremental">增量同步</button>
-          </div>
-          <div id="syncSummary" class="summary">加载中...</div>
-          <div class="sync-progress-wrap">
-            <div id="syncProgressBar" class="sync-progress-bar"></div>
-          </div>
-          <div id="syncLogs" class="sync-logs"></div>
-        </section>
-
         <section id="noticeDetailCard" class="panel card" style="display:none">
           <div class="panel-title-row">
             <h2>公告详情</h2>
@@ -202,6 +239,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260414d"></script>
+  <script src="/static/app.js?v=20260414e"></script>
 </body>
 </html>
