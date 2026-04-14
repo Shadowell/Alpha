@@ -218,7 +218,7 @@ async def get_notice_detail(symbol: str, days: int = 30):
 
 @app.get("/api/agent/status")
 async def get_agent_status():
-    return hermes_runtime.get_status()
+    return await hermes_runtime.get_status_async()
 
 
 @app.post("/api/agent/run")
