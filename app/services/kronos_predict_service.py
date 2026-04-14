@@ -12,8 +12,8 @@ import pandas as pd
 log = logging.getLogger(__name__)
 
 _MODEL_ID = "NeoQuasar/Kronos-base"
-_TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-2k"
-_MAX_CONTEXT = 2048
+_TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-base"
+_MAX_CONTEXT = 512
 
 
 class KronosPredictService:
