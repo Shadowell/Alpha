@@ -51,10 +51,11 @@ function setStatus(text, tone = 'info') {
   toast.textContent = text;
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('show'));
+  const duration = tone === 'error' ? 5000 : tone === 'success' ? 3500 : 2500;
   setTimeout(() => {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
-  }, tone === 'error' ? 4000 : 2500);
+  }, duration);
 }
 
 /* ==================== Page Summary Bars ==================== */
@@ -1097,7 +1098,7 @@ async function loadAgentStatus() {
     else parts.push('就绪');
     if (data.hermes_agent_available) parts.push('Hermes Agent ✓');
     else if (data.llm_available) parts.push('LLM 可用');
-    else parts.push('LLM 未配置');
+    else parts.push('规则模式（LLM 未配置）');
     if (data.last_run) {
       const t = data.last_run.finished_at ? data.last_run.finished_at.slice(11, 16) : '--';
       parts.push(`上次: ${data.last_run.task_type} ${data.last_run.status} ${t}`);
@@ -1618,11 +1619,16 @@ async function init() {
 
   document.getElementById('btnAgentRun').onclick = async () => {
     const btn = document.getElementById('btnAgentRun');
-    _btnStart(btn, '运行中...');
-    setStatus('Hermes 复盘执行中...', 'info');
+    _btnStart(btn, '复盘执行中...');
+    setStatus('Hermes 正在采集数据并执行复盘分析...', 'info');
     try {
       const payload = await request('/api/agent/run', { method: 'POST', body: JSON.stringify({ task_type: 'full_diagnosis' }) });
-      setStatus(`复盘完成: ${payload.summary?.proposals_created || 0} 个提案`, 'success');
+      const proposals = payload.summary?.proposals_created || 0;
+      const msg = payload.summary?.message || '全面诊断完成';
+      const dailyUsedLLM = payload.summary?.daily?.llm_used;
+      const noticeUsedLLM = payload.summary?.notice?.llm_used;
+      const llmHint = (dailyUsedLLM || noticeUsedLLM) ? '（LLM 分析）' : '（规则诊断）';
+      setStatus(`✅ ${msg} ${llmHint} · 产出 ${proposals} 个提案`, 'success');
       await loadAgentData();
     } catch (err) {
       setStatus(`复盘失败: ${err.message}`, 'error');
