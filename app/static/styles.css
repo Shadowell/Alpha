@@ -419,12 +419,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .hot-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .hot-item {
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 12px;
+  border-radius: var(--radius-sm); padding: 8px 10px;
   cursor: pointer;
   background: rgba(10, 20, 42, 0.5);
   transition: all var(--transition);
@@ -457,13 +457,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .hot-item.active::after { opacity: 1; }
 
 .hot-title {
-  display: flex; justify-content: space-between; gap: 6px;
-  font-size: 14px; font-weight: 600;
+  display: flex; justify-content: space-between; gap: 4px;
+  font-size: 13px; font-weight: 600; line-height: 1.3;
 }
 
 .hot-meta {
-  margin-top: 5px;
-  color: var(--muted); font-size: 12px; line-height: 1.6;
+  margin-top: 3px;
+  color: var(--muted); font-size: 11px; line-height: 1.4;
 }
 
 /* ── Market split (热门个股 + K线并排) ── */
