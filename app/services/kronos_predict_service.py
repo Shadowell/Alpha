@@ -1,4 +1,4 @@
-"""Kronos-mini 三日预测服务 — 惰性加载、串行推理、交易日推算。"""
+"""Kronos-base 三日预测服务 — 惰性加载、串行推理、交易日推算。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-_MODEL_ID = "NeoQuasar/Kronos-mini"
+_MODEL_ID = "NeoQuasar/Kronos-base"
 _TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-2k"
 _MAX_CONTEXT = 2048
 
@@ -170,7 +170,7 @@ class KronosPredictService:
 
         return {
             "symbol": symbol,
-            "model": "Kronos-mini",
+            "model": "Kronos-base",
             "device": self._device,
             "lookback": len(history),
             "horizon": len(predicted_kline),
