@@ -2,60 +2,250 @@
   "lookback": 30,
   "horizon": 5,
   "symbol": "000001",
+  "sample_counts": [
+    1,
+    10,
+    20,
+    50,
+    100
+  ],
   "results": [
     {
       "model": "Kronos-mini",
       "params": "4.1M",
       "device": "mps",
       "max_context": 2048,
-      "load_time_sec": 1.36,
-      "avg_infer_sec": 0.16,
-      "infer_times": [
-        0.17,
-        0.15,
-        0.16
-      ],
-      "pred_day1_close": 11.0565,
-      "pred_day5_close": 11.0999,
-      "day1_chg_pct": -0.12,
-      "day5_chg_pct": 0.27,
-      "avg_volatility_pct": 1.3
+      "load_time_sec": 1.9,
+      "sample_count_results": [
+        {
+          "sample_count": 1,
+          "avg_infer_sec": 0.15,
+          "infer_times": [
+            0.16,
+            0.15,
+            0.14
+          ],
+          "pred_day1_close": 10.9813,
+          "pred_day5_close": 10.8105,
+          "day1_chg_pct": -0.8,
+          "day5_chg_pct": -2.34,
+          "avg_volatility_pct": 1.09
+        },
+        {
+          "sample_count": 10,
+          "avg_infer_sec": 0.87,
+          "infer_times": [
+            2.29,
+            0.16,
+            0.17
+          ],
+          "pred_day1_close": 11.0659,
+          "pred_day5_close": 11.0029,
+          "day1_chg_pct": -0.04,
+          "day5_chg_pct": -0.61,
+          "avg_volatility_pct": 1.33
+        },
+        {
+          "sample_count": 20,
+          "avg_infer_sec": 0.8,
+          "infer_times": [
+            2.05,
+            0.2,
+            0.16
+          ],
+          "pred_day1_close": 11.0653,
+          "pred_day5_close": 11.0556,
+          "day1_chg_pct": -0.04,
+          "day5_chg_pct": -0.13,
+          "avg_volatility_pct": 1.17
+        },
+        {
+          "sample_count": 50,
+          "avg_infer_sec": 0.65,
+          "infer_times": [
+            1.58,
+            0.16,
+            0.19
+          ],
+          "pred_day1_close": 11.0607,
+          "pred_day5_close": 11.0564,
+          "day1_chg_pct": -0.08,
+          "day5_chg_pct": -0.12,
+          "avg_volatility_pct": 1.19
+        },
+        {
+          "sample_count": 100,
+          "avg_infer_sec": 0.65,
+          "infer_times": [
+            1.52,
+            0.2,
+            0.23
+          ],
+          "pred_day1_close": 11.0634,
+          "pred_day5_close": 11.0616,
+          "day1_chg_pct": -0.06,
+          "day5_chg_pct": -0.08,
+          "avg_volatility_pct": 1.19
+        }
+      ]
     },
     {
       "model": "Kronos-small",
       "params": "24.7M",
       "device": "mps",
       "max_context": 512,
-      "load_time_sec": 1.57,
-      "avg_infer_sec": 0.25,
-      "infer_times": [
-        0.21,
-        0.25,
-        0.3
-      ],
-      "pred_day1_close": 11.058,
-      "pred_day5_close": 11.1983,
-      "day1_chg_pct": -0.11,
-      "day5_chg_pct": 1.16,
-      "avg_volatility_pct": 0.98
+      "load_time_sec": 2.17,
+      "sample_count_results": [
+        {
+          "sample_count": 1,
+          "avg_infer_sec": 0.18,
+          "infer_times": [
+            0.18,
+            0.18,
+            0.17
+          ],
+          "pred_day1_close": 11.0666,
+          "pred_day5_close": 11.3276,
+          "day1_chg_pct": -0.03,
+          "day5_chg_pct": 2.33,
+          "avg_volatility_pct": 1.22
+        },
+        {
+          "sample_count": 10,
+          "avg_infer_sec": 0.61,
+          "infer_times": [
+            1.37,
+            0.22,
+            0.24
+          ],
+          "pred_day1_close": 11.0578,
+          "pred_day5_close": 11.1582,
+          "day1_chg_pct": -0.11,
+          "day5_chg_pct": 0.8,
+          "avg_volatility_pct": 1.02
+        },
+        {
+          "sample_count": 20,
+          "avg_infer_sec": 0.59,
+          "infer_times": [
+            1.34,
+            0.22,
+            0.22
+          ],
+          "pred_day1_close": 11.0789,
+          "pred_day5_close": 11.1743,
+          "day1_chg_pct": 0.08,
+          "day5_chg_pct": 0.94,
+          "avg_volatility_pct": 1.13
+        },
+        {
+          "sample_count": 50,
+          "avg_infer_sec": 0.61,
+          "infer_times": [
+            1.35,
+            0.24,
+            0.24
+          ],
+          "pred_day1_close": 11.0687,
+          "pred_day5_close": 11.1052,
+          "day1_chg_pct": -0.01,
+          "day5_chg_pct": 0.32,
+          "avg_volatility_pct": 1.13
+        },
+        {
+          "sample_count": 100,
+          "avg_infer_sec": 0.71,
+          "infer_times": [
+            1.42,
+            0.37,
+            0.36
+          ],
+          "pred_day1_close": 11.0633,
+          "pred_day5_close": 11.1083,
+          "day1_chg_pct": -0.06,
+          "day5_chg_pct": 0.35,
+          "avg_volatility_pct": 1.15
+        }
+      ]
     },
     {
       "model": "Kronos-base",
       "params": "102.3M",
       "device": "mps",
       "max_context": 512,
-      "load_time_sec": 3.14,
-      "avg_infer_sec": 0.27,
-      "infer_times": [
-        0.27,
-        0.27,
-        0.27
-      ],
-      "pred_day1_close": 11.0641,
-      "pred_day5_close": 10.8609,
-      "day1_chg_pct": -0.05,
-      "day5_chg_pct": -1.89,
-      "avg_volatility_pct": 1.35
+      "load_time_sec": 3.55,
+      "sample_count_results": [
+        {
+          "sample_count": 1,
+          "avg_infer_sec": 0.27,
+          "infer_times": [
+            0.29,
+            0.26,
+            0.26
+          ],
+          "pred_day1_close": 11.1309,
+          "pred_day5_close": 11.1547,
+          "day1_chg_pct": 0.55,
+          "day5_chg_pct": 0.76,
+          "avg_volatility_pct": 0.96
+        },
+        {
+          "sample_count": 10,
+          "avg_infer_sec": 0.8,
+          "infer_times": [
+            1.89,
+            0.26,
+            0.25
+          ],
+          "pred_day1_close": 11.093,
+          "pred_day5_close": 11.0397,
+          "day1_chg_pct": 0.21,
+          "day5_chg_pct": -0.27,
+          "avg_volatility_pct": 1.26
+        },
+        {
+          "sample_count": 20,
+          "avg_infer_sec": 0.76,
+          "infer_times": [
+            1.69,
+            0.29,
+            0.3
+          ],
+          "pred_day1_close": 11.0751,
+          "pred_day5_close": 11.0029,
+          "day1_chg_pct": 0.05,
+          "day5_chg_pct": -0.61,
+          "avg_volatility_pct": 1.26
+        },
+        {
+          "sample_count": 50,
+          "avg_infer_sec": 0.87,
+          "infer_times": [
+            1.55,
+            0.53,
+            0.53
+          ],
+          "pred_day1_close": 11.0855,
+          "pred_day5_close": 11.0192,
+          "day1_chg_pct": 0.14,
+          "day5_chg_pct": -0.46,
+          "avg_volatility_pct": 1.32
+        },
+        {
+          "sample_count": 100,
+          "avg_infer_sec": 1.34,
+          "infer_times": [
+            2.06,
+            0.97,
+            0.99
+          ],
+          "pred_day1_close": 11.0811,
+          "pred_day5_close": 11.0042,
+          "day1_chg_pct": 0.1,
+          "day5_chg_pct": -0.59,
+          "avg_volatility_pct": 1.3
+        }
+      ]
     }
   ]
 }
