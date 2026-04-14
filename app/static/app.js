@@ -491,16 +491,16 @@ function _klineOption(rows) {
     axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#334155' } },
     grid: [{ left: 52, right: 18, top: 28, height: '58%' }, { left: 52, right: 18, top: '77%', height: '16%' }],
     xAxis: [
-      { type: 'category', data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
-      { type: 'category', gridIndex: 1, data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { show: false }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
+      { type: 'category', data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
+      { type: 'category', gridIndex: 1, data: categoryData, boundaryGap: true, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { show: false }, splitLine: { show: false }, min: 'dataMin', max: 'dataMax' },
     ],
     yAxis: [
-      { scale: true, splitArea: { show: false }, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1f2937' } } },
-      { scale: true, gridIndex: 1, splitNumber: 2, axisLine: { lineStyle: { color: '#475569' } }, axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1f2937' } } },
+      { scale: true, splitArea: { show: false }, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
+      { scale: true, gridIndex: 1, splitNumber: 2, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#334155' },
+      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#475569' },
     ],
     series: [
       { name: '日K', type: 'candlestick', data: candleData, itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' } },
@@ -508,6 +508,78 @@ function _klineOption(rows) {
       { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
       { name: 'MA30', type: 'line', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#a78bfa' }, connectNulls: false },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumeData, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
+    ],
+  };
+}
+
+function _klinePredictOption(merged, predStartIdx) {
+  const dates = merged.map(x => x.date);
+  const candles = merged.map((x, i) => {
+    const val = [x.open, x.close, x.low, x.high];
+    if (i >= predStartIdx) {
+      return { value: val, itemStyle: { opacity: 0.6, borderWidth: 1, borderColor: x.close >= x.open ? 'rgba(239,68,68,0.7)' : 'rgba(22,163,106,0.7)', color: x.close >= x.open ? 'rgba(239,68,68,0.45)' : 'rgba(22,163,106,0.45)' } };
+    }
+    return val;
+  });
+  const volumes = merged.map((x, i) => [i, i < predStartIdx ? x.volume : 0, x.close >= x.open ? 1 : -1]);
+  const closes = merged.map(x => x.close);
+  const ma5 = _calcMA(closes, 5);
+  const ma10 = _calcMA(closes, 10);
+  const ma30 = _calcMA(closes, 30);
+
+  const predBoundary = predStartIdx > 0 ? dates[predStartIdx] : null;
+  const lastDate = dates[dates.length - 1];
+
+  return {
+    animation: false, backgroundColor: 'transparent',
+    legend: {
+      show: true, top: 0, right: 20,
+      textStyle: { color: '#8da2bb', fontSize: 11 },
+      itemWidth: 14, itemHeight: 2, itemGap: 12,
+      data: ['MA5', 'MA10', 'MA30'],
+    },
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'cross' },
+      backgroundColor: 'rgba(15,23,42,0.92)', borderColor: '#334155',
+      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      formatter: function(params) {
+        if (!params || !params.length) return '';
+        const idx = params[0].dataIndex;
+        const isPred = idx >= predStartIdx;
+        const k = merged[idx];
+        const tag = isPred ? '<span style="color:#facc15">[预测]</span>' : '[历史]';
+        let html = `<div style="font-weight:600;margin-bottom:4px">${k.date} ${tag}</div>`;
+        html += `<div>开: ${fmtNum(k.open, 2)} &nbsp; 高: ${fmtNum(k.high, 2)}</div>`;
+        html += `<div>低: ${fmtNum(k.low, 2)} &nbsp; 收: ${fmtNum(k.close, 2)}</div>`;
+        if (!isPred && k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
+        return html;
+      }
+    },
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#334155' } },
+    grid: [{ left: 52, right: 18, top: 28, height: '58%' }, { left: 52, right: 18, top: '77%', height: '16%' }],
+    xAxis: [
+      { type: 'category', data: dates, boundaryGap: true, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 1, data: dates, boundaryGap: true, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { show: false }, splitLine: { show: false } },
+    ],
+    yAxis: [
+      { scale: true, splitArea: { show: false }, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
+      { scale: true, gridIndex: 1, splitNumber: 2, axisLine: { lineStyle: { color: '#64748b' } }, axisLabel: { color: '#94a3b8', fontSize: 11 }, splitLine: { lineStyle: { color: '#1e293b' } } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#475569' },
+    ],
+    series: [
+      {
+        name: '日K', type: 'candlestick', data: candles,
+        itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
+        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.08)' } }, { xAxis: lastDate } ]] } : undefined,
+        markLine: predBoundary ? { silent: true, symbol: 'none', data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.5)', width: 1 }, label: { show: true, formatter: '预测', color: '#facc15', fontSize: 10, position: 'insideStartTop' } }] } : undefined,
+      },
+      { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fbbf24' }, connectNulls: false },
+      { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
+      { name: 'MA30', type: 'line', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#a78bfa' }, connectNulls: false },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
     ],
   };
 }
@@ -592,21 +664,34 @@ async function selectHotStock(item) {
     }
     renderStockSummaryLite(item, payload || {});
     renderMarketKlineChart(payload?.items || []);
-    setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
-    const pseudoDetail = {
-      name: item.name,
-      metrics: {
-        price: item.latest_price,
-        pct_change: item.change_pct,
-        volume_ratio: item.volume_ratio || 0,
-        breakout_level: 0,
-      },
-      kline: payload?.items || [],
-    };
-    openPredictModal(item.symbol, pseudoDetail);
+    setStatus(`${item.name} K线已加载，正在请求预测...`, 'info');
+    _fetchAndRenderMarketPredict(item.symbol, item.name);
   } catch (err) {
     renderMarketChartPlaceholder(`加载失败: ${err.message}`);
     setStatus(`热门个股加载失败: ${err.message}`, 'error');
+  }
+}
+
+async function _fetchAndRenderMarketPredict(symbol, name) {
+  const summaryEl = document.getElementById('marketStockSummary');
+  try {
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    if (pred.merged_kline && pred.merged_kline.length) {
+      const chart = ensureMarketChart();
+      if (chart) chart.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index), true);
+      const pk = pred.predicted_kline || [];
+      const hk = pred.history_kline || [];
+      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
+      if (pk.length && lastClose) {
+        const day3Close = pk[pk.length - 1].close;
+        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
+        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
+        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
+      }
+      setStatus(`${name} 预测已加载`, 'success');
+    }
+  } catch (err) {
+    setStatus(`预测请求失败: ${err.message}`, 'error');
   }
 }
 
