@@ -569,6 +569,17 @@ async function selectHotStock(item) {
     renderStockSummaryLite(item, payload || {});
     renderMarketKlineChart(payload?.items || []);
     setStatus(`热门个股 ${item.symbol} K线已加载`, 'success');
+    const pseudoDetail = {
+      name: item.name,
+      metrics: {
+        price: item.latest_price,
+        pct_change: item.change_pct,
+        volume_ratio: item.volume_ratio || 0,
+        breakout_level: 0,
+      },
+      kline: payload?.items || [],
+    };
+    openPredictModal(item.symbol, pseudoDetail);
   } catch (err) {
     renderMarketChartPlaceholder(`加载失败: ${err.message}`);
     setStatus(`热门个股加载失败: ${err.message}`, 'error');
