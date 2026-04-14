@@ -714,3 +714,62 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .agent-task-time { color: var(--muted); }
 .agent-task-elapsed { color: var(--muted); }
 .agent-empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+/* ── Kronos 预测弹窗 ── */
+.predict-modal-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.predict-modal {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; width: 920px; max-width: 95vw; max-height: 92vh;
+  overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column;
+}
+.predict-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 8px; border-bottom: 1px solid var(--line);
+}
+.predict-modal-header h3 {
+  margin: 0; font-size: 16px; font-weight: 700; color: var(--text);
+}
+.predict-modal-close {
+  background: none; border: none; color: var(--muted); font-size: 22px;
+  cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.predict-modal-close:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+.predict-modal-subtitle {
+  padding: 6px 20px 10px; font-size: 12px; color: var(--muted);
+  display: flex; gap: 16px; flex-wrap: wrap;
+}
+.predict-modal-subtitle span { white-space: nowrap; }
+.predict-modal-subtitle .up { color: #ef4444; }
+.predict-modal-subtitle .down { color: #16a34a; }
+.predict-chart { width: 100%; height: 420px; padding: 0 8px; }
+.predict-status {
+  padding: 6px 20px; font-size: 12px; color: var(--muted);
+  min-height: 20px;
+}
+.predict-status .loading { color: #facc15; }
+.predict-status .error { color: #ef4444; }
+.predict-summary {
+  padding: 10px 20px 18px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; border-top: 1px solid var(--line);
+}
+.predict-summary-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; border-radius: 8px;
+  background: rgba(15, 30, 55, 0.4); border: 1px solid var(--line);
+}
+.predict-summary-label { font-size: 11px; color: var(--muted); }
+.predict-summary-value { font-size: 14px; font-weight: 600; color: var(--text); }
+.predict-summary-value.up { color: #ef4444; }
+.predict-summary-value.down { color: #16a34a; }
+.predict-summary-meta {
+  grid-column: 1 / -1; font-size: 11px; color: var(--muted);
+  padding-top: 4px; border-top: 1px solid var(--line);
+}

@@ -20,6 +20,7 @@ from app.services.strategy_engine import get_last_n_trade_window
 from app.services.time_utils import now_cn
 from app.services.hermes_memory import HermesMemory
 from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop
+from app.services.kronos_predict_service import KronosPredictService
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -29,6 +30,11 @@ kline_cache_service = KlineCacheService(provider=provider)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service)
 hub = RealtimeHub()
+
+kronos_service = KronosPredictService(
+    kline_store=kline_cache_service.store,
+    provider=provider,
+)
 
 hermes_memory = HermesMemory()
 hermes_runtime = HermesRuntime(
@@ -324,6 +330,19 @@ async def get_cached_kline(symbol: str, days: int = 30):
         "count": len(items),
         "items": items,
     }
+
+
+@app.get("/api/predict/{symbol}/kronos")
+async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3):
+    clean = normalize_symbol(symbol)
+    try:
+        return await kronos_service.predict(clean, lookback, horizon)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"预测失败: {exc}")
 
 
 @app.get("/api/strategy/profile")
