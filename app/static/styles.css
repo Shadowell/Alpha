@@ -170,7 +170,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* ── Layout ── */
 .layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 1fr 1fr;
   gap: 16px; padding: 16px;
   flex: 1;
 }
@@ -481,7 +481,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 11px; color: #b4c3dc;
 }
 
-.kline-chart { width: 100%; height: 420px; }
+.kline-chart { width: 100%; height: 520px; }
 
 .detail-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
 
@@ -536,6 +536,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .layout { grid-template-columns: 1fr; }
   .funnel-grid { min-height: auto; }
   .hot-list { grid-template-columns: 1fr; }
+  .kline-chart { height: 420px; }
 }
 
 @media (max-width: 900px) {
