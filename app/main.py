@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time as _time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -97,76 +98,115 @@ async def _kline_cache_loop() -> None:
         await asyncio.sleep(600)
 
 
+_trade_date_cache: tuple[float, str | None] = (0.0, None)
+_TRADE_DATE_TTL = 300  # 5 min
+
 async def _get_latest_trade_date() -> str | None:
-    """获取最近（含今天）的交易日，用于确定实时数据对应哪一天。"""
+    """获取最近（含今天）的交易日，带 5 分钟缓存。"""
+    global _trade_date_cache
+    now = _time.monotonic()
+    if _trade_date_cache[1] is not None and (now - _trade_date_cache[0]) < _TRADE_DATE_TTL:
+        return _trade_date_cache[1]
     try:
         import pandas as pd
         df = await provider.get_trade_days()
         if df.empty:
-            return now_cn().date().isoformat()
-        today = pd.Timestamp(now_cn().date())
-        df["trade_date"] = pd.to_datetime(df["trade_date"])
-        valid = df[df["trade_date"] <= today]["trade_date"]
-        if valid.empty:
-            return now_cn().date().isoformat()
-        return valid.iloc[-1].strftime("%Y-%m-%d")
+            result = now_cn().date().isoformat()
+        else:
+            today = pd.Timestamp(now_cn().date())
+            df["trade_date"] = pd.to_datetime(df["trade_date"])
+            valid = df[df["trade_date"] <= today]["trade_date"]
+            result = valid.iloc[-1].strftime("%Y-%m-%d") if not valid.empty else now_cn().date().isoformat()
     except Exception:
-        return now_cn().date().isoformat()
+        result = now_cn().date().isoformat()
+    _trade_date_cache = (now, result)
+    return result
 
+
+_today_bar_cache: dict[str, tuple[float, dict | None]] = {}
 
 async def _build_today_bar(symbol: str) -> dict | None:
-    """从个股实时行情构造当天的 K 线柱，非交易时段或无数据返回 None。"""
-    import akshare as ak
+    """从个股实时行情构造当天 K 线柱。
+
+    - 非交易时段直接返回 None（避免无意义的网络请求）
+    - 交易时段带 15s TTL 内存缓存 + 5s 超时保护
+    """
+    from app.services.time_utils import is_market_open, is_after_close
+
+    if is_after_close() or not is_market_open():
+        return _today_bar_cache.get(symbol, (0, None))[1]
+
+    now = _time.monotonic()
+    cached = _today_bar_cache.get(symbol)
+    if cached and (now - cached[0]) < 15:
+        return cached[1]
 
     trade_date = await _get_latest_trade_date()
     if not trade_date:
         return None
 
-    bar = None
+    bar = await _fetch_today_bar_from_bid_ask(symbol, trade_date)
+    if bar is None:
+        bar = await _fetch_today_bar_from_snapshot(symbol, trade_date)
+
+    _today_bar_cache[symbol] = (_time.monotonic(), bar)
+    return bar
+
+
+async def _fetch_today_bar_from_bid_ask(symbol: str, trade_date: str) -> dict | None:
+    """通过 stock_bid_ask_em 获取实时行情，5s 超时保护。"""
+    import akshare as ak
     try:
         raw_symbol = symbol.replace("sh", "").replace("sz", "").replace("bj", "")
-        df = await asyncio.to_thread(ak.stock_bid_ask_em, symbol=raw_symbol)
+        df = await asyncio.wait_for(
+            asyncio.to_thread(ak.stock_bid_ask_em, symbol=raw_symbol),
+            timeout=5.0,
+        )
         if df is not None and not df.empty:
             lookup = dict(zip(df["item"], df["value"]))
             price = float(lookup.get("最新", 0))
             open_ = float(lookup.get("今开", 0))
             if price > 0 and open_ > 0:
-                volume_hands = float(lookup.get("总手", 0))
-                bar = {
+                return {
                     "date": trade_date,
                     "open": open_,
                     "high": float(lookup.get("最高", price)),
                     "low": float(lookup.get("最低", price)),
                     "close": price,
-                    "volume": volume_hands * 100,
+                    "volume": float(lookup.get("总手", 0)) * 100,
                     "amount": float(lookup.get("金额", 0)),
                 }
     except Exception:
         pass
+    return None
 
-    if bar is None:
-        try:
-            snapshot = await provider.get_realtime_snapshot(cache_ttl_seconds=300)
-            if not snapshot.empty:
-                row = snapshot[snapshot["代码"] == symbol]
-                if not row.empty:
-                    r = row.iloc[0]
-                    price = float(r.get("最新价", 0))
-                    open_ = float(r.get("今开", 0))
-                    if price > 0 and open_ > 0:
-                        bar = {
-                            "date": trade_date,
-                            "open": open_,
-                            "high": float(r.get("最高", price)),
-                            "low": float(r.get("最低", price)),
-                            "close": price,
-                            "volume": float(r.get("成交量", 0)),
-                            "amount": float(r.get("成交额", 0)),
-                        }
-        except Exception:
-            pass
 
-    return bar
+async def _fetch_today_bar_from_snapshot(symbol: str, trade_date: str) -> dict | None:
+    """Fallback: 从全量快照中提取个股当日 K 线。"""
+    try:
+        snapshot = await asyncio.wait_for(
+            provider.get_realtime_snapshot(cache_ttl_seconds=300),
+            timeout=5.0,
+        )
+        if not snapshot.empty:
+            row = snapshot[snapshot["代码"] == symbol]
+            if not row.empty:
+                r = row.iloc[0]
+                price = float(r.get("最新价", 0))
+                open_ = float(r.get("今开", 0))
+                if price > 0 and open_ > 0:
+                    return {
+                        "date": trade_date,
+                        "open": open_,
+                        "high": float(r.get("最高", price)),
+                        "low": float(r.get("最低", price)),
+                        "close": price,
+                        "volume": float(r.get("成交量", 0)),
+                        "amount": float(r.get("成交额", 0)),
+                    }
+    except Exception:
+        pass
+    return None
 
 
 @asynccontextmanager
