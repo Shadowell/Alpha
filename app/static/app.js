@@ -786,10 +786,33 @@ async function selectSymbol(symbol) {
     const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
     renderStockSummary(detail);
     renderKlineChart(detail.kline || []);
-    openPredictModal(symbol, detail);
+    setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
+    _fetchAndRenderFunnelPredict(symbol, detail.name);
   } catch (err) {
     renderStockSummary(null);
     renderChartPlaceholder(`加载失败: ${err.message}`);
+  }
+}
+
+async function _fetchAndRenderFunnelPredict(symbol, name) {
+  const summaryEl = document.getElementById('stockSummary');
+  try {
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    if (pred.merged_kline && pred.merged_kline.length) {
+      renderKlineChart(pred.merged_kline, pred.prediction_start_index);
+      const pk = pred.predicted_kline || [];
+      const hk = pred.history_kline || [];
+      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
+      if (pk.length && lastClose) {
+        const day3Close = pk[pk.length - 1].close;
+        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
+        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
+        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
+      }
+      setStatus(`${name} 预测已加载`, 'success');
+    }
+  } catch (err) {
+    setStatus(`预测请求失败: ${err.message}`, 'error');
   }
 }
 
