@@ -268,8 +268,6 @@ class KlineCacheService:
         if not target_trade_date:
             return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
 
-        td_fmt = target_trade_date.replace("-", "")
-
         state = self.store.get_sync_state()
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
@@ -283,7 +281,7 @@ class KlineCacheService:
             task_id=None,
             trigger_mode=trigger_mode,
             updated_at=now_cn().isoformat(),
-            message=f"增量同步 {target_trade_date}",
+            message=f"增量同步 {target_trade_date} 检查缺失中...",
         )
 
         symbols = await self._load_symbol_list()
@@ -304,9 +302,53 @@ class KlineCacheService:
             )
             return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
+        existing_pairs = self.store.get_existing_pairs([target_trade_date])
+        missing_symbols = [s for s in symbols if (s, target_trade_date) not in existing_pairs]
+
+        if not missing_symbols:
+            self.store.set_sync_state(
+                attempt_trade_date=target_trade_date,
+                success_trade_date=target_trade_date,
+                status="success",
+                symbol_count=len(symbols),
+                total_symbols=len(symbols),
+                synced_symbols=0,
+                success_symbols=0,
+                failed_symbols=0,
+                task_id=None,
+                trigger_mode=trigger_mode,
+                updated_at=now_cn().isoformat(),
+                message=f"增量同步 {target_trade_date} 数据完整，无需同步",
+            )
+            return {
+                "success": True,
+                "message": f"{target_trade_date} 数据已完整({len(symbols)}只)，无需同步",
+                "trade_date": target_trade_date,
+                "symbol_count": len(symbols),
+                "total_symbols": len(symbols),
+                "synced_symbols": 0,
+                "missing_filled": 0,
+                "mode": "incremental",
+            }
+
+        td_fmt = target_trade_date.replace("-", "")
         task_id = uuid.uuid4().hex
         started_at = now_cn().isoformat()
-        total = len(symbols)
+        total = len(missing_symbols)
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=0,
+            total_symbols=total,
+            synced_symbols=0,
+            success_symbols=0,
+            failed_symbols=0,
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            updated_at=now_cn().isoformat(),
+            message=f"增量补缺 {target_trade_date} 缺失{total}只(共{len(symbols)}只)",
+        )
         self.store.start_sync_task(
             task_id=task_id,
             trigger_mode=trigger_mode,
@@ -315,7 +357,7 @@ class KlineCacheService:
             started_at=started_at,
         )
         result = await self._concurrent_fetch(
-            symbols=symbols,
+            symbols=missing_symbols,
             start_date=td_fmt,
             end_date=td_fmt,
             task_id=task_id,
@@ -323,12 +365,15 @@ class KlineCacheService:
             state=state,
             trigger_mode=trigger_mode,
             total=total,
-            label="增量同步",
+            label="增量补缺",
         )
         completed, success_count, failed_count = result
 
         final_status = "success" if completed > 0 else "failed"
-        final_msg = f"增量同步完成 {target_trade_date}" if completed > 0 else f"增量同步失败 {target_trade_date}"
+        final_msg = (
+            f"增量补缺完成 {target_trade_date} 补缺{completed}只(原缺失{total}只)"
+            if completed > 0 else f"增量同步失败 {target_trade_date}"
+        )
         self.store.finish_sync_task(
             task_id=task_id,
             status=final_status,
@@ -357,6 +402,7 @@ class KlineCacheService:
             "task_id": task_id,
             "total_symbols": total,
             "synced_symbols": success_count + failed_count,
+            "missing_filled": total,
             "mode": "incremental",
         }
 
