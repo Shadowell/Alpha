@@ -1,0 +1,220 @@
+"""Kronos 模型系列 benchmark — 加载时间、推理时间、预测质量对比。
+
+用法: python -m tests.benchmark_kronos
+"""
+from __future__ import annotations
+
+import gc
+import json
+import sys
+import time
+
+import numpy as np
+import pandas as pd
+import torch
+
+sys.path.insert(0, ".")
+
+from app.services.kronos_model import Kronos, KronosTokenizer, KronosPredictor
+from app.services.kline_store import KlineSQLiteStore
+
+MODELS = [
+    {
+        "name": "Kronos-mini",
+        "model_id": "NeoQuasar/Kronos-mini",
+        "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-2k",
+        "max_context": 2048,
+        "params": "4.1M",
+    },
+    {
+        "name": "Kronos-small",
+        "model_id": "NeoQuasar/Kronos-small",
+        "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-base",
+        "max_context": 512,
+        "params": "24.7M",
+    },
+    {
+        "name": "Kronos-base",
+        "model_id": "NeoQuasar/Kronos-base",
+        "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-base",
+        "max_context": 512,
+        "params": "102.3M",
+    },
+]
+
+LOOKBACK = 30
+HORIZON = 5
+SYMBOL = "000001"
+
+
+def get_history(lookback: int) -> list[dict]:
+    store = KlineSQLiteStore()
+    items = store.get_kline(SYMBOL, days=lookback + 10)
+    if len(items) < lookback + HORIZON:
+        print(f"[WARN] K线数据不足: 需要 {lookback + HORIZON} 根，实际 {len(items)} 根")
+    return items
+
+
+def build_future_dates(history: list[dict], horizon: int) -> list[str]:
+    last = pd.Timestamp(history[-1]["date"])
+    dates = pd.bdate_range(start=last + pd.Timedelta(days=1), periods=horizon)
+    return [d.strftime("%Y-%m-%d") for d in dates]
+
+
+def run_inference(predictor: KronosPredictor, history: list[dict], future_dates: list[str], horizon: int) -> pd.DataFrame:
+    df = pd.DataFrame(history)
+    x_df = df[["open", "high", "low", "close", "volume", "amount"]].copy()
+    hist_dates = pd.to_datetime(df["date"])
+    x_timestamp = pd.Series(hist_dates).reset_index(drop=True)
+    y_timestamp = pd.Series(pd.to_datetime(future_dates))
+    pred_df = predictor.predict(
+        df=x_df.reset_index(drop=True),
+        x_timestamp=x_timestamp,
+        y_timestamp=y_timestamp,
+        pred_len=horizon,
+        T=1.0,
+        top_k=0,
+        top_p=0.9,
+        sample_count=1,
+        verbose=False,
+    )
+    return pred_df
+
+
+def calc_metrics(history: list[dict], pred_df: pd.DataFrame) -> dict:
+    """基于最后一根历史 K 线计算预测指标。"""
+    last = history[-1]
+    last_close = last["close"]
+    pred_closes = pred_df["close"].values
+    pred_day1_close = float(pred_closes[0])
+    pred_day5_close = float(pred_closes[-1])
+    day1_chg = (pred_day1_close - last_close) / last_close * 100
+    day5_chg = (pred_day5_close - last_close) / last_close * 100
+
+    pred_highs = pred_df["high"].values
+    pred_lows = pred_df["low"].values
+    volatility = float(np.mean((pred_highs - pred_lows) / pred_lows * 100))
+
+    return {
+        "pred_day1_close": round(pred_day1_close, 4),
+        "pred_day5_close": round(pred_day5_close, 4),
+        "day1_chg_pct": round(day1_chg, 2),
+        "day5_chg_pct": round(day5_chg, 2),
+        "avg_volatility_pct": round(volatility, 2),
+    }
+
+
+def benchmark_model(cfg: dict, history: list[dict], future_dates: list[str]) -> dict:
+    name = cfg["name"]
+    print(f"\n{'='*60}")
+    print(f"  Benchmarking: {name} ({cfg['params']})")
+    print(f"{'='*60}")
+
+    # --- Load ---
+    print(f"  Loading tokenizer: {cfg['tokenizer_id']} ...")
+    t0 = time.perf_counter()
+    tokenizer = KronosTokenizer.from_pretrained(cfg["tokenizer_id"])
+    t_tok = time.perf_counter() - t0
+    print(f"  Tokenizer loaded in {t_tok:.2f}s")
+
+    print(f"  Loading model: {cfg['model_id']} ...")
+    t0 = time.perf_counter()
+    model = Kronos.from_pretrained(cfg["model_id"])
+    t_model = time.perf_counter() - t0
+    print(f"  Model loaded in {t_model:.2f}s")
+
+    t0 = time.perf_counter()
+    predictor = KronosPredictor(model, tokenizer, device=None, max_context=cfg["max_context"])
+    t_init = time.perf_counter() - t0
+    device = predictor.device
+    print(f"  Predictor initialized on {device} in {t_init:.2f}s")
+
+    load_total = t_tok + t_model + t_init
+
+    # --- Warmup inference ---
+    print("  Warmup inference...")
+    try:
+        _ = run_inference(predictor, history, future_dates, HORIZON)
+    except Exception as e:
+        print(f"  [ERROR] warmup failed: {e}")
+
+    # --- Timed inference (3 runs) ---
+    infer_times = []
+    pred_df = None
+    n_runs = 3
+    print(f"  Running {n_runs} inference passes...")
+    for i in range(n_runs):
+        t0 = time.perf_counter()
+        pred_df = run_inference(predictor, history, future_dates, HORIZON)
+        elapsed = time.perf_counter() - t0
+        infer_times.append(elapsed)
+        print(f"    run {i+1}: {elapsed:.2f}s")
+
+    avg_infer = np.mean(infer_times)
+    metrics = calc_metrics(history, pred_df) if pred_df is not None else {}
+
+    # --- Cleanup ---
+    del predictor, model, tokenizer
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    result = {
+        "model": name,
+        "params": cfg["params"],
+        "device": str(device),
+        "max_context": cfg["max_context"],
+        "load_time_sec": round(load_total, 2),
+        "avg_infer_sec": round(avg_infer, 2),
+        "infer_times": [round(t, 2) for t in infer_times],
+        **metrics,
+    }
+    print(f"  Result: load={load_total:.2f}s  infer_avg={avg_infer:.2f}s")
+    return result
+
+
+def main():
+    print(f"Kronos Benchmark: lookback={LOOKBACK}, horizon={HORIZON}, symbol={SYMBOL}")
+    print(f"PyTorch: {torch.__version__}, Device: ", end="")
+    if torch.cuda.is_available():
+        print(f"CUDA ({torch.cuda.get_device_name(0)})")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        print("MPS (Apple Silicon)")
+    else:
+        print("CPU")
+
+    all_items = get_history(LOOKBACK)
+    history = all_items[:LOOKBACK]
+    future_dates = build_future_dates(history, HORIZON)
+
+    print(f"\nHistory: {len(history)} bars, {history[0]['date']} ~ {history[-1]['date']}")
+    print(f"Future dates: {future_dates}")
+
+    results = []
+    for cfg in MODELS:
+        try:
+            r = benchmark_model(cfg, history, future_dates)
+            results.append(r)
+        except Exception as e:
+            print(f"  [FATAL] {cfg['name']} benchmark failed: {e}")
+            results.append({"model": cfg["name"], "params": cfg["params"], "error": str(e)})
+
+    print(f"\n{'='*60}")
+    print("  BENCHMARK RESULTS")
+    print(f"{'='*60}")
+    print(f"{'Model':<16} {'Params':<10} {'Load(s)':<10} {'Infer(s)':<10} {'D1 Chg%':<10} {'D5 Chg%':<10} {'Volatility%':<12}")
+    print("-" * 78)
+    for r in results:
+        if "error" in r:
+            print(f"{r['model']:<16} {r['params']:<10} ERROR: {r['error']}")
+        else:
+            print(f"{r['model']:<16} {r['params']:<10} {r['load_time_sec']:<10} {r['avg_infer_sec']:<10} {r.get('day1_chg_pct','N/A'):<10} {r.get('day5_chg_pct','N/A'):<10} {r.get('avg_volatility_pct','N/A'):<12}")
+
+    out_path = "tests/benchmark_kronos_results.json"
+    with open(out_path, "w") as f:
+        json.dump({"lookback": LOOKBACK, "horizon": HORIZON, "symbol": SYMBOL, "results": results}, f, indent=2, ensure_ascii=False)
+    print(f"\nResults saved to {out_path}")
+
+
+if __name__ == "__main__":
+    main()

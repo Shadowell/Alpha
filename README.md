@@ -196,6 +196,45 @@ pip3 install -r requirements.txt
 
 不选择任何标签时全部类别参与筛选，选中部分标签则仅按选中类别过滤。仅筛选主板股票（沪市 6 开头、深市 00 开头），自动排除 ST。
 
+## Kronos 预测模型 Benchmark
+
+项目集成了 [Kronos](https://huggingface.co/NeoQuasar/Kronos-base) 金融 K 线基础模型，用于个股日 K 级别的短期走势预测。以下是 Kronos 系列可用模型在相同条件下的性能对比。
+
+### 测试条件
+
+- **测试标的**：000001（平安银行）
+- **历史窗口**：30 根日 K（lookback=30）
+- **预测天数**：5 个交易日（horizon=5）
+- **推理设备**：Apple MPS（M 系列芯片）
+- **采样参数**：T=1.0, top_p=0.9, sample_count=1
+- **推理耗时**：预热 1 次后取 3 次平均
+
+### 性能对比
+
+| 模型 | 参数量 | Tokenizer | 上下文长度 | 加载耗时 | 推理耗时 | D1 预测涨跌 | D5 预测涨跌 | 预测波动率 |
+|------|--------|-----------|-----------|---------|---------|------------|------------|-----------|
+| **Kronos-mini** | 4.1M | Tokenizer-2k | 2048 | 1.36s | **0.16s** | -0.12% | +0.27% | 1.30% |
+| **Kronos-small** | 24.7M | Tokenizer-base | 512 | 1.57s | 0.25s | -0.11% | +1.16% | 0.98% |
+| **Kronos-base** | 102.3M | Tokenizer-base | 512 | 3.14s | 0.27s | -0.05% | -1.89% | 1.35% |
+| Kronos-large | 499.2M | Tokenizer-base | 512 | — | — | — | — | — |
+
+> Kronos-large 尚未公开发布，暂无法测试。
+
+### 观察
+
+- **Kronos-mini** 推理速度最快（0.16s），适合实时交互场景，当前项目默认使用 **Kronos-base**
+- **Kronos-small/base** 使用相同 Tokenizer，推理耗时接近（0.25s vs 0.27s），但模型参数量相差 4 倍
+- 三个模型对 D1（次日）预测结果接近（均预测微跌），但对 D5（五日）预测分歧较大
+- 预测结果具有随机采样特性，每次运行会有差异，仅供参考
+
+### 运行 Benchmark
+
+```bash
+python -m tests.benchmark_kronos
+```
+
+结果输出到 `tests/benchmark_kronos_results.json`。
+
 ## 测试
 
 ```bash
