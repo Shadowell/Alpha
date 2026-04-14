@@ -345,7 +345,7 @@ class FunnelService:
         """Refresh hot stocks. Caller MUST hold self.lock."""
         if self.frozen and is_after_close(now_cn()) and not force:
             return
-        hot_df = await self.provider.get_hot_stocks(top_n=10)
+        hot_df = await self.provider.get_hot_stocks(top_n=30)
         if hot_df.empty:
             return
         self.hot_stocks = []
