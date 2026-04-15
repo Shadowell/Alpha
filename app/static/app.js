@@ -773,13 +773,12 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
   const candles = merged.map((x, i) => {
     const val = [x.open, x.close, x.low, x.high];
     if (i >= predStartIdx) {
+      const isUp = x.close >= x.open;
       return {
         value: val,
         itemStyle: {
           color: 'transparent',
-          color0: 'transparent',
-          borderColor: 'rgba(239,68,68,0.7)',
-          borderColor0: 'rgba(22,163,106,0.7)',
+          borderColor: isUp ? 'rgba(239,68,68,0.7)' : 'rgba(22,163,106,0.7)',
           borderWidth: 1.5,
           borderType: 'dashed',
         },
