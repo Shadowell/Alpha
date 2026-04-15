@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260416b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260416c" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -100,7 +100,9 @@
             <div class="dc-action-left">
               <button id="btnDcFullSync" class="btn-primary btn-sm">全量补缺</button>
               <span class="dc-action-sep"></span>
-              <input type="text" id="dcSyncDate" class="sync-date-input" placeholder="YYYY-MM-DD" maxlength="10" />
+              <input type="date" id="dcSyncStart" class="sync-date-input" />
+              <span class="dc-date-sep">~</span>
+              <input type="date" id="dcSyncEnd" class="sync-date-input" />
               <button id="btnDcIncrSync" class="btn-outline btn-sm">增量同步</button>
               <span class="dc-action-sep"></span>
               <button id="btnDcCheck" class="btn-outline btn-sm">完整性检查</button>
@@ -419,6 +421,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260416e"></script>
+  <script src="/static/app.js?v=20260416f"></script>
 </body>
 </html>

@@ -575,7 +575,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .sync-date-input {
-  width: 110px; padding: 7px 10px;
+  width: 130px; padding: 6px 8px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--card-nested);
@@ -583,7 +583,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: var(--font-mono);
   outline: none; color-scheme: dark;
   transition: all var(--transition);
-  text-align: center;
+}
+.dc-date-sep {
+  color: var(--muted); font-size: 12px; margin: 0 2px;
 }
 
 .sync-date-input:focus {
