@@ -1715,7 +1715,7 @@ function _renderMonitorCard(msg) {
       `<code>${s.symbol}</code> <b>${esc(s.name)}</b></div>`
     ).join('');
     const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
-    return `<div class="mtheme-card">
+    return `<div class="mtheme-card ${levelCls}">
       <div class="mtheme-header">
         <span class="mtheme-level ${levelCls}">${esc(t.level)}</span>
         <span class="mtheme-title">${esc(t.title)}</span>

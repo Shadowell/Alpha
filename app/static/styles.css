@@ -1398,19 +1398,22 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
   background: rgba(239, 68, 68, 0.1); color: #ef4444;
 }
 
-/* 主线模块卡片 — 横向并排 */
+/* 主线模块卡片 — 每条主线独占一行 */
 .mtheme-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  display: flex; flex-direction: column;
   gap: 10px; margin: 10px 0;
 }
 
 .mtheme-card {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(15, 23, 42, 0.55);
   border: 1px solid var(--line);
-  display: flex; flex-direction: column;
+  border-left: 3px solid var(--brand);
 }
+.mtheme-card.high { border-left-color: #ef4444; }
+.mtheme-card.mid-high { border-left-color: #f59e0b; }
+.mtheme-card.mid { border-left-color: #60a5fa; }
 
 .mtheme-header {
   display: flex; align-items: center; gap: 6px;
@@ -1477,7 +1480,6 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 
 @media (max-width: 1280px) {
   .agent-body { grid-template-columns: 1fr; }
-  .mtheme-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 900px) {
   .page-summary { font-size: 12px; padding: 8px 12px; }
