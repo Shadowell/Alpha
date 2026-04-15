@@ -222,7 +222,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: 'Hermes Agent' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '自进化智能体', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -260,6 +260,9 @@ function switchTab(tab) {
   if (tab === 'agent') {
     loadAgentData();
   }
+  if (tab === 'paper') {
+    loadPaperData();
+  }
   setTimeout(() => {
     if (state.chart) state.chart.resize();
     if (state.marketChart) state.marketChart.resize();
@@ -286,6 +289,52 @@ function cardActions(stock) {
   if (stock.pool === 'focus') { actions.push(['移回候选', 'candidate']); actions.push(['加入买入', 'buy']); }
   if (stock.pool === 'buy') actions.push(['降级重点', 'focus']);
   return actions;
+}
+
+async function paperBuy(symbol, name, price) {
+  if (!price || price <= 0) {
+    try {
+      const rt = await request(`/api/stock/${symbol}/realtime`);
+      if (rt && rt.found && rt.close > 0) price = rt.close;
+    } catch {}
+  }
+  if (!price || price <= 0) {
+    setStatus('无法获取实时价格，请稍后重试', 'error');
+    return;
+  }
+  const qty = prompt(`模拟买入 ${name}(${symbol})\n现价: ${price.toFixed(2)}\n请输入买入股数:`, '100');
+  if (!qty) return;
+  try {
+    const res = await request('/api/paper/buy', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, name, price, qty: parseInt(qty) || 100 }),
+    });
+    if (res.success) setStatus(`模拟买入 ${name} ${qty}股 @ ${price.toFixed(2)}`, 'success');
+  } catch (err) {
+    setStatus(`模拟买入失败: ${err.message}`, 'error');
+  }
+}
+
+async function paperSell(positionId, symbol, name) {
+  let price = 0;
+  try {
+    const rt = await request(`/api/stock/${symbol}/realtime`);
+    if (rt && rt.found && rt.close > 0) price = rt.close;
+  } catch {}
+  if (!price) { setStatus('无法获取实时价格', 'error'); return; }
+  if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n现价: ${price.toFixed(2)}`)) return;
+  try {
+    const res = await request('/api/paper/sell', {
+      method: 'POST',
+      body: JSON.stringify({ position_id: positionId, price }),
+    });
+    if (res.success) {
+      setStatus(`模拟卖出 ${name} @ ${price.toFixed(2)}`, 'success');
+      loadPaperData();
+    }
+  } catch (err) {
+    setStatus(`模拟卖出失败: ${err.message}`, 'error');
+  }
 }
 
 async function movePool(symbol, targetPool) {
@@ -321,6 +370,9 @@ function renderPool(poolName, list) {
     const btns = cardActions(stock)
       .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
       .join('');
+    const simBuyBtn = poolName === 'buy'
+      ? `<button class="btn-sim-buy" data-symbol="${stock.symbol}" data-name="${stock.name}" data-price="${stock.price || stock.breakout_level || 0}">模拟买入</button>`
+      : '';
     div.innerHTML = `
       <div class="stock-top">
         <div class="stock-name">${stock.name} (${stock.symbol})</div>
@@ -329,11 +381,15 @@ function renderPool(poolName, list) {
       <div class="tags">${tags || '<span class="chip muted">暂无概念</span>'}</div>
       <div class="metrics">涨跌 ${fmtNum(stock.pct_change, 2)}% · 放量比 ${fmtNum(stock.volume_ratio, 2)} · 突破位 ${fmtNum(stock.breakout_level, 2)}</div>
       ${badge}
-      <div class="card-actions">${btns}</div>
+      <div class="card-actions">${btns}${simBuyBtn}</div>
     `;
-    div.querySelectorAll('button').forEach((btn) => {
+    div.querySelectorAll('button[data-pool]').forEach((btn) => {
       btn.onclick = (e) => { e.stopPropagation(); movePool(btn.dataset.symbol, btn.dataset.pool); };
     });
+    const sbBtn = div.querySelector('.btn-sim-buy');
+    if (sbBtn) {
+      sbBtn.onclick = (e) => { e.stopPropagation(); paperBuy(sbBtn.dataset.symbol, sbBtn.dataset.name, Number(sbBtn.dataset.price)); };
+    }
     root.appendChild(div);
   });
   if (!filtered.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚未运行筛选，点击上方「盘后筛选」开始</div></div>';
@@ -1066,6 +1122,9 @@ function renderNoticePool(poolName, list) {
     const actions = noticeCardActions(stock)
       .map(([label, pool]) => `<button data-symbol="${stock.symbol}" data-pool="${pool}">${label}</button>`)
       .join('');
+    const simBuyBtn = poolName === 'buy'
+      ? `<button class="btn-sim-buy" data-symbol="${stock.symbol}" data-name="${stock.name}">模拟买入</button>`
+      : '';
     card.innerHTML = `
       <div class="stock-top">
         <div class="stock-name">${stock.name} (${stock.symbol})</div>
@@ -1075,11 +1134,15 @@ function renderNoticePool(poolName, list) {
       <div class="metrics">${stock.title}</div>
       <div class="metrics">理由: ${stock.reason || '-'}</div>
       <div class="metrics">风险: ${stock.risk || '-'}</div>
-      <div class="card-actions">${actions}</div>
+      <div class="card-actions">${actions}${simBuyBtn}</div>
     `;
-    card.querySelectorAll('button').forEach((btn) => {
+    card.querySelectorAll('button[data-pool]').forEach((btn) => {
       btn.onclick = (e) => { e.stopPropagation(); moveNoticePool(btn.dataset.symbol, btn.dataset.pool); };
     });
+    const sbBtn = card.querySelector('.btn-sim-buy');
+    if (sbBtn) {
+      sbBtn.onclick = (e) => { e.stopPropagation(); paperBuy(sbBtn.dataset.symbol, sbBtn.dataset.name, 0); };
+    }
     root.appendChild(card);
   });
   if (!list.length) {
@@ -1221,6 +1284,101 @@ async function reloadNotice() {
 async function reload() {
   await reloadFunnel();
   if (state.noticeFunnel) await reloadNotice();
+}
+
+/* ==================== 模拟盘 ==================== */
+
+async function loadPaperData() {
+  const [posRes, histRes, sumRes] = await Promise.allSettled([
+    request('/api/paper/positions'),
+    request('/api/paper/history?limit=50'),
+    request('/api/paper/summary'),
+  ]);
+  if (posRes.status === 'fulfilled') renderPaperPositions(posRes.value.positions || []);
+  if (histRes.status === 'fulfilled') renderPaperHistory(histRes.value.positions || []);
+  if (sumRes.status === 'fulfilled') renderPaperSummary(sumRes.value);
+}
+
+function renderPaperSummary(s) {
+  if (!s) return;
+  const fpnl = document.getElementById('paperFloatPnl');
+  const rpnl = document.getElementById('paperRealizedPnl');
+  document.getElementById('paperOpenCount').textContent = s.open_count || 0;
+  fpnl.textContent = `¥${fmtNum(s.total_float_pnl, 2)}`;
+  fpnl.className = 'paper-stat-value ' + (s.total_float_pnl >= 0 ? 'up' : 'down');
+  rpnl.textContent = `¥${fmtNum(s.total_realized_pnl, 2)}`;
+  rpnl.className = 'paper-stat-value ' + (s.total_realized_pnl >= 0 ? 'up' : 'down');
+  document.getElementById('paperWinRate').textContent = `${fmtNum(s.win_rate, 1)}%`;
+  document.getElementById('paperWinLose').textContent = `${s.win_count || 0}/${s.lose_count || 0}`;
+}
+
+function renderPaperPositions(positions) {
+  const root = document.getElementById('paperPositions');
+  document.getElementById('paperHoldCount').textContent = positions.length;
+  root.innerHTML = '';
+  if (!positions.length) {
+    root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无持仓，在买入池点击「模拟买入」开始</div></div>';
+    return;
+  }
+  positions.forEach(p => {
+    const pnlCls = p.pnl >= 0 ? 'up' : 'down';
+    const pnlSign = p.pnl >= 0 ? '+' : '';
+    const div = document.createElement('div');
+    div.className = 'paper-card';
+    div.innerHTML = `
+      <div class="paper-card-top">
+        <div class="paper-card-name">${p.name} (${p.symbol})</div>
+        <div class="paper-card-pnl ${pnlCls}">${pnlSign}¥${fmtNum(p.pnl, 2)} (${pnlSign}${fmtNum(p.pnl_pct, 2)}%)</div>
+      </div>
+      <div class="paper-card-info">
+        <span>成本: ${fmtNum(p.cost_price, 2)}</span>
+        <span>现价: ${fmtNum(p.current_price, 2)}</span>
+        <span>数量: ${p.qty}股</span>
+        <span>市值: ¥${fmtNum(p.current_price * p.qty, 2)}</span>
+      </div>
+      <div class="paper-card-info"><span>开仓: ${p.opened_at}</span></div>
+      <div class="paper-card-actions">
+        <button class="btn-sell" data-id="${p.id}" data-symbol="${p.symbol}" data-name="${p.name}">模拟卖出</button>
+      </div>
+    `;
+    div.querySelector('.btn-sell').onclick = (e) => {
+      e.stopPropagation();
+      paperSell(e.target.dataset.id, e.target.dataset.symbol, e.target.dataset.name);
+    };
+    root.appendChild(div);
+  });
+}
+
+function renderPaperHistory(positions) {
+  const root = document.getElementById('paperHistory');
+  document.getElementById('paperClosedCount').textContent = positions.length;
+  root.innerHTML = '';
+  if (!positions.length) {
+    root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无平仓记录</div></div>';
+    return;
+  }
+  positions.forEach(p => {
+    const pnlCls = (p.realized_pnl || 0) >= 0 ? 'up' : 'down';
+    const pnlSign = (p.realized_pnl || 0) >= 0 ? '+' : '';
+    const div = document.createElement('div');
+    div.className = 'paper-card closed';
+    div.innerHTML = `
+      <div class="paper-card-top">
+        <div class="paper-card-name">${p.name} (${p.symbol})</div>
+        <div class="paper-card-pnl ${pnlCls}">${pnlSign}¥${fmtNum(p.realized_pnl, 2)} (${pnlSign}${fmtNum(p.realized_pnl_pct, 2)}%)</div>
+      </div>
+      <div class="paper-card-info">
+        <span>成本: ${fmtNum(p.cost_price, 2)}</span>
+        <span>平仓: ${fmtNum(p.close_price, 2)}</span>
+        <span>数量: ${p.qty}股</span>
+      </div>
+      <div class="paper-card-info">
+        <span>开仓: ${p.opened_at}</span>
+        <span>平仓: ${p.closed_at}</span>
+      </div>
+    `;
+    root.appendChild(div);
+  });
 }
 
 /* ==================== Hermes Agent ==================== */
@@ -1727,6 +1885,8 @@ async function init() {
 
   _updateMarketStatus();
   setInterval(_updateMarketStatus, 30000);
+
+  document.getElementById('btnPaperRefresh').onclick = () => loadPaperData();
 
   const dcSyncDate = document.getElementById('dcSyncDate');
   const today = new Date();

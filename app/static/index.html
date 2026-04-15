@@ -37,6 +37,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
         <span>自进化智能体</span>
       </a>
+      <a class="sidebar-item" data-tab="paper" title="模拟盘">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        <span>模拟盘</span>
+      </a>
     </div>
     <div class="sidebar-bottom">
       <div class="market-status" id="marketStatus">
@@ -264,6 +268,46 @@
           </div>
         </section>
 
+        <!-- ========== 模拟盘 ========== -->
+        <section id="tab-paper" class="tab-content">
+          <div class="paper-page">
+            <div class="paper-summary-bar" id="paperSummaryBar">
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">持仓数</div>
+                <div class="paper-stat-value" id="paperOpenCount">0</div>
+              </div>
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">浮动盈亏</div>
+                <div class="paper-stat-value" id="paperFloatPnl">¥0.00</div>
+              </div>
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">已实现盈亏</div>
+                <div class="paper-stat-value" id="paperRealizedPnl">¥0.00</div>
+              </div>
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">胜率</div>
+                <div class="paper-stat-value" id="paperWinRate">0%</div>
+              </div>
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">胜/负</div>
+                <div class="paper-stat-value" id="paperWinLose">0/0</div>
+              </div>
+              <button id="btnPaperRefresh" class="btn-secondary btn-sm" style="margin-left:auto">刷新行情</button>
+            </div>
+
+            <div class="paper-body">
+              <div class="paper-section card-solid">
+                <h3>当前持仓 <span id="paperHoldCount" class="pool-count">0</span></h3>
+                <div id="paperPositions" class="paper-list"></div>
+              </div>
+              <div class="paper-section card-light">
+                <h3>已平仓历史 <span id="paperClosedCount" class="pool-count">0</span></h3>
+                <div id="paperHistory" class="paper-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </section>
 
       <aside class="right-panel">
@@ -301,6 +345,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415b"></script>
+  <script src="/static/app.js?v=20260415c"></script>
 </body>
 </html>

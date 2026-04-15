@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from dataclasses import asdict
+
 from app.models import MovePoolRequest, RecomputeRequest
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.funnel_service import FunnelService
@@ -20,6 +22,7 @@ from app.services.hermes_memory import HermesMemory
 from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop, monitor_loop
 from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
+from app.services.paper_trading import PaperTradingService
 
 from app.routers.kline import init_kline_router, kline_cache_loop
 
@@ -40,6 +43,7 @@ kronos_service = KronosPredictService(
     provider=provider,
 )
 
+paper_trading = PaperTradingService()
 hermes_memory = HermesMemory()
 hermes_runtime = HermesRuntime(
     memory=hermes_memory,
@@ -422,6 +426,72 @@ async def trigger_monitor():
 async def stop_monitor():
     hermes_memory.save_monitor_config(enabled=False)
     return {"success": True, "message": "盘中监控已停止"}
+
+
+# ── 模拟盘 ──────────────────────────────────────────
+
+
+@app.post("/api/paper/buy")
+async def paper_buy(req: dict):
+    symbol = normalize_symbol(req.get("symbol", ""))
+    name = req.get("name", symbol)
+    price = float(req.get("price", 0))
+    qty = int(req.get("qty", 100))
+    if not symbol or price <= 0:
+        raise HTTPException(400, "缺少 symbol 或 price")
+    if qty <= 0:
+        qty = 100
+    pos = paper_trading.open_position(symbol, name, price, qty, note=req.get("note", ""))
+    return {"success": True, "position": asdict(pos)}
+
+
+@app.post("/api/paper/sell")
+async def paper_sell(req: dict):
+    position_id = req.get("position_id", "")
+    price = float(req.get("price", 0))
+    if not position_id or price <= 0:
+        raise HTTPException(400, "缺少 position_id 或 price")
+    pos = paper_trading.close_position(position_id, price, note=req.get("note", ""))
+    if not pos:
+        raise HTTPException(404, "持仓不存在或已平仓")
+    return {"success": True, "position": asdict(pos)}
+
+
+@app.get("/api/paper/positions")
+async def paper_positions():
+    opens = paper_trading.get_open_positions()
+    price_map = {}
+    if opens:
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=60)
+        if not df.empty:
+            for _, r in df.iterrows():
+                price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
+            paper_trading.update_prices(price_map)
+            opens = paper_trading.get_open_positions()
+    return {"positions": opens}
+
+
+@app.get("/api/paper/history")
+async def paper_history(limit: int = 50):
+    return {"positions": paper_trading.get_closed_positions(limit)}
+
+
+@app.get("/api/paper/summary")
+async def paper_summary():
+    opens = paper_trading.get_open_positions()
+    if opens:
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=60)
+        if not df.empty:
+            price_map = {}
+            for _, r in df.iterrows():
+                price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
+            paper_trading.update_prices(price_map)
+    return paper_trading.get_summary()
+
+
+@app.get("/api/paper/trades")
+async def paper_trades(limit: int = 100):
+    return {"trades": paper_trading.get_trades(limit)}
 
 
 @app.websocket("/ws/realtime")

@@ -1392,3 +1392,90 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
   .page-summary { font-size: 12px; padding: 8px 12px; }
   .monitor-config-row { flex-wrap: wrap; }
 }
+
+/* ==================== 模拟盘 ==================== */
+
+.paper-page { display: flex; flex-direction: column; gap: 16px; }
+
+.paper-summary-bar {
+  display: flex; gap: 12px; align-items: center;
+  padding: 16px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.paper-stat-card {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 16px; border-radius: var(--radius-sm);
+  background: rgba(30, 41, 59, 0.6);
+  min-width: 100px;
+}
+
+.paper-stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.paper-stat-value { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.paper-stat-value.up { color: #ef4444; }
+.paper-stat-value.down { color: #22c55e; }
+
+.paper-body {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+
+.paper-section h3 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  margin-bottom: 12px;
+}
+
+.paper-list { display: flex; flex-direction: column; gap: 8px; }
+
+.paper-card {
+  padding: 12px 14px; border-radius: var(--radius-sm);
+  background: rgba(30, 41, 59, 0.5); border: 1px solid var(--line);
+  transition: all var(--transition);
+}
+
+.paper-card:hover { border-color: rgba(59, 130, 246, 0.3); background: rgba(30, 41, 59, 0.7); }
+
+.paper-card.closed { opacity: 0.75; }
+
+.paper-card-top {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px;
+}
+
+.paper-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
+
+.paper-card-pnl { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.paper-card-pnl.up { color: #ef4444; }
+.paper-card-pnl.down { color: #22c55e; }
+
+.paper-card-info {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted); margin-bottom: 4px;
+}
+
+.paper-card-actions {
+  display: flex; gap: 8px; margin-top: 8px;
+}
+
+.btn-sell {
+  padding: 4px 14px; border-radius: 4px; border: 1px solid #ef4444;
+  background: rgba(239, 68, 68, 0.1); color: #ef4444;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-sell:hover { background: rgba(239, 68, 68, 0.25); }
+
+.btn-sim-buy {
+  padding: 3px 10px; border-radius: 4px; border: 1px solid #22c55e;
+  background: rgba(34, 197, 94, 0.1); color: #22c55e;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-sim-buy:hover { background: rgba(34, 197, 94, 0.25); }
+
+@media (max-width: 1280px) {
+  .paper-body { grid-template-columns: 1fr; }
+  .paper-summary-bar { gap: 8px; }
+  .paper-stat-card { min-width: 80px; padding: 6px 12px; }
+}
