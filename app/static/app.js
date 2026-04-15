@@ -147,25 +147,7 @@ function renderMarketSummary() {
   ].join('');
 }
 
-function renderDataSummary() {
-  const el = document.getElementById('dataSummary');
-  if (!el) return;
-  const stats = state.dcStats || {};
-  const report = state.dcReport;
-  const syncSt = state.syncStatus || {};
-  const cov = report?.coverage_pct;
-  const covCls = cov != null ? (cov >= 99 ? 'success' : (cov >= 90 ? 'warning' : 'error')) : '';
-  el.innerHTML = [
-    _psItem('股票数', (stats.symbol_count || 0).toLocaleString(), 'brand'),
-    _psSep(),
-    _psItem('最近同步', syncSt.last_success_trade_date || '--', 'brand'),
-    _psSep(),
-    _psItem('数据覆盖率', cov != null ? cov.toFixed(1) + '%' : '--', covCls),
-    _psSep(),
-    _psItem('状态', { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[syncSt.status] || '--',
-      syncSt.status === 'running' ? 'warning' : (syncSt.status === 'success' ? 'success' : '')),
-  ].join('');
-}
+function renderDataSummary() {}
 
 function renderFunnelSummary() {
   const el = document.getElementById('funnelSummary');
@@ -542,46 +524,59 @@ async function loadDataCenter() {
   renderDataSummary();
 }
 
-function renderDcStats(stats, syncStatus, report) {
-  const grid = document.getElementById('dcStatsGrid');
-  const statusText = syncStatus.status || 'idle';
-  const statusCls = statusText === 'running' ? 'warning' : (statusText === 'success' ? 'success' : 'brand');
-  const statusLabel = { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[statusText] || statusText;
-  const coverage = report?.coverage_pct ?? '--';
-  const coverageCls = (typeof coverage === 'number') ? (coverage >= 99 ? 'success' : (coverage >= 90 ? 'warning' : 'error')) : 'brand';
+function _dcHealthLevel(coverage) {
+  if (coverage == null) return { label: '未检查', cls: 'brand', icon: '○' };
+  if (coverage >= 99) return { label: '健康', cls: 'success', icon: '●' };
+  if (coverage >= 90) return { label: '警告', cls: 'warning', icon: '▲' };
+  return { label: '严重缺失', cls: 'error', icon: '✖' };
+}
 
-  grid.innerHTML = `
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">同步状态</span>
-      <span class="dc-stat-value ${statusCls}">${statusLabel}</span>
-      <span class="dc-stat-sub">${fmtDateTime(syncStatus.updated_at)}</span>
+function renderDcStats(stats, syncStatus, report) {
+  const cov = report?.coverage_pct;
+  const health = _dcHealthLevel(cov);
+  const syncLabel = { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[syncStatus.status] || '--';
+  const syncCls = syncStatus.status === 'running' ? 'warning' : (syncStatus.status === 'success' ? 'success' : (syncStatus.status === 'failed' ? 'error' : 'brand'));
+  const missing = report?.total_missing || 0;
+
+  const alertBar = document.getElementById('dcAlertBar');
+  if (cov != null && cov < 90) {
+    alertBar.style.display = '';
+    alertBar.className = `dc-alert-bar dc-alert-${health.cls}`;
+    alertBar.innerHTML = `<span class="dc-alert-icon">${health.icon}</span>数据覆盖率仅 ${cov.toFixed(1)}%，缺失 ${missing.toLocaleString()} 条，建议执行 <strong>全量补缺</strong>`;
+  } else {
+    alertBar.style.display = 'none';
+  }
+
+  const healthCard = document.getElementById('dcHealthCard');
+  const circumference = 2 * Math.PI * 26;
+  const offset = cov != null ? circumference * (1 - cov / 100) : circumference;
+  const ringColor = cov == null ? 'var(--muted)' : (cov >= 99 ? '#22c55e' : (cov >= 90 ? '#f59e0b' : '#ef4444'));
+  healthCard.innerHTML = `
+    <div class="dc-health-ring">
+      <svg viewBox="0 0 64 64"><circle class="ring-bg" cx="32" cy="32" r="26"/><circle class="ring-fg" cx="32" cy="32" r="26" stroke="${ringColor}" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/></svg>
+      <div class="dc-health-pct">${cov != null ? cov.toFixed(1) + '%' : '--'}</div>
     </div>
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">最近同步日</span>
-      <span class="dc-stat-value brand">${syncStatus.last_success_trade_date || '--'}</span>
-      <span class="dc-stat-sub">${syncStatus.trigger_mode || '--'}</span>
-    </div>
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">缓存股票数</span>
-      <span class="dc-stat-value">${(stats.symbol_count || 0).toLocaleString()}</span>
-      <span class="dc-stat-sub">只</span>
-    </div>
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">K线总条数</span>
-      <span class="dc-stat-value">${(stats.row_count || 0).toLocaleString()}</span>
-      <span class="dc-stat-sub">${stats.min_date || '--'} ~ ${stats.max_date || '--'}</span>
-    </div>
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">数据覆盖率</span>
-      <span class="dc-stat-value ${coverageCls}">${typeof coverage === 'number' ? coverage.toFixed(1) + '%' : coverage}</span>
-      <span class="dc-stat-sub">最近30个交易日</span>
-    </div>
-    <div class="dc-stat-card">
-      <span class="dc-stat-label">数据库大小</span>
-      <span class="dc-stat-value">${stats.db_size_mb ?? '--'}</span>
-      <span class="dc-stat-sub">MB</span>
+    <div class="dc-health-info">
+      <div class="dc-health-title"><span class="dc-health-dot ${health.cls}"></span>数据健康: <strong class="${health.cls}">${health.label}</strong></div>
+      <div class="dc-health-sub">任务状态: <span class="${syncCls}">${syncLabel}</span>${syncStatus.updated_at ? ' · ' + fmtDateTime(syncStatus.updated_at) : ''}</div>
+      <div class="dc-health-sub">最近同步: ${syncStatus.last_success_trade_date || '--'} (${syncStatus.trigger_mode || '--'})${missing > 0 ? ' · 缺失 <strong style="color:#f59e0b">' + missing.toLocaleString() + '</strong> 条' : ''}</div>
     </div>
   `;
+
+  const kpiRow = document.getElementById('dcKpiRow');
+  kpiRow.innerHTML = `
+    <div class="dc-kpi"><span class="dc-kpi-val">${(stats.symbol_count || 0).toLocaleString()}</span><span class="dc-kpi-label">股票数</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${(stats.row_count || 0).toLocaleString()}</span><span class="dc-kpi-label">K线总条数</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${stats.min_date || '--'}</span><span class="dc-kpi-label">最早日期</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${stats.max_date || '--'}</span><span class="dc-kpi-label">最新日期</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${stats.db_size_mb ?? '--'} MB</span><span class="dc-kpi-label">数据库</span></div>
+  `;
+
+  const hint = document.getElementById('dcSyncHint');
+  if (hint) {
+    const lastDate = syncStatus.last_success_trade_date;
+    hint.textContent = lastDate ? `最近同步: ${lastDate}` : '';
+  }
 }
 
 function renderDcProgress(syncStatus) {
@@ -600,51 +595,54 @@ function renderDcProgress(syncStatus) {
   barEl.style.width = Math.max(0, Math.min(100, pct)) + '%';
 }
 
+let _dcReportSortBy = 'date';
+
 function renderDcReport(report) {
   const container = document.getElementById('dcReportContent');
+  const sortEl = document.getElementById('dcReportSort');
+
   if (!report || report.status === 'none' || report.status === 'error') {
     container.innerHTML = `<div class="detail-empty">${report?.message || '暂无检查报告，点击上方按钮执行检查'}</div>`;
+    if (sortEl) sortEl.innerHTML = '';
     return;
   }
 
   const pct = report.coverage_pct || 0;
-  const circumference = 2 * Math.PI * 26;
-  const offset = circumference * (1 - pct / 100);
-  const ringColor = pct >= 99 ? '#22c55e' : (pct >= 90 ? '#f59e0b' : '#ef4444');
+  const health = _dcHealthLevel(pct);
+  const checkTime = (report.check_time || '').slice(0, 19).replace('T', ' ');
 
-  let html = `
-    <div class="dc-coverage-bar">
-      <div class="dc-coverage-ring">
-        <svg viewBox="0 0 64 64">
-          <circle class="ring-bg" cx="32" cy="32" r="26"/>
-          <circle class="ring-fg" cx="32" cy="32" r="26"
-            stroke="${ringColor}"
-            stroke-dasharray="${circumference}"
-            stroke-dashoffset="${offset}"/>
-        </svg>
-        <div class="dc-coverage-pct">${pct.toFixed(1)}%</div>
-      </div>
-      <div class="dc-coverage-info">
-        <div class="dc-info-row">检查时间: <strong>${(report.check_time || '').slice(0, 16).replace('T', ' ')}</strong></div>
-        <div class="dc-info-row">检查范围: <strong>${report.trade_days_checked || 0}</strong> 个交易日 × <strong>${(report.total_symbols || 0).toLocaleString()}</strong> 只股票</div>
-        <div class="dc-info-row">期望: <strong>${(report.total_expected || 0).toLocaleString()}</strong> 条 · 实际: <strong>${(report.total_actual || 0).toLocaleString()}</strong> 条 · 缺失: <strong style="color:${report.total_missing ? '#f59e0b' : '#22c55e'}">${(report.total_missing || 0).toLocaleString()}</strong> 条</div>
-      </div>
-    </div>
-  `;
+  if (sortEl) {
+    sortEl.innerHTML = `<button class="btn-text btn-xs dc-sort-btn" id="btnDcReportSort">${_dcReportSortBy === 'date' ? '按日期' : '按缺失量'} ▾</button>`;
+    document.getElementById('btnDcReportSort').onclick = () => {
+      _dcReportSortBy = _dcReportSortBy === 'date' ? 'missing' : 'date';
+      renderDcReport(state.dcReport);
+    };
+  }
 
-  const missingDates = report.missing_by_date || [];
+  let html = `<div class="dc-report-conclusion ${health.cls}">最近 ${report.trade_days_checked || 0} 个交易日覆盖率 <strong>${pct.toFixed(1)}%</strong>，${report.total_missing ? '缺失 <strong>' + (report.total_missing).toLocaleString() + '</strong> 条' : '数据完整'}${pct < 90 ? '，建议执行全量补缺' : ''}</div>`;
+
+  html += `<div class="dc-report-metrics">
+    <div class="dc-rm"><span class="dc-rm-val">${(report.total_expected || 0).toLocaleString()}</span><span class="dc-rm-label">期望条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val">${(report.total_actual || 0).toLocaleString()}</span><span class="dc-rm-label">实际条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val ${report.total_missing ? 'warning' : 'success'}">${(report.total_missing || 0).toLocaleString()}</span><span class="dc-rm-label">缺失条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val">${checkTime}</span><span class="dc-rm-label">检查时间</span></div>
+  </div>`;
+
+  let missingDates = [...(report.missing_by_date || [])];
   if (missingDates.length > 0) {
-    html += `<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-top:4px">缺失日期明细 (${missingDates.length}天)</div>`;
+    if (_dcReportSortBy === 'missing') {
+      missingDates.sort((a, b) => (b.missing_count || 0) - (a.missing_count || 0));
+    }
+    html += `<div class="dc-missing-header">缺失日期 (${missingDates.length} 天)</div>`;
     html += '<div class="dc-missing-list">';
     for (const d of missingDates) {
       const barPct = d.coverage_pct || 0;
       const barColor = barPct >= 99 ? '#22c55e' : (barPct >= 90 ? '#f59e0b' : '#ef4444');
-      html += `
-        <div class="dc-missing-row">
+      html += `<div class="dc-missing-row">
           <span class="dc-missing-date">${d.date}</span>
-          <span class="dc-missing-count">缺${d.missing_count}</span>
+          <span class="dc-missing-count">缺 ${(d.missing_count || 0).toLocaleString()}</span>
           <div class="dc-missing-bar-wrap"><div class="dc-missing-bar-fill" style="width:${barPct}%;background:${barColor}"></div></div>
-          <span class="dc-missing-pct">${barPct.toFixed(1)}%</span>
+          <span class="dc-missing-pct">覆盖 ${barPct.toFixed(1)}%</span>
         </div>`;
     }
     html += '</div>';
@@ -652,7 +650,6 @@ function renderDcReport(report) {
     html += '<div style="color:#22c55e;font-size:13px;font-weight:600;padding:8px 0">数据完整，无缺失</div>';
   }
 
-  html += `<div class="dc-report-meta">状态: ${report.status} · 检查于 ${(report.check_time || '').replace('T', ' ')}</div>`;
   container.innerHTML = html;
 }
 
@@ -695,19 +692,33 @@ function renderDcTaskList(logs) {
     return;
   }
 
-  container.innerHTML = items.map(t => {
+  let html = `<div class="dc-task-header">
+    <span class="dc-th dc-th-status"></span>
+    <span class="dc-th dc-th-date">交易日</span>
+    <span class="dc-th dc-th-mode">触发</span>
+    <span class="dc-th dc-th-ok">成功</span>
+    <span class="dc-th dc-th-fail">失败</span>
+    <span class="dc-th dc-th-total">总数</span>
+    <span class="dc-th dc-th-time">时间</span>
+  </div>`;
+
+  html += items.map(t => {
     const time = (t.started_at || '').slice(11, 16);
-    const failInfo = t.status === 'failed' && t.message ? `<div class="dc-task-error" style="font-size:11px;color:var(--status-error);margin-top:4px;padding-left:18px">${esc(t.message)}</div>` : '';
-    return `
-      <div class="dc-task-item" style="flex-wrap:wrap">
-        <span class="status-dot status-dot--${t.status === 'success' ? 'success' : (t.status === 'running' ? 'warning' : (t.status === 'failed' ? 'error' : 'progress'))}"></span>
-        <span class="dc-task-date">${t.trade_date}</span>
-        <span class="dc-task-mode">${t.trigger_mode}</span>
-        <span class="dc-task-counts">${t.success_symbols || 0}✓ ${t.failed_symbols || 0}✗ / ${t.total_symbols || 0}</span>
-        <span class="dc-task-time">${time}</span>
-        ${failInfo}
+    const dotCls = t.status === 'success' ? 'success' : (t.status === 'running' ? 'warning' : (t.status === 'failed' ? 'error' : 'progress'));
+    const failRow = t.status === 'failed' && t.message ? `<div class="dc-task-error">${esc(t.message)}</div>` : '';
+    return `<div class="dc-task-item">
+        <span class="dc-td dc-th-status"><span class="status-dot status-dot--${dotCls}"></span></span>
+        <span class="dc-td dc-th-date">${t.trade_date}</span>
+        <span class="dc-td dc-th-mode">${t.trigger_mode}</span>
+        <span class="dc-td dc-th-ok success">${t.success_symbols || 0}</span>
+        <span class="dc-td dc-th-fail ${(t.failed_symbols || 0) > 0 ? 'error' : ''}">${t.failed_symbols || 0}</span>
+        <span class="dc-td dc-th-total">${t.total_symbols || 0}</span>
+        <span class="dc-td dc-th-time">${time}</span>
+        ${failRow}
       </div>`;
   }).join('');
+
+  container.innerHTML = html;
 
   const totalPages = Math.ceil((logs.total || 0) / 15);
   if (totalPages > 1) {

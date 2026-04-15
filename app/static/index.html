@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415n" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415o" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -86,26 +86,33 @@
 
         <!-- ========== 数据中心 ========== -->
         <section id="tab-data" class="tab-content">
-          <div id="dataSummary" class="page-summary"></div>
+          <!-- 告警条 -->
+          <div id="dcAlertBar" class="dc-alert-bar" style="display:none"></div>
 
-          <div class="dc-top-bar">
-            <div class="dc-sync-bar card-solid">
-              <span class="dc-sync-label">同步</span>
-              <button id="btnDcFullSync" class="btn-primary btn-sm">全量补缺</button>
-              <div class="dc-sync-divider"></div>
-              <input type="date" id="dcSyncDate" class="sync-date-input" />
-              <button id="btnDcIncrSync" class="btn-incremental btn-sm">增量同步</button>
-              <div class="dc-sync-divider"></div>
-              <button id="btnDcCheck" class="btn-secondary btn-sm">完整性检查</button>
-            </div>
-            <div class="dc-progress-section" id="dcProgressSection" style="display:none">
-              <div id="dcProgressText" class="dc-progress-text"></div>
-              <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
-            </div>
+          <!-- 概览层：健康 + 指标 -->
+          <div class="dc-overview">
+            <div id="dcHealthCard" class="dc-health-card"></div>
+            <div class="dc-kpi-row" id="dcKpiRow"></div>
           </div>
 
-          <div class="dc-stats-grid" id="dcStatsGrid"></div>
+          <!-- 操作层 -->
+          <div class="dc-action-bar card-solid">
+            <div class="dc-action-left">
+              <button id="btnDcFullSync" class="btn-primary btn-sm">全量补缺</button>
+              <span class="dc-action-sep"></span>
+              <input type="text" id="dcSyncDate" class="sync-date-input" placeholder="YYYY-MM-DD" maxlength="10" />
+              <button id="btnDcIncrSync" class="btn-outline btn-sm">增量同步</button>
+              <span class="dc-action-sep"></span>
+              <button id="btnDcCheck" class="btn-outline btn-sm">完整性检查</button>
+            </div>
+            <div id="dcSyncHint" class="dc-sync-hint"></div>
+          </div>
+          <div class="dc-progress-section" id="dcProgressSection" style="display:none">
+            <div id="dcProgressText" class="dc-progress-text"></div>
+            <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
+          </div>
 
+          <!-- 诊断层 -->
           <div class="dc-bottom-grid">
             <section class="dc-tasks card panel">
               <div class="panel-title-row">
@@ -118,6 +125,7 @@
             <section class="dc-report card panel">
               <div class="panel-title-row">
                 <h2>数据完整性</h2>
+                <span id="dcReportSort" class="dc-report-sort"></span>
               </div>
               <div id="dcReportContent" class="dc-report-content">
                 <div class="empty-state"><div class="empty-state-text">点击上方「完整性检查」生成报告</div></div>
@@ -407,6 +415,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415x"></script>
+  <script src="/static/app.js?v=20260415y"></script>
 </body>
 </html>
