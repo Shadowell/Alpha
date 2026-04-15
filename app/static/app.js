@@ -837,12 +837,12 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
         if (isPred) {
           html += `<div style="color:#facc15;margin-bottom:3px">── 预测 ──</div>`;
           html += `<div>开: ${fmtNum(k.open,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
-          html += `<div>低: ${fmtNum(k.low,2)} &nbsp; 收: ${fmtNum(k.close,2)}</div>`;
+          html += `<div>收: ${fmtNum(k.close,2)} &nbsp; 低: ${fmtNum(k.low,2)}</div>`;
           if (k.volume) html += `<div style="color:#94a3b8">量: ${(k.volume / 10000).toFixed(0)}万 (预)</div>`;
           if (rt) {
             html += `<div style="color:#38bdf8;margin:3px 0">── 实际 ──</div>`;
             html += `<div>开: ${fmtNum(rt.open,2)} &nbsp; 高: ${fmtNum(rt.high,2)}</div>`;
-            html += `<div>低: ${fmtNum(rt.low,2)} &nbsp; 收: ${fmtNum(rt.close,2)}</div>`;
+            html += `<div>收: ${fmtNum(rt.close,2)} &nbsp; 低: ${fmtNum(rt.low,2)}</div>`;
             if (rt.volume) html += `<div>量: ${(rt.volume / 10000).toFixed(0)}万</div>`;
             const diff = ((rt.close - k.close) / k.close * 100).toFixed(2);
             const diffColor = diff >= 0 ? '#ef4444' : '#16a34a';
@@ -850,7 +850,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
           }
         } else {
           html += `<div>开: ${fmtNum(k.open,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
-          html += `<div>低: ${fmtNum(k.low,2)} &nbsp; 收: ${fmtNum(k.close,2)}</div>`;
+          html += `<div>收: ${fmtNum(k.close,2)} &nbsp; 低: ${fmtNum(k.low,2)}</div>`;
           if (k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
         }
         return html;
@@ -1878,7 +1878,7 @@ function renderPredictChartFull(merged, predStartIdx) {
         const tag = isPred ? '<span style="color:#facc15">[预测]</span>' : '[历史]';
         let html = `<div style="font-weight:600;margin-bottom:4px">${k.date} ${tag}</div>`;
         html += `<div>开: ${fmtNum(k.open, 2)} &nbsp; 高: ${fmtNum(k.high, 2)}</div>`;
-        html += `<div>低: ${fmtNum(k.low, 2)} &nbsp; 收: ${fmtNum(k.close, 2)}</div>`;
+        html += `<div>收: ${fmtNum(k.close, 2)} &nbsp; 低: ${fmtNum(k.low, 2)}</div>`;
         if (!isPred && k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
         return html;
       }
