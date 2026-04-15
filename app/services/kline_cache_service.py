@@ -206,11 +206,13 @@ class KlineCacheService:
             trigger_mode=trigger_mode,
             total=total,
             label="补缺同步",
+            force_remote=True,
         )
         completed, success_count, failed_count = result
 
+        filled = self._count_filled(existing_pairs, missing_by_date)
         final_status = "success" if completed > 0 else "failed"
-        final_msg = f"补缺同步完成(缺失{total_missing}条)" if completed > 0 else "补缺同步失败"
+        final_msg = f"补缺同步完成(补入{filled}/{total_missing}条)" if completed > 0 else "补缺同步失败"
         self.store.finish_sync_task(
             task_id=task_id,
             status=final_status,
@@ -241,7 +243,8 @@ class KlineCacheService:
             "synced_symbols": success_count + failed_count,
             "success_symbols": success_count,
             "failed_symbols": failed_count,
-            "missing_filled": total_missing,
+            "missing_total": total_missing,
+            "missing_filled": filled,
             "elapsed_sec": round(pytime.time() - t0, 1),
         }
 
@@ -366,6 +369,7 @@ class KlineCacheService:
             trigger_mode=trigger_mode,
             total=total,
             label="增量补缺",
+            force_remote=True,
         )
         completed, success_count, failed_count = result
 
@@ -417,6 +421,7 @@ class KlineCacheService:
         trigger_mode: str,
         total: int,
         label: str = "同步",
+        force_remote: bool = False,
     ) -> tuple[int, int, int]:
         sem = asyncio.Semaphore(_CONCURRENCY)
         completed = 0
@@ -429,7 +434,7 @@ class KlineCacheService:
             nonlocal completed, success_count, failed_count
             async with sem:
                 t0 = pytime.time()
-                hist = await self.provider.get_hist(symbol, start_date, end_date)
+                hist = await self.provider.get_hist(symbol, start_date, end_date, force_remote=force_remote)
                 rows = self._normalize_hist(hist)
                 elapsed = int((pytime.time() - t0) * 1000)
 
@@ -673,6 +678,21 @@ class KlineCacheService:
             if code.startswith(("00", "30", "60", "68")):
                 symbols.append(code)
         return sorted(set(symbols))
+
+    def _count_filled(
+        self,
+        old_existing: set[tuple[str, str]],
+        missing_by_date: dict[str, list[str]],
+    ) -> int:
+        """补缺后复验：统计 missing_by_date 中实际被填上的条数。"""
+        check_dates = sorted(missing_by_date.keys())
+        new_existing = self.store.get_existing_pairs(check_dates)
+        filled = 0
+        for td, syms in missing_by_date.items():
+            for s in syms:
+                if (s, td) not in old_existing and (s, td) in new_existing:
+                    filled += 1
+        return filled
 
     @staticmethod
     def _normalize_hist(hist: pd.DataFrame) -> list[dict[str, Any]]:
