@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from dataclasses import asdict
 
 from app.models import MovePoolRequest, RecomputeRequest
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
@@ -437,14 +436,16 @@ async def paper_buy(req: dict):
         raise HTTPException(400, "当前非交易时段，无法模拟买入")
     symbol = normalize_symbol(req.get("symbol", ""))
     name = req.get("name", symbol)
-    price = float(req.get("price", 0))
     qty = int(req.get("qty", 100))
-    if not symbol or price <= 0:
-        raise HTTPException(400, "缺少 symbol 或 price")
+    if not symbol:
+        raise HTTPException(400, "缺少 symbol")
     if qty <= 0:
         qty = 100
+    price = await _get_realtime_price(symbol)
+    if price <= 0:
+        raise HTTPException(400, f"无法获取 {symbol} 实时价格")
     pos = paper_trading.open_position(symbol, name, price, qty, note=req.get("note", ""))
-    return {"success": True, "position": asdict(pos)}
+    return {"success": True, "position": pos, "realtime_price": price}
 
 
 @app.post("/api/paper/sell")
@@ -452,13 +453,19 @@ async def paper_sell(req: dict):
     if not _is_a_market_open():
         raise HTTPException(400, "当前非交易时段，无法模拟卖出")
     position_id = req.get("position_id", "")
-    price = float(req.get("price", 0))
-    if not position_id or price <= 0:
-        raise HTTPException(400, "缺少 position_id 或 price")
+    if not position_id:
+        raise HTTPException(400, "缺少 position_id")
+    opens = paper_trading.get_open_positions()
+    target = next((p for p in opens if p["id"] == position_id), None)
+    if not target:
+        raise HTTPException(404, "持仓不存在或已平仓")
+    price = await _get_realtime_price(target["symbol"])
+    if price <= 0:
+        raise HTTPException(400, f"无法获取 {target['symbol']} 实时价格")
     pos = paper_trading.close_position(position_id, price, note=req.get("note", ""))
     if not pos:
         raise HTTPException(404, "持仓不存在或已平仓")
-    return {"success": True, "position": asdict(pos)}
+    return {"success": True, "position": pos, "realtime_price": price}
 
 
 def _is_a_market_open() -> bool:
@@ -468,6 +475,18 @@ def _is_a_market_open() -> bool:
         return False
     t = now.hour * 60 + now.minute
     return (570 <= t < 690) or (780 <= t < 900)
+
+
+async def _get_realtime_price(symbol: str) -> float:
+    """从实时快照获取个股最新价，cache TTL 最短以保证时效。"""
+    df = await provider.get_realtime_snapshot(cache_ttl_seconds=5)
+    if df.empty:
+        return 0.0
+    match = df[df["代码"] == symbol]
+    if match.empty:
+        return 0.0
+    val = match.iloc[0].get("最新价", 0)
+    return float(val) if val else 0.0
 
 
 @app.get("/api/paper/positions")
