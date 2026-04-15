@@ -711,12 +711,12 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             "observations": daily.get("observations", {}),
         }
 
-    # ── 盘中监控 ──
+    # ── 智能监控 ──
 
     _monitor_running = False
 
     async def run_monitor_tick(self, trigger: str = "scheduled") -> dict:
-        """单次盘中监控：收集实时数据 → 调 LLM → 返回分析文本。"""
+        """单次智能监控：收集实时数据 → 调 LLM → 返回分析文本。"""
         if self._monitor_running:
             return {"success": False, "message": "监控任务正在执行中"}
         self._monitor_running = True
@@ -753,7 +753,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             content = await self._call_monitor_llm(system_prompt, user_prompt)
 
             if not content:
-                content = f"[{n.strftime('%H:%M')}] 盘中监控：LLM 未返回结果，请检查 API 配置。\n\n市场概况：\n{market_data.get('hot_concepts', '暂无')}"
+                content = f"[{n.strftime('%H:%M')}] 智能监控：LLM 未返回结果，请检查 API 配置。\n\n市场概况：\n{market_data.get('hot_concepts', '暂无')}"
 
             msg_id = self.memory.create_monitor_message(content, trigger)
             elapsed = int((time.time() - t0) * 1000)
@@ -768,7 +768,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             self._monitor_running = False
 
     async def _collect_monitor_data(self) -> dict:
-        """收集盘中监控所需的实时市场数据 + 漏斗池股票的 Kronos 预测。"""
+        """收集智能监控所需的实时市场数据 + 漏斗池股票的 Kronos 预测。"""
         data: dict[str, str] = {}
 
         try:
@@ -849,7 +849,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         return data
 
     async def _call_monitor_llm(self, system_prompt: str, user_prompt: str) -> str | None:
-        """调用 LLM 生成盘中监控报告。优先用本地 hermes CLI，其次 HTTP API。"""
+        """调用 LLM 生成智能监控报告。优先用本地 hermes CLI，其次 HTTP API。"""
         import shutil
 
         # 1) 本地 hermes CLI（通过 hermes chat -q 调用，使用其已配置的 LLM）
@@ -1027,7 +1027,7 @@ async def hermes_scheduler_loop(runtime: HermesRuntime) -> None:
 
 
 async def monitor_loop(runtime: HermesRuntime, hub: Any = None) -> None:
-    """盘中监控定时循环——独立于 hermes_scheduler_loop 运行。"""
+    """智能监控定时循环——独立于 hermes_scheduler_loop 运行。"""
     await asyncio.sleep(10)
     while True:
         try:

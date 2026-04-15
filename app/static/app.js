@@ -72,7 +72,7 @@ function setMeta() {
     const nf = state.noticeFunnel;
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${fmtDateTime(nf.updated_at)} · 打分源 ${nf.source}`;
   } else if (state.activeTab === 'agent') {
-    meta.textContent = '盘中智能监控 — 自动追踪市场主线 · 推送投研情报 · 产出优化提案';
+    meta.textContent = '智能监控 / 进化 — 自动追踪市场主线 · 推送投研情报 · 产出优化提案';
   } else if (state.activeTab === 'paper') {
     const ts = state.paperUpdatedAt || '--';
     meta.textContent = `模拟账户 · 初始资金 ¥1,000,000 · 更新 ${ts}`;
@@ -230,7 +230,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '盘中智能监控', paper: '模拟盘' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '智能监控 / 进化', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -1749,7 +1749,7 @@ async function rejectProposal(id) {
   }
 }
 
-/* ==================== 盘中监控 ==================== */
+/* ==================== 智能监控 ==================== */
 
 async function loadMonitorConfig() {
   try {
@@ -2346,7 +2346,7 @@ function connectWs() {
           trigger: msg.data.trigger || 'scheduled',
         });
         if (state.activeTab === 'agent') {
-          setStatus('收到盘中监控推送', 'success');
+          setStatus('收到智能监控推送', 'success');
         }
       }
     } catch (err) {
@@ -2596,7 +2596,7 @@ async function init() {
     }
   };
 
-  // ── 盘中监控按钮绑定 ──
+  // ── 智能监控按钮绑定 ──
   document.getElementById('btnMonitorToggle').onclick = async () => {
     const btn = document.getElementById('btnMonitorToggle');
     const isOn = state.monitorConfig && state.monitorConfig.enabled;
@@ -2606,7 +2606,7 @@ async function init() {
         await request('/api/agent/monitor/stop', { method: 'POST' });
         state.monitorConfig.enabled = false;
         _updateMonitorStatusUI(false);
-        setStatus('盘中监控已停止', 'success');
+        setStatus('智能监控已停止', 'success');
       } catch (err) { setStatus(`停止失败: ${err.message}`, 'error'); }
       finally { _btnEnd(btn); }
     } else {
@@ -2619,7 +2619,7 @@ async function init() {
         });
         state.monitorConfig = result;
         _updateMonitorStatusUI(true);
-        setStatus(`盘中监控已启动，每 ${interval} 分钟推送`, 'success');
+        setStatus(`智能监控已启动，每 ${interval} 分钟推送`, 'success');
       } catch (err) { setStatus(`启动失败: ${err.message}`, 'error'); }
       finally { _btnEnd(btn); }
     }
@@ -2628,11 +2628,11 @@ async function init() {
   document.getElementById('btnMonitorTrigger').onclick = async () => {
     const btn = document.getElementById('btnMonitorTrigger');
     _btnStart(btn, '分析中...');
-    setStatus('盘中监控手动触发中，请稍候...', 'info');
+    setStatus('智能监控手动触发中，请稍候...', 'info');
     try {
       const result = await request('/api/agent/monitor/trigger', { method: 'POST' });
       if (result.success) {
-        setStatus(`盘中监控完成 (${result.elapsed_ms || 0}ms)`, 'success');
+        setStatus(`智能监控完成 (${result.elapsed_ms || 0}ms)`, 'success');
       } else {
         setStatus(`监控执行失败: ${result.message || ''}`, 'error');
       }
