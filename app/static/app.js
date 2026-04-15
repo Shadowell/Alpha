@@ -26,6 +26,13 @@ function fmtNum(v, digits = 2) {
   return Number.isFinite(n) ? n.toFixed(digits) : '0.00';
 }
 
+function _scrollToRightPanel() {
+  setTimeout(() => {
+    const rp = document.querySelector('.right-panel');
+    if (rp) rp.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 200);
+}
+
 function setMeta() {
   const meta = document.getElementById('meta');
   if (state.activeTab === 'market') {
@@ -121,17 +128,26 @@ function renderFunnelSummary() {
 }
 
 function renderNoticeSummaryBar() {
+  _renderNoticeSummaryBarFiltered(null);
+}
+
+function _renderNoticeSummaryBarFiltered(filteredPools) {
   const el = document.getElementById('noticeSummaryBar');
   if (!el) return;
   if (!state.noticeFunnel) { el.innerHTML = ''; return; }
   const nf = state.noticeFunnel;
   const kwList = state.activeKeywords.size > 0 ? [...state.activeKeywords].join(' + ') : '全部';
+  const candCount = filteredPools ? filteredPools.candidate.length : nf.stats.candidate;
+  const buyCount = filteredPools ? filteredPools.buy.length : nf.stats.buy;
+  const totalOrig = nf.stats.candidate + nf.stats.focus + nf.stats.buy;
+  const totalFiltered = filteredPools ? (filteredPools.candidate.length + filteredPools.focus.length + filteredPools.buy.length) : totalOrig;
+  const filterHint = (state.activeKeywords.size > 0 && totalFiltered !== totalOrig) ? ` (${totalFiltered}/${totalOrig})` : '';
   el.innerHTML = [
-    _psItem('已筛选', kwList, 'brand'),
+    _psItem('关键词', kwList + filterHint, 'brand'),
     _psSep(),
-    _psItem('候选', nf.stats.candidate + '条'),
+    _psItem('候选', candCount + '条'),
     _psSep(),
-    _psItem('买入池', nf.stats.buy + '只', 'success'),
+    _psItem('买入池', buyCount + '只', 'success'),
     _psSep(),
     _psItem('打分源', nf.source || '--'),
   ].join('');
@@ -787,6 +803,7 @@ async function selectSymbol(symbol) {
     const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
     renderStockSummary(detail);
     renderKlineChart(detail.kline || []);
+    _scrollToRightPanel();
     setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
     _fetchAndRenderFunnelPredict(symbol, detail.name);
   } catch (err) {
@@ -873,6 +890,16 @@ async function loadNoticeKeywords() {
   renderKeywordTags();
 }
 
+function _passNoticeKeywordFilter(stock) {
+  if (!state.activeKeywords.size) return true;
+  const reason = (stock.reason || '').toLowerCase();
+  const title = (stock.title || '').toLowerCase();
+  for (const kw of state.activeKeywords) {
+    if (reason.includes(kw.toLowerCase()) || title.includes(kw.toLowerCase())) return true;
+  }
+  return false;
+}
+
 function renderKeywordTags() {
   const container = document.getElementById('keywordTags');
   if (!container) return;
@@ -888,6 +915,7 @@ function renderKeywordTags() {
         state.activeKeywords.add(kw.tag);
       }
       renderKeywordTags();
+      renderNoticeFunnel();
     };
     container.appendChild(tag);
   });
@@ -952,17 +980,26 @@ function renderNoticePool(poolName, list) {
     });
     root.appendChild(card);
   });
-  if (!list.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚未运行公告筛选</div></div>';
+  if (!list.length) {
+    const hint = state.activeKeywords.size > 0 ? '当前关键词下无匹配公告' : '尚未运行公告筛选';
+    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
+  }
 }
 
 function renderNoticeFunnel() {
   if (!state.noticeFunnel) return;
-  renderNoticeCounts();
-  renderNoticePool('candidate', state.noticeFunnel.pools.candidate || []);
-  renderNoticePool('focus', state.noticeFunnel.pools.focus || []);
-  renderNoticePool('buy', state.noticeFunnel.pools.buy || []);
+  const filteredPools = {};
+  for (const poolName of ['candidate', 'focus', 'buy']) {
+    filteredPools[poolName] = (state.noticeFunnel.pools[poolName] || []).filter(_passNoticeKeywordFilter);
+  }
+  document.getElementById('notice-count-candidate').textContent = filteredPools.candidate.length;
+  document.getElementById('notice-count-focus').textContent = filteredPools.focus.length;
+  document.getElementById('notice-count-buy').textContent = filteredPools.buy.length;
+  renderNoticePool('candidate', filteredPools.candidate);
+  renderNoticePool('focus', filteredPools.focus);
+  renderNoticePool('buy', filteredPools.buy);
   renderNoticeMeta();
-  renderNoticeSummaryBar();
+  _renderNoticeSummaryBarFiltered(filteredPools);
   if (state.activeTab === 'notice') setMeta();
 }
 
@@ -1002,6 +1039,7 @@ async function selectNoticeSymbol(symbol) {
       setStatus(`${detail.name} 暂无K线缓存`, 'info');
     }
     _fetchAndRenderNoticePredict(symbol, detail.name);
+    _scrollToRightPanel();
   } catch (err) {
     document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
     renderChartPlaceholder(`加载失败: ${err.message}`);
