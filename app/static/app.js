@@ -1322,6 +1322,13 @@ function renderPaperSummary(s) {
   rpnl.className = 'paper-stat-value ' + (s.total_realized_pnl >= 0 ? 'up' : 'down');
   document.getElementById('paperWinRate').textContent = `${fmtNum(s.win_rate, 1)}%`;
   document.getElementById('paperWinLose').textContent = `${s.win_count || 0}/${s.lose_count || 0}`;
+  document.getElementById('paperTotalFee').textContent = `¥${fmtNum(s.total_fee || 0, 2)}`;
+  if (s.settings) {
+    document.getElementById('psCommission').value = s.settings.commission_rate;
+    document.getElementById('psMinComm').value = s.settings.min_commission;
+    document.getElementById('psStampTax').value = s.settings.stamp_tax_rate;
+    document.getElementById('psSlippage').value = s.settings.slippage_rate;
+  }
 }
 
 function renderPaperPositions(positions) {
@@ -2035,6 +2042,28 @@ async function init() {
   setInterval(_updateMarketStatus, 30000);
 
   document.getElementById('btnPaperRefresh').onclick = () => loadPaperData();
+  document.getElementById('btnPaperSettings').onclick = () => {
+    const panel = document.getElementById('paperSettingsPanel');
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  };
+  document.getElementById('btnPaperSettingsSave').onclick = async () => {
+    try {
+      await request('/api/paper/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          commission_rate: parseFloat(document.getElementById('psCommission').value),
+          min_commission: parseFloat(document.getElementById('psMinComm').value),
+          stamp_tax_rate: parseFloat(document.getElementById('psStampTax').value),
+          slippage_rate: parseFloat(document.getElementById('psSlippage').value),
+        }),
+      });
+      setStatus('费用设置已保存', 'success');
+      document.getElementById('paperSettingsPanel').style.display = 'none';
+      loadPaperData();
+    } catch (err) {
+      setStatus(`保存失败: ${err.message}`, 'error');
+    }
+  };
   document.getElementById('btnMonitorKlineClose').onclick = () => {
     document.getElementById('monitorKlineSection').style.display = 'none';
     if (state.monitorKlineChart) { state.monitorKlineChart.dispose(); state.monitorKlineChart = null; }
@@ -2270,11 +2299,32 @@ async function init() {
       try { await loadDataCenter(); } catch (_) {}
     }, 3000);
   }
+
+  let _marketPollTimer = null;
+  function startMarketPolling() {
+    if (_marketPollTimer) return;
+    _marketPollTimer = setInterval(async () => {
+      if (state.activeTab !== 'market') { clearInterval(_marketPollTimer); _marketPollTimer = null; return; }
+      try {
+        const [hc, hs] = await Promise.allSettled([
+          request('/api/market/hot-concepts'),
+          request('/api/market/hot-stocks'),
+        ]);
+        if (hc.status === 'fulfilled') state.hotConcepts = hc.value;
+        if (hs.status === 'fulfilled') state.hotStocks = hs.value;
+        renderHotConcepts();
+        renderHotStocks();
+      } catch (_) {}
+    }, 10000);
+  }
+
   const _origSwitchTab = switchTab;
   switchTab = function(tab) {
     _origSwitchTab(tab);
     if (tab === 'data') startDcPolling();
+    if (tab === 'market') startMarketPolling();
   };
+  if (state.activeTab === 'market') startMarketPolling();
 }
 
 init().catch((err) => {

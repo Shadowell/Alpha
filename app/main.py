@@ -494,6 +494,17 @@ async def paper_trades(limit: int = 100):
     return {"trades": paper_trading.get_trades(limit)}
 
 
+@app.get("/api/paper/settings")
+async def paper_settings_get():
+    return paper_trading.get_settings()
+
+
+@app.post("/api/paper/settings")
+async def paper_settings_post(req: dict):
+    paper_trading.update_settings(**req)
+    return paper_trading.get_settings()
+
+
 @app.websocket("/ws/realtime")
 async def realtime_socket(websocket: WebSocket):
     await hub.connect(websocket)
