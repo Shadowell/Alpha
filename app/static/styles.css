@@ -622,6 +622,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── Responsive ── */
 @media (max-width: 1280px) {
   .layout, .layout.two-col { grid-template-columns: 1fr; }
+  .layout.two-col .right-panel { margin-top: 8px; }
   .market-split { grid-template-columns: 1fr; }
   .market-split-left { max-height: none; }
   .funnel-grid { min-height: auto; }
