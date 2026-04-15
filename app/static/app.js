@@ -1738,8 +1738,8 @@ function _renderMonitorCard(msg) {
       <span class="monitor-msg-time">${time}</span>
       <span class="monitor-msg-trigger">${triggerLabel}</span>
     </div>
-    <div class="mtheme-grid">${themesHtml}</div>
     ${summaryHtml}
+    <div class="mtheme-grid">${themesHtml}</div>
   </div>`;
 }
 
