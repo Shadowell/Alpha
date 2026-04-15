@@ -2410,9 +2410,13 @@ async function init() {
 
   _initHoverKlinePopupEvents();
 
-  const dcSyncDate = document.getElementById('dcSyncDate');
+  const dcStart = document.getElementById('dcSyncStart');
+  const dcEnd = document.getElementById('dcSyncEnd');
+  const _fmtDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const today = new Date();
-  dcSyncDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  dcEnd.value = _fmtDate(today);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+  dcStart.value = _fmtDate(weekAgo);
 
   document.getElementById('btnDcFullSync').onclick = async () => {
     const btn = document.getElementById('btnDcFullSync');
@@ -2433,15 +2437,38 @@ async function init() {
     }
   };
 
+  function _tradeDatesBetween(start, end) {
+    const dates = [];
+    const cur = new Date(start + 'T00:00:00');
+    const last = new Date(end + 'T00:00:00');
+    while (cur <= last) {
+      const day = cur.getDay();
+      if (day !== 0 && day !== 6) dates.push(_fmtDate(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return dates;
+  }
+
   document.getElementById('btnDcIncrSync').onclick = async () => {
     const btn = document.getElementById('btnDcIncrSync');
-    const dateVal = dcSyncDate.value;
-    if (!dateVal) { setStatus('请选择同步日期', 'error'); return; }
-    _btnStart(btn, '同步中...');
-    setStatus(`增量同步 ${dateVal} 执行中...`, 'info');
+    const startVal = dcStart.value;
+    const endVal = dcEnd.value;
+    if (!startVal || !endVal) { setStatus('请选择起止日期', 'error'); return; }
+    if (startVal > endVal) { setStatus('开始日期不能晚于结束日期', 'error'); return; }
+    const dates = _tradeDatesBetween(startVal, endVal);
+    if (!dates.length) { setStatus('所选范围内无交易日', 'error'); return; }
+    _btnStart(btn, `同步 0/${dates.length}`);
+    setStatus(`增量同步 ${startVal} ~ ${endVal} (${dates.length}天) 执行中...`, 'info');
+    let ok = 0, fail = 0;
     try {
-      const payload = await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dateVal}&trigger_mode=manual`, { method: 'POST' });
-      setStatus(`增量同步完成: ${dateVal} · ${payload.symbol_count || 0}/${payload.total_symbols || 0}`, 'success');
+      for (let i = 0; i < dates.length; i++) {
+        try {
+          await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dates[i]}&trigger_mode=manual`, { method: 'POST' });
+          ok++;
+        } catch { fail++; }
+        btn.textContent = `同步 ${i + 1}/${dates.length}`;
+      }
+      setStatus(`增量同步完成: ${startVal}~${endVal} · 成功${ok}天 / 失败${fail}天`, ok > 0 ? 'success' : 'error');
       await loadDataCenter();
     } catch (err) {
       setStatus(`增量同步失败: ${err.message}`, 'error');
