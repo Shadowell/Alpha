@@ -773,14 +773,13 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
   const candles = merged.map((x, i) => {
     const val = [x.open, x.close, x.low, x.high];
     if (i >= predStartIdx) {
-      const isUp = x.close >= x.open;
       return {
         value: val,
         itemStyle: {
           color: 'transparent',
           color0: 'transparent',
-          borderColor: isUp ? 'rgba(239,68,68,0.8)' : 'rgba(22,163,106,0.8)',
-          borderColor0: isUp ? 'rgba(239,68,68,0.8)' : 'rgba(22,163,106,0.8)',
+          borderColor: 'rgba(148,163,184,0.6)',
+          borderColor0: 'rgba(148,163,184,0.6)',
           borderWidth: 1.5,
           borderType: 'dashed',
         },
@@ -799,7 +798,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
     if (i >= predStartIdx) {
       const rt = realtimeMap[dates[i]];
       if (rt && rt.volume) return [i, rt.volume, rt.close >= rt.open ? 1 : -1];
-      return [i, 0, 0];
+      return [i, x.volume || 0, 2];
     }
     return [i, x.volume, x.close >= x.open ? 1 : -1];
   });
@@ -839,6 +838,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
           html += `<div style="color:#facc15;margin-bottom:3px">── 预测 ──</div>`;
           html += `<div>开: ${fmtNum(k.open,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
           html += `<div>低: ${fmtNum(k.low,2)} &nbsp; 收: ${fmtNum(k.close,2)}</div>`;
+          if (k.volume) html += `<div style="color:#94a3b8">量: ${(k.volume / 10000).toFixed(0)}万 (预)</div>`;
           if (rt) {
             html += `<div style="color:#38bdf8;margin:3px 0">── 实际 ──</div>`;
             html += `<div>开: ${fmtNum(rt.open,2)} &nbsp; 高: ${fmtNum(rt.high,2)}</div>`;
@@ -885,7 +885,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
       { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fbbf24' }, connectNulls: false },
       { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
       { name: 'MA30', type: 'line', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#a78bfa' }, connectNulls: false },
-      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => { const flag = p.data[2]; if (flag === 2) return 'rgba(148,163,184,0.35)'; return flag > 0 ? '#ef4444' : '#16a34a'; } } },
     ],
   };
 }
