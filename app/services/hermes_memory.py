@@ -85,6 +85,22 @@ class HermesMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_outcome_tracking_status ON agent_outcome_tracking(status);
                 CREATE INDEX IF NOT EXISTS idx_outcome_tracking_date ON agent_outcome_tracking(check_date);
+
+                CREATE TABLE IF NOT EXISTS agent_monitor_config (
+                    id                INTEGER PRIMARY KEY CHECK (id = 1),
+                    system_prompt     TEXT NOT NULL,
+                    interval_minutes  INTEGER NOT NULL DEFAULT 10,
+                    enabled           INTEGER NOT NULL DEFAULT 0,
+                    updated_at        TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_monitor_messages (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content     TEXT NOT NULL,
+                    trigger     TEXT NOT NULL DEFAULT 'scheduled',
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_monitor_messages_created ON agent_monitor_messages(created_at);
                 """
             )
 
@@ -234,6 +250,96 @@ class HermesMemory:
                 "SELECT * FROM agent_feedback WHERE proposal_id=? ORDER BY id", (proposal_id,)
             ).fetchall()
             return [_row_to_dict(r) for r in rows]
+
+    # ── agent_monitor_config ──
+
+    _DEFAULT_MONITOR_PROMPT = """你是A股盘中机会监控雷达。请根据提供的实时市场数据，输出盘中机会分析报告。
+
+## 输出格式要求
+按概念/主线分组，每组包含：
+1. **触发消息（事实）** — 具体时间、来源、内容
+2. **逻辑链（判断）** — 为什么这是机会
+3. **关注个股（主板）** — 代码 + 名称 + 简要理由
+4. **失效条件/主要风险**
+5. **【稳健视角】** 和 **【激进视角】**
+
+## 约束
+- 仅保留沪深主板标的，剔除创业板/科创板/北交所
+- 机会按等级排序（高→中高→中）
+- 末尾附「10分钟内执行摘要」：最高优先级 + 需继续跟踪的信号
+- 末尾加「仅供信息参考，不构成投资建议。」"""
+
+    def get_monitor_config(self) -> dict:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM agent_monitor_config WHERE id=1").fetchone()
+            if row:
+                return dict(row)
+            return {
+                "id": 1,
+                "system_prompt": self._DEFAULT_MONITOR_PROMPT,
+                "interval_minutes": 10,
+                "enabled": 0,
+                "updated_at": None,
+            }
+
+    def save_monitor_config(
+        self,
+        system_prompt: str | None = None,
+        interval_minutes: int | None = None,
+        enabled: bool | None = None,
+    ) -> dict:
+        current = self.get_monitor_config()
+        prompt = system_prompt if system_prompt is not None else current["system_prompt"]
+        interval = interval_minutes if interval_minutes is not None else current["interval_minutes"]
+        ena = (1 if enabled else 0) if enabled is not None else current["enabled"]
+        ts = now_cn().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO agent_monitor_config(id, system_prompt, interval_minutes, enabled, updated_at)
+                   VALUES (1, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     system_prompt=excluded.system_prompt,
+                     interval_minutes=excluded.interval_minutes,
+                     enabled=excluded.enabled,
+                     updated_at=excluded.updated_at""",
+                (prompt, interval, ena, ts),
+            )
+            conn.commit()
+        return self.get_monitor_config()
+
+    # ── agent_monitor_messages ──
+
+    def create_monitor_message(self, content: str, trigger: str = "scheduled") -> int:
+        ts = now_cn().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO agent_monitor_messages(content, trigger, created_at) VALUES (?, ?, ?)",
+                (content, trigger, ts),
+            )
+            conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def list_monitor_messages(self, limit: int = 50, offset: int = 0, today_only: bool = True) -> tuple[list[dict], int]:
+        where = ""
+        params: list[Any] = []
+        if today_only:
+            today = now_cn().date().isoformat()
+            where = "WHERE created_at >= ?"
+            params.append(today)
+        with self._connect() as conn:
+            total = conn.execute(f"SELECT COUNT(*) FROM agent_monitor_messages {where}", params).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * FROM agent_monitor_messages {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+            return [dict(r) for r in rows], total
+
+    def get_latest_monitor_message(self) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_monitor_messages ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
 
     # ── agent_outcome_tracking ──
 

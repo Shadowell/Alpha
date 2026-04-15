@@ -19,6 +19,8 @@ const state = {
   dcReport: null,
   dcTaskFilter: 'all',
   dcLogsExpanded: false,
+  monitorConfig: null,
+  monitorMessages: [],
 };
 
 function fmtNum(v, digits = 2) {
@@ -1122,7 +1124,7 @@ async function reload() {
 /* ==================== Hermes Agent ==================== */
 
 async function loadAgentData() {
-  await Promise.all([loadAgentStatus(), loadAgentProposals(), loadAgentTasks()]);
+  await Promise.all([loadAgentStatus(), loadAgentProposals(), loadAgentTasks(), loadMonitorConfig(), loadMonitorMessages()]);
 }
 
 async function loadAgentStatus() {
@@ -1268,6 +1270,86 @@ async function rejectProposal(id) {
   } catch (err) {
     setStatus(`驳回失败: ${err.message}`, 'error');
   }
+}
+
+/* ==================== 盘中监控 ==================== */
+
+async function loadMonitorConfig() {
+  try {
+    const config = await request('/api/agent/monitor/config');
+    state.monitorConfig = config;
+    const intervalSel = document.getElementById('monitorInterval');
+    if (intervalSel) intervalSel.value = String(config.interval_minutes || 10);
+    const promptEl = document.getElementById('monitorPrompt');
+    if (promptEl) promptEl.value = config.system_prompt || '';
+    _updateMonitorStatusUI(!!config.enabled);
+  } catch (_) {}
+}
+
+async function loadMonitorMessages() {
+  try {
+    const data = await request('/api/agent/monitor/messages?limit=50&today_only=true');
+    state.monitorMessages = data.items || [];
+    renderMonitorFeed();
+  } catch (_) {}
+}
+
+function _updateMonitorStatusUI(enabled) {
+  const badge = document.getElementById('monitorStatus');
+  const btn = document.getElementById('btnMonitorToggle');
+  if (badge) {
+    badge.textContent = enabled ? '运行中' : '已停止';
+    badge.className = 'monitor-status-badge ' + (enabled ? 'on' : 'off');
+  }
+  if (btn) btn.textContent = enabled ? '停止监控' : '启动监控';
+}
+
+function renderMonitorFeed() {
+  const container = document.getElementById('monitorFeed');
+  const countEl = document.getElementById('monitorMsgCount');
+  if (!container) return;
+  const msgs = state.monitorMessages;
+  if (countEl) countEl.textContent = msgs.length;
+  if (!msgs.length) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无推送消息，启动监控或手动触发</div></div>';
+    return;
+  }
+  container.innerHTML = msgs.map(m => _renderMonitorCard(m)).join('');
+}
+
+function _renderMonitorCard(msg) {
+  const time = (msg.created_at || '').slice(11, 16) || '--:--';
+  const triggerLabel = msg.trigger === 'manual' ? '手动' : '定时';
+  const content = _formatMonitorContent(msg.content || '');
+  return `<div class="monitor-msg-card">
+    <div class="monitor-msg-header">
+      <span class="monitor-msg-time">${time}</span>
+      <span class="monitor-msg-trigger">${triggerLabel}</span>
+    </div>
+    <div class="monitor-msg-body">${content}</div>
+  </div>`;
+}
+
+function _formatMonitorContent(text) {
+  let html = esc(text);
+  html = html.replace(/^(#{1,3})\s+(.+)$/gm, (_, hashes, title) => {
+    const level = hashes.length;
+    return `<h${level + 2} class="monitor-heading">${title}</h${level + 2}>`;
+  });
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/^(\d+)\)\s+(.+)$/gm, '<div class="monitor-topic"><span class="monitor-topic-num">$1</span> $2</div>');
+  html = html.replace(/^([A-Za-z0-9]{6})\s+(.+?)[:：](.+)$/gm, '<div class="monitor-stock"><code>$1</code> <b>$2</b>：$3</div>');
+  html = html.replace(/【(.+?)】/g, '<span class="monitor-tag">$1</span>');
+  html = html.replace(/（机会等级[：:](.+?)）/g, '<span class="monitor-level">$1</span>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function _appendMonitorMessage(msg) {
+  state.monitorMessages.unshift(msg);
+  renderMonitorFeed();
+  const feed = document.getElementById('monitorFeed');
+  if (feed) feed.scrollTop = 0;
 }
 
 /* ==================== Kronos 预测弹窗 ==================== */
@@ -1489,13 +1571,24 @@ function connectWs() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
-      if (msg.event !== 'snapshot') return;
-      state.funnel = msg.data.funnel;
-      state.hotConcepts = msg.data.hot_concepts;
-      state.hotStocks = msg.data.hot_stocks || state.hotStocks;
-      renderHotConcepts();
-      renderHotStocks();
-      renderFunnel();
+      if (msg.event === 'snapshot') {
+        state.funnel = msg.data.funnel;
+        state.hotConcepts = msg.data.hot_concepts;
+        state.hotStocks = msg.data.hot_stocks || state.hotStocks;
+        renderHotConcepts();
+        renderHotStocks();
+        renderFunnel();
+      } else if (msg.event === 'monitor_update') {
+        _appendMonitorMessage({
+          id: msg.data.message_id,
+          content: msg.data.content,
+          created_at: msg.data.created_at,
+          trigger: msg.data.trigger || 'scheduled',
+        });
+        if (state.activeTab === 'agent') {
+          setStatus('收到盘中监控推送', 'success');
+        }
+      }
     } catch (err) {
       console.error('ws parse error', err);
     }
@@ -1673,6 +1766,99 @@ async function init() {
     } finally {
       _btnEnd(btn);
     }
+  };
+
+  // ── 盘中监控按钮绑定 ──
+  document.getElementById('btnMonitorToggle').onclick = async () => {
+    const btn = document.getElementById('btnMonitorToggle');
+    const isOn = state.monitorConfig && state.monitorConfig.enabled;
+    if (isOn) {
+      _btnStart(btn, '停止中...');
+      try {
+        await request('/api/agent/monitor/stop', { method: 'POST' });
+        state.monitorConfig.enabled = 0;
+        _updateMonitorStatusUI(false);
+        setStatus('盘中监控已停止', 'success');
+      } catch (err) { setStatus(`停止失败: ${err.message}`, 'error'); }
+      finally { _btnEnd(btn); }
+    } else {
+      _btnStart(btn, '启动中...');
+      try {
+        const interval = parseInt(document.getElementById('monitorInterval').value) || 10;
+        const result = await request('/api/agent/monitor/config', {
+          method: 'POST',
+          body: JSON.stringify({ enabled: true, interval_minutes: interval }),
+        });
+        state.monitorConfig = result;
+        _updateMonitorStatusUI(true);
+        setStatus(`盘中监控已启动，每 ${interval} 分钟推送`, 'success');
+      } catch (err) { setStatus(`启动失败: ${err.message}`, 'error'); }
+      finally { _btnEnd(btn); }
+    }
+  };
+
+  document.getElementById('btnMonitorTrigger').onclick = async () => {
+    const btn = document.getElementById('btnMonitorTrigger');
+    _btnStart(btn, '分析中...');
+    setStatus('盘中监控手动触发中，请稍候...', 'info');
+    try {
+      const result = await request('/api/agent/monitor/trigger', { method: 'POST' });
+      if (result.success) {
+        setStatus(`盘中监控完成 (${result.elapsed_ms || 0}ms)`, 'success');
+      } else {
+        setStatus(`监控执行失败: ${result.message || ''}`, 'error');
+      }
+    } catch (err) {
+      setStatus(`手动触发失败: ${err.message}`, 'error');
+    } finally { _btnEnd(btn); }
+  };
+
+  document.getElementById('btnMonitorPromptToggle').onclick = () => {
+    const wrap = document.getElementById('monitorPromptWrap');
+    const btn = document.getElementById('btnMonitorPromptToggle');
+    if (wrap.style.display === 'none') {
+      wrap.style.display = 'block';
+      btn.textContent = '收起';
+    } else {
+      wrap.style.display = 'none';
+      btn.textContent = '展开编辑';
+    }
+  };
+
+  document.getElementById('btnMonitorPromptSave').onclick = async () => {
+    const btn = document.getElementById('btnMonitorPromptSave');
+    const prompt = document.getElementById('monitorPrompt').value.trim();
+    if (!prompt) { setStatus('提示词不能为空', 'error'); return; }
+    _btnStart(btn, '保存中...');
+    try {
+      const result = await request('/api/agent/monitor/config', {
+        method: 'POST', body: JSON.stringify({ system_prompt: prompt }),
+      });
+      state.monitorConfig = result;
+      setStatus('提示词已保存', 'success');
+    } catch (err) { setStatus(`保存失败: ${err.message}`, 'error'); }
+    finally { _btnEnd(btn); }
+  };
+
+  document.getElementById('btnMonitorPromptReset').onclick = async () => {
+    try {
+      const result = await request('/api/agent/monitor/config', {
+        method: 'POST', body: JSON.stringify({ system_prompt: null }),
+      });
+      state.monitorConfig = result;
+      document.getElementById('monitorPrompt').value = result.system_prompt || '';
+      setStatus('提示词已恢复默认', 'success');
+    } catch (err) { setStatus(`恢复失败: ${err.message}`, 'error'); }
+  };
+
+  document.getElementById('monitorInterval').onchange = async () => {
+    const interval = parseInt(document.getElementById('monitorInterval').value) || 10;
+    try {
+      const result = await request('/api/agent/monitor/config', {
+        method: 'POST', body: JSON.stringify({ interval_minutes: interval }),
+      });
+      state.monitorConfig = result;
+    } catch (_) {}
   };
 
   const urlTab = new URLSearchParams(window.location.search).get('tab');
