@@ -469,8 +469,8 @@ async def paper_sell(req: dict):
 
 
 def _is_a_market_open() -> bool:
-    from datetime import datetime
-    now = datetime.now()
+    from app.services.time_utils import now_cn
+    now = now_cn()
     if now.weekday() >= 5:
         return False
     t = now.hour * 60 + now.minute
@@ -560,5 +560,6 @@ async def realtime_socket(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         hub.disconnect(websocket)
-    except Exception:
+    except Exception as exc:
+        print(f"[ws] error: {exc}")
         hub.disconnect(websocket)
