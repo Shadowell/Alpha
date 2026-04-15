@@ -241,7 +241,7 @@ function switchTab(tab) {
     el.classList.toggle('active', el.id === `tab-${tab}`);
   });
   const noticeCard = document.getElementById('noticeDetailCard');
-  noticeCard.style.display = tab === 'notice' ? '' : 'none';
+  if (noticeCard) noticeCard.style.display = tab === 'notice' ? '' : 'none';
   const rightPanel = document.querySelector('.right-panel');
   const layout = document.querySelector('.layout');
   const twoCol = tab === 'funnel' || tab === 'notice';
@@ -249,7 +249,8 @@ function switchTab(tab) {
   if (layout) layout.classList.toggle('two-col', twoCol);
   if (twoCol) {
     renderChartPlaceholder('点击左侧股票查看');
-    document.getElementById('stockSummary').textContent = '点击左侧股票查看';
+    const stockSummary = document.getElementById('stockSummary');
+    if (stockSummary) stockSummary.textContent = '点击左侧股票查看';
   }
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
@@ -615,7 +616,7 @@ function renderDcReport(report) {
   const checkTime = (report.check_time || '').slice(0, 19).replace('T', ' ');
 
   if (sortEl) {
-    sortEl.innerHTML = `<button class="btn-text btn-xs dc-sort-btn" id="btnDcReportSort">${_dcReportSortBy === 'date' ? '按日期' : '按缺失量'} ▾</button>`;
+    sortEl.innerHTML = `<button class="text-btn text-btn-sm dc-sort-btn" id="btnDcReportSort">${_dcReportSortBy === 'date' ? '按日期' : '按缺失量'} ▾</button>`;
     document.getElementById('btnDcReportSort').onclick = () => {
       _dcReportSortBy = _dcReportSortBy === 'date' ? 'missing' : 'date';
       renderDcReport(state.dcReport);
@@ -1056,7 +1057,7 @@ async function _fetchRealtimeMap(symbol, predictedDates) {
   if (!predictedDates || !predictedDates.length) return {};
   try {
     const rt = await request(`/api/stock/${symbol}/realtime`);
-    if (!rt || !rt.found || !rt.open) return {};
+    if (!rt || !rt.found) return {};
     const map = {};
     if (predictedDates.includes(rt.date)) {
       map[rt.date] = { open: rt.open, high: rt.high, low: rt.low, close: rt.close, volume: rt.volume, amount: rt.amount };
@@ -1338,6 +1339,7 @@ async function reloadFunnel() {
   renderHotConcepts();
   renderHotStocks();
   renderFunnel();
+  setMeta();
   if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {
     const found = ['candidate', 'focus', 'buy']
@@ -1360,6 +1362,7 @@ async function reloadNotice() {
     state.noticeFunnel = await request('/api/notice/funnel');
   } catch (_) {}
   renderNoticeFunnel();
+  setMeta();
   if (!state.noticeSelectedSymbol) {
     document.getElementById('noticeSummary').textContent = '点击左侧股票查看';
     document.getElementById('noticeDetail').innerHTML = '<div class="empty-state"><div class="empty-state-text">请点击左侧股票查看公告详情</div></div>';
@@ -1513,7 +1516,8 @@ function renderPaperPositions(positions) {
     `;
     div.querySelector('.btn-sell').onclick = (e) => {
       e.stopPropagation();
-      paperSell(e.target.dataset.id, e.target.dataset.symbol, e.target.dataset.name);
+      const btn = e.target.closest('.btn-sell');
+      paperSell(btn.dataset.id, btn.dataset.symbol, btn.dataset.name);
     };
     root.appendChild(div);
   });
@@ -1590,31 +1594,35 @@ async function loadAgentStatus() {
     const data = await request('/api/agent/status');
     const dot = document.getElementById('agentStatusDot');
     const txt = document.getElementById('agentStatusText');
-    dot.className = 'agent-status-dot ' + (data.running ? 'running' : (data.llm_available ? 'ok' : 'error'));
+    if (dot) dot.className = 'agent-status-dot ' + (data.running ? 'running' : (data.llm_available ? 'ok' : 'error'));
 
     let mode = '规则模式';
     if (data.hermes_agent_available) mode = 'Hermes Agent';
     else if (data.llm_available) mode = 'LLM 模式';
-    txt.textContent = data.running ? `运行中 · ${mode}` : `就绪 · ${mode}`;
+    if (txt) txt.textContent = data.running ? `运行中 · ${mode}` : `就绪 · ${mode}`;
 
     const lastEl = document.getElementById('agentLastRun');
     const nextEl = document.getElementById('agentNextRun');
-    if (data.last_run) {
-      const t = fmtShortTime(data.last_run.finished_at);
-      lastEl.textContent = `上次: ${t} · ${data.last_run.status}`;
-    } else {
-      lastEl.textContent = '上次: 尚未执行';
+    if (lastEl) {
+      if (data.last_run) {
+        const t = fmtShortTime(data.last_run.finished_at);
+        lastEl.textContent = `上次: ${t} · ${data.last_run.status}`;
+      } else {
+        lastEl.textContent = '上次: 尚未执行';
+      }
     }
 
-    if (state.monitorConfig?.enabled) {
-      const interval = state.monitorConfig.interval_minutes || 10;
-      nextEl.textContent = `自动: 每${interval}分钟`;
-    } else {
-      nextEl.textContent = '自动: 未启用';
+    if (nextEl) {
+      if (state.monitorConfig?.enabled) {
+        const interval = state.monitorConfig.interval_minutes || 10;
+        nextEl.textContent = `自动: 每${interval}分钟`;
+      } else {
+        nextEl.textContent = '自动: 未启用';
+      }
     }
 
     const cnt = document.getElementById('agentPendingCount');
-    cnt.textContent = data.stats?.pending_proposals ?? 0;
+    if (cnt) cnt.textContent = data.stats?.pending_proposals ?? 0;
   } catch { /* ignore */ }
 }
 
@@ -1926,6 +1934,7 @@ function _showHoverKline(symbol, name, anchorEl) {
 
 function _hideHoverKlineNow() {
   const popup = document.getElementById('hoverKlinePopup');
+  if (!popup) return;
   popup.classList.remove('visible');
   popup.style.display = 'none';
   if (_hoverKline.abortCtrl) { _hoverKline.abortCtrl.abort(); _hoverKline.abortCtrl = null; }
@@ -1938,6 +1947,7 @@ function _scheduleHideHoverKline() {
   clearTimeout(_hoverKline.timer);
   _hoverKline.timer = setTimeout(() => {
     const popup = document.getElementById('hoverKlinePopup');
+    if (!popup) return;
     popup.classList.remove('visible');
     setTimeout(() => {
       if (!popup.classList.contains('visible')) {
@@ -1964,6 +1974,11 @@ function bindHoverKline(container) {
     });
     el.addEventListener('mouseleave', () => {
       _scheduleHideHoverKline();
+    });
+    el.addEventListener('click', () => {
+      if (el.dataset.symbol && state.activeTab === 'agent') {
+        _loadMonitorKline(el.dataset.symbol, el.dataset.name || el.dataset.symbol);
+      }
     });
   });
 }
@@ -2306,12 +2321,15 @@ function chgSign2(val, base) {
 
 /* ==================== WebSocket ==================== */
 
+let _wsRetryDelay = 2000;
 function connectWs() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${window.location.host}/ws/realtime`);
+  ws.onopen = () => { _wsRetryDelay = 2000; };
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
+      if (!msg || !msg.data) return;
       if (msg.event === 'snapshot') {
         state.funnel = msg.data.funnel;
         state.hotConcepts = msg.data.hot_concepts;
@@ -2319,11 +2337,12 @@ function connectWs() {
         renderHotConcepts();
         renderHotStocks();
         renderFunnel();
+        setMeta();
       } else if (msg.event === 'monitor_update') {
         _appendMonitorMessage({
-          id: msg.data.message_id,
-          content: msg.data.content,
-          created_at: msg.data.created_at,
+          id: msg.data.message_id || '',
+          content: msg.data.content || '',
+          created_at: msg.data.created_at || '',
           trigger: msg.data.trigger || 'scheduled',
         });
         if (state.activeTab === 'agent') {
@@ -2334,7 +2353,11 @@ function connectWs() {
       console.error('ws parse error', err);
     }
   };
-  ws.onclose = () => { setTimeout(connectWs, 2000); };
+  ws.onerror = () => {};
+  ws.onclose = () => {
+    setTimeout(connectWs, _wsRetryDelay);
+    _wsRetryDelay = Math.min(_wsRetryDelay * 1.5, 30000);
+  };
 }
 
 /* ==================== Button Loading Helper ==================== */
@@ -2581,7 +2604,7 @@ async function init() {
       _btnStart(btn, '停止中...');
       try {
         await request('/api/agent/monitor/stop', { method: 'POST' });
-        state.monitorConfig.enabled = 0;
+        state.monitorConfig.enabled = false;
         _updateMonitorStatusUI(false);
         setStatus('盘中监控已停止', 'success');
       } catch (err) { setStatus(`停止失败: ${err.message}`, 'error'); }
@@ -2699,9 +2722,11 @@ async function init() {
     if (tab === 'market') startMarketPolling();
   };
   if (state.activeTab === 'market') startMarketPolling();
+  if (state.activeTab === 'data') startDcPolling();
 }
 
 init().catch((err) => {
-  document.getElementById('meta').textContent = `初始化失败: ${err.message}`;
+  const meta = document.getElementById('meta');
+  if (meta) meta.textContent = `初始化失败: ${err.message}`;
   renderChartPlaceholder(`初始化失败: ${err.message}`);
 });
