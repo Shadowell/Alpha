@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415j" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415k" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -141,6 +141,7 @@
             <div class="filter-line">
               <span>概念筛选：</span>
               <span id="activeConcept" class="chip muted">全部</span>
+              <span id="conceptFilterHint" class="filter-hint"></span>
               <button id="clearConcept" class="text-btn">清除</button>
             </div>
             <button id="btnEodScreen" class="btn-action">盘后筛选</button>
@@ -376,10 +377,8 @@
         </section>
 
         <section class="panel card">
-          <div class="panel-title-row">
-            <h2>日K + 成交量（30日）</h2>
-            <div id="stockSummary" class="summary">点击左侧股票查看</div>
-          </div>
+          <h2 class="chart-title">日K + 成交量（30日）</h2>
+          <div id="stockSummary" class="chart-summary">点击左侧股票查看</div>
           <div id="klineChart" class="kline-chart"></div>
         </section>
       </aside>
@@ -401,6 +400,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415t"></script>
+  <script src="/static/app.js?v=20260415u"></script>
 </body>
 </html>

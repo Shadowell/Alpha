@@ -38,6 +38,12 @@ function fmtShortTime(iso) {
   return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : iso.slice(0, 16);
 }
 
+function fmtDateTime(iso) {
+  if (!iso) return '--';
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : iso.slice(0, 19).replace('T', ' ');
+}
+
 function fmtMoney(v) {
   const n = Number(v || 0);
   if (!Number.isFinite(n)) return '¥0.00';
@@ -55,16 +61,16 @@ function setMeta() {
   const meta = document.getElementById('meta');
   if (state.activeTab === 'market') {
     if (!state.funnel) { meta.textContent = '加载中...'; return; }
-    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${fmtDateTime(state.funnel.updated_at)}`;
   } else if (state.activeTab === 'data') {
     meta.textContent = '数据同步 · 完整性检查 · 任务管理';
   } else if (state.activeTab === 'funnel') {
     if (!state.funnel) { meta.textContent = '暂无数据'; return; }
-    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${state.funnel.updated_at}`;
+    meta.textContent = `交易日 ${state.funnel.trade_date} · 更新 ${fmtDateTime(state.funnel.updated_at)}`;
   } else if (state.activeTab === 'notice') {
     if (!state.noticeFunnel) { meta.textContent = '暂无数据'; return; }
     const nf = state.noticeFunnel;
-    meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
+    meta.textContent = `公告日 ${nf.trade_date} · 更新 ${fmtDateTime(nf.updated_at)} · 打分源 ${nf.source}`;
   } else if (state.activeTab === 'agent') {
     meta.textContent = '盘中智能监控 — 自动追踪市场主线 · 推送投研情报 · 产出优化提案';
   } else if (state.activeTab === 'paper') {
@@ -174,8 +180,6 @@ function renderFunnelSummary() {
     _psItem('重点关注', f + '只', 'warning'),
     _psSep(),
     _psItem('买入池', b + '只', 'success'),
-    _psSep(),
-    _psItem('更新', state.funnel.updated_at || '--'),
   ].join('');
 }
 
@@ -383,11 +387,13 @@ function renderPool(poolName, list) {
     div.className = `stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
     div.onclick = () => selectSymbol(stock.symbol);
     const delta = Number(stock.score_delta || 0);
-    const deltaCls = delta >= 0 ? 'up' : 'down';
-    const deltaTxt = delta >= 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
-    const tags = (stock.concept_tags || [])
+    const deltaCls = _chgCls(delta);
+    const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
+    const conceptTags = stock.concept_tags || [];
+    const tags = conceptTags
       .map((tag) => `<span class="tag" style="background:${tag.color}" title="热度:${tag.heat} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${tag.name} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
       .join('');
+    const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
     const badge = stock.recommended_pool
       ? `<span class="badge ${stock.recommended_pool === 'buy' ? 'buy' : 'focus'}">建议进入${stock.recommended_pool === 'buy' ? '买入池' : '重点池'}</span>`
       : '';
@@ -397,13 +403,25 @@ function renderPool(poolName, list) {
     const simBuyBtn = poolName === 'buy'
       ? `<button class="btn-sim-buy" data-symbol="${stock.symbol}" data-name="${stock.name}" data-price="${stock.price || stock.breakout_level || 0}">模拟买入</button>`
       : '';
+    const pct = Number(stock.pct_change || 0);
+    const pctCls = _chgCls(pct);
+    const pctSign = pct > 0 ? '+' : '';
+    const price = Number(stock.price || 0);
+    const priceHtml = price > 0 ? `<span class="stock-price">${fmtNum(price, 2)}</span>` : '';
+    const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
     div.innerHTML = `
       <div class="stock-top">
-        <div class="stock-name">${stock.name} (${stock.symbol})</div>
-        <div class="score ${deltaCls}">${fmtNum(stock.score)} (${deltaTxt})</div>
+        <div class="stock-name">${stock.name} <span class="stock-code">${stock.symbol}</span></div>
+        <div class="stock-price-area">${priceHtml}${pctHtml}</div>
       </div>
-      <div class="tags">${tags || '<span class="chip muted">暂无概念</span>'}</div>
-      <div class="metrics">涨跌 ${fmtNum(stock.pct_change, 2)}% · 放量比 ${fmtNum(stock.volume_ratio, 2)} · 突破位 ${fmtNum(stock.breakout_level, 2)}</div>
+      ${tagsHtml}
+      <div class="metrics">
+        <span>评分 <b class="${deltaCls}">${fmtNum(stock.score)}</b> (${deltaTxt})</span>
+        <span class="metrics-sep">·</span>
+        <span>放量比 ${fmtNum(stock.volume_ratio, 2)}</span>
+        <span class="metrics-sep">·</span>
+        <span>突破位 ${fmtNum(stock.breakout_level, 2)}</span>
+      </div>
       ${badge}
       <div class="card-actions">${btns}${simBuyBtn}</div>
     `;
@@ -438,7 +456,15 @@ function renderHotConcepts() {
   const root = document.getElementById('hotConcepts');
   root.innerHTML = '';
   const activeChip = document.getElementById('activeConcept');
-  if (activeChip) activeChip.textContent = state.selectedConcept || '全部';
+  if (activeChip) {
+    activeChip.textContent = state.selectedConcept || '全部';
+    activeChip.classList.toggle('muted', !state.selectedConcept);
+    activeChip.classList.toggle('active', !!state.selectedConcept);
+  }
+  const filterHint = document.getElementById('conceptFilterHint');
+  if (filterHint) {
+    filterHint.textContent = state.selectedConcept ? `已筛选「${state.selectedConcept}」` : '';
+  }
   const items = (state.hotConcepts?.items || []).slice(0, 10);
   items.forEach((item) => {
     const rise = Number(item.change_pct || 0) >= 0;
@@ -522,7 +548,7 @@ function renderDcStats(stats, syncStatus, report) {
     <div class="dc-stat-card">
       <span class="dc-stat-label">同步状态</span>
       <span class="dc-stat-value ${statusCls}">${statusLabel}</span>
-      <span class="dc-stat-sub">${syncStatus.updated_at ? syncStatus.updated_at.slice(0, 16).replace('T', ' ') : '--'}</span>
+      <span class="dc-stat-sub">${fmtDateTime(syncStatus.updated_at)}</span>
     </div>
     <div class="dc-stat-card">
       <span class="dc-stat-label">最近同步日</span>
@@ -772,7 +798,7 @@ function _klineOption(rows) {
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#475569' },
+      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '3%', borderColor: '#475569' },
     ],
     series: [
       { name: '日K', type: 'candlestick', data: candleData, itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' } },
@@ -887,14 +913,14 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '1%', borderColor: '#475569' },
+      { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: '3%', borderColor: '#475569' },
     ],
     series: [
       {
         name: '日K', type: 'candlestick', data: candles,
         itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
-        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.06)' } }, { xAxis: lastDate } ]] } : undefined,
-        markLine: predBoundary ? { silent: true, symbol: 'none', data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.5)', width: 1 }, label: { show: true, formatter: '预 测', color: '#facc15', fontSize: 12, fontWeight: 'bold', position: 'insideStartTop', distance: [4, -18] } }] } : undefined,
+        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.03)' } }, { xAxis: lastDate } ]] } : undefined,
+        markLine: predBoundary ? { silent: true, symbol: 'none', data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.25)', width: 1 }, label: { show: true, formatter: '预测', color: 'rgba(250, 204, 21, 0.4)', fontSize: 10, fontWeight: 'normal', position: 'insideStartTop', distance: [4, -14] } }] } : undefined,
       },
       {
         name: '实际', type: 'candlestick', data: realCandles,
@@ -948,15 +974,41 @@ function renderMarketKlineChart(rows) {
   chart.setOption(_klineOption(rows), true);
 }
 
+function _chgCls(v) {
+  const n = Number(v || 0);
+  return n > 0 ? 'up' : (n < 0 ? 'down' : 'neutral');
+}
+
 function renderStockSummary(detail) {
   const root = document.getElementById('stockSummary');
-  if (!detail) { root.textContent = '点击左侧股票查看'; return; }
-  root.textContent = `${detail.name}(${detail.symbol})  现价:${fmtNum(detail.metrics?.price, 2)}  涨跌:${fmtNum(detail.metrics?.pct_change, 2)}%  放量比:${fmtNum(detail.metrics?.volume_ratio, 2)}  突破位:${fmtNum(detail.metrics?.breakout_level, 2)}`;
+  if (!detail) { root.innerHTML = '点击左侧股票查看'; return; }
+  const m = detail.metrics || {};
+  const pct = Number(m.pct_change || 0);
+  const pctCls = _chgCls(pct);
+  const pctSign = pct > 0 ? '+' : '';
+  root.innerHTML = `<span class="summary-stock">${detail.name}(${detail.symbol})</span>`
+    + `<span class="summary-sep">·</span>`
+    + `<span>现价 <b>${fmtNum(m.price, 2)}</b></span>`
+    + `<span class="summary-sep">·</span>`
+    + `<span class="${pctCls}">涨跌 ${pctSign}${fmtNum(pct, 2)}%</span>`
+    + `<span class="summary-sep">·</span>`
+    + `<span>放量比 ${fmtNum(m.volume_ratio, 2)}</span>`
+    + `<span class="summary-sep">·</span>`
+    + `<span>突破位 ${fmtNum(m.breakout_level, 2)}</span>`;
 }
 
 function renderStockSummaryLite(item, klinePayload) {
   const root = document.getElementById('marketStockSummary');
-  root.textContent = `${item.name}(${item.symbol})  现价:${fmtNum(item.latest_price, 2)}  涨跌:${fmtNum(item.change_pct, 2)}%  K线:${Number(klinePayload?.count || 0)}日`;
+  const pct = Number(item.change_pct || 0);
+  const pctCls = _chgCls(pct);
+  const pctSign = pct > 0 ? '+' : '';
+  root.innerHTML = `<span style="font-weight:600">${item.name}(${item.symbol})</span>`
+    + `<span class="summary-sep" style="margin:0 6px;color:var(--text-dim)">·</span>`
+    + `<span>现价 <b>${fmtNum(item.latest_price, 2)}</b></span>`
+    + `<span class="summary-sep" style="margin:0 6px;color:var(--text-dim)">·</span>`
+    + `<span class="${pctCls}">涨跌 ${pctSign}${fmtNum(pct, 2)}%</span>`
+    + `<span class="summary-sep" style="margin:0 6px;color:var(--text-dim)">·</span>`
+    + `<span>K线 ${Number(klinePayload?.count || 0)}日</span>`;
 }
 
 /* ==================== Funnel symbol select ==================== */
@@ -993,6 +1045,24 @@ async function _fetchRealtimeMap(symbol, predictedDates) {
   } catch { return {}; }
 }
 
+function _appendPredictSummary(el, pk, hk, rtMap) {
+  const lastClose = hk.length ? hk[hk.length - 1].close : 0;
+  if (pk.length && lastClose) {
+    const day3Close = pk[pk.length - 1].close;
+    const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
+    const cls = Number(chg) > 0 ? 'up' : (Number(chg) < 0 ? 'down' : 'neutral');
+    const sign = Number(chg) > 0 ? '+' : '';
+    el.innerHTML += `<span class="summary-sep">·</span><span class="${cls}">预测${pk.length}日 ${sign}${chg}%</span>`;
+  }
+  const rtToday = Object.values(rtMap || {})[0];
+  if (rtToday && pk.length && lastClose) {
+    const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
+    const cls = Number(realChg) > 0 ? 'up' : (Number(realChg) < 0 ? 'down' : 'neutral');
+    const sign = Number(realChg) > 0 ? '+' : '';
+    el.innerHTML += `<span class="summary-sep">·</span><span class="${cls}">实际 ${sign}${realChg}%</span>`;
+  }
+}
+
 async function _fetchAndRenderFunnelPredict(symbol, name) {
   const summaryEl = document.getElementById('stockSummary');
   try {
@@ -1002,19 +1072,7 @@ async function _fetchAndRenderFunnelPredict(symbol, name) {
       const predDates = pk.map(x => x.date);
       const rtMap = await _fetchRealtimeMap(symbol, predDates);
       renderKlineChart(pred.merged_kline, pred.prediction_start_index, rtMap);
-      const hk = pred.history_kline || [];
-      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
-      if (pk.length && lastClose) {
-        const day3Close = pk[pk.length - 1].close;
-        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
-        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
-        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
-      }
-      const rtToday = Object.values(rtMap)[0];
-      if (rtToday && pk.length && lastClose) {
-        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
-        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
-      }
+      _appendPredictSummary(summaryEl, pk, pred.history_kline || [], rtMap);
     }
   } catch (_) {}
 }
@@ -1052,19 +1110,7 @@ async function _fetchAndRenderMarketPredict(symbol, name) {
       const rtMap = await _fetchRealtimeMap(symbol, predDates);
       const chart = ensureMarketChart();
       if (chart) chart.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index, rtMap), true);
-      const hk = pred.history_kline || [];
-      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
-      if (pk.length && lastClose) {
-        const day3Close = pk[pk.length - 1].close;
-        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
-        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
-        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
-      }
-      const rtToday = Object.values(rtMap)[0];
-      if (rtToday && pk.length && lastClose) {
-        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
-        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
-      }
+      _appendPredictSummary(summaryEl, pk, pred.history_kline || [], rtMap);
     }
   } catch (_) {}
 }
@@ -1250,19 +1296,7 @@ async function _fetchAndRenderNoticePredict(symbol, name) {
       const predDates = pk.map(x => x.date);
       const rtMap = await _fetchRealtimeMap(symbol, predDates);
       renderKlineChart(pred.merged_kline, pred.prediction_start_index, rtMap);
-      const hk = pred.history_kline || [];
-      const lastClose = hk.length ? hk[hk.length - 1].close : 0;
-      if (pk.length && lastClose) {
-        const day3Close = pk[pk.length - 1].close;
-        const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
-        const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
-        summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
-      }
-      const rtToday = Object.values(rtMap)[0];
-      if (rtToday && pk.length && lastClose) {
-        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
-        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
-      }
+      _appendPredictSummary(summaryEl, pk, pred.history_kline || [], rtMap);
     }
   } catch (_) {}
 }
