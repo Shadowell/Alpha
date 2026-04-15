@@ -831,9 +831,7 @@ async function _fetchAndRenderFunnelPredict(symbol, name) {
       }
       setStatus(`${name} 预测已加载`, 'success');
     }
-  } catch (err) {
-    setStatus(`预测请求失败: ${err.message}`, 'error');
-  }
+  } catch (_) {}
 }
 
 async function selectHotStock(item) {
@@ -876,8 +874,8 @@ async function _fetchAndRenderMarketPredict(symbol, name) {
       }
       setStatus(`${name} 预测已加载`, 'success');
     }
-  } catch (err) {
-    setStatus(`预测请求失败: ${err.message}`, 'error');
+  } catch (_) {
+    // K线不足等预测失败静默忽略，不影响行情展示
   }
 }
 
@@ -1065,9 +1063,7 @@ async function _fetchAndRenderNoticePredict(symbol, name) {
       }
       setStatus(`${name} 预测已加载`, 'success');
     }
-  } catch (err) {
-    setStatus(`预测请求失败: ${err.message}`, 'error');
-  }
+  } catch (_) {}
 }
 
 /* ==================== Data loading ==================== */
