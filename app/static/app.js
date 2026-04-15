@@ -66,7 +66,7 @@ function setMeta() {
     const nf = state.noticeFunnel;
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
   } else if (state.activeTab === 'agent') {
-    meta.textContent = 'Hermes 投研代理 — 观察系统表现、产出优化提案、人工审批执行';
+    meta.textContent = '盘中智能监控 — 自动追踪市场主线 · 推送投研情报 · 产出优化提案';
   } else if (state.activeTab === 'paper') {
     const ts = state.paperUpdatedAt || '--';
     meta.textContent = `模拟账户 · 初始资金 ¥1,000,000 · 更新 ${ts}`;
@@ -243,7 +243,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '自进化智能体', paper: '模拟盘' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '盘中智能监控', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -1461,17 +1461,28 @@ async function loadAgentStatus() {
     const dot = document.getElementById('agentStatusDot');
     const txt = document.getElementById('agentStatusText');
     dot.className = 'agent-status-dot ' + (data.running ? 'running' : (data.llm_available ? 'ok' : 'error'));
-    const parts = [];
-    if (data.running) parts.push('运行中');
-    else parts.push('就绪');
-    if (data.hermes_agent_available) parts.push('Hermes Agent ✓');
-    else if (data.llm_available) parts.push('LLM 可用');
-    else parts.push('规则模式（LLM 未配置）');
+
+    let mode = '规则模式';
+    if (data.hermes_agent_available) mode = 'Hermes Agent';
+    else if (data.llm_available) mode = 'LLM 模式';
+    txt.textContent = data.running ? `运行中 · ${mode}` : `就绪 · ${mode}`;
+
+    const lastEl = document.getElementById('agentLastRun');
+    const nextEl = document.getElementById('agentNextRun');
     if (data.last_run) {
-      const t = data.last_run.finished_at ? data.last_run.finished_at.slice(11, 16) : '--';
-      parts.push(`上次: ${data.last_run.task_type} ${data.last_run.status} ${t}`);
+      const t = fmtShortTime(data.last_run.finished_at);
+      lastEl.textContent = `上次: ${t} · ${data.last_run.status}`;
+    } else {
+      lastEl.textContent = '上次: 尚未执行';
     }
-    txt.textContent = parts.join(' · ');
+
+    if (state.monitorConfig?.enabled) {
+      const interval = state.monitorConfig.interval_minutes || 10;
+      nextEl.textContent = `自动: 每${interval}分钟`;
+    } else {
+      nextEl.textContent = '自动: 未启用';
+    }
+
     const cnt = document.getElementById('agentPendingCount');
     cnt.textContent = data.stats?.pending_proposals ?? 0;
   } catch { /* ignore */ }
@@ -1634,10 +1645,10 @@ function _updateMonitorStatusUI(enabled) {
 
 function renderMonitorFeed() {
   const container = document.getElementById('monitorFeed');
-  const countEl = document.getElementById('monitorMsgCount');
   if (!container) return;
   const msgs = state.monitorMessages;
-  if (countEl) countEl.textContent = msgs.length;
+  const countEl = document.getElementById('monitorMsgCount');
+  if (countEl) countEl.textContent = msgs.length || '';
   if (!msgs.length) {
     container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无推送消息，启动监控或手动触发</div></div>';
     return;
@@ -1734,58 +1745,64 @@ function _parseMonitorThemes(text) {
 }
 
 function _renderMonitorCard(msg) {
-  const time = (msg.created_at || '').slice(11, 16) || '--:--';
-  const triggerLabel = msg.trigger === 'manual' ? '手动' : '定时';
+  const fullTime = fmtShortTime(msg.created_at);
+  const triggerLabel = msg.trigger === 'manual' ? '手动触发' : '自动轮询';
+  const triggerCls = msg.trigger === 'manual' ? 'trigger-manual' : 'trigger-auto';
   const raw = msg.content || '';
   const themes = _parseMonitorThemes(raw);
 
   if (!themes.length) {
     return `<div class="monitor-msg-card">
       <div class="monitor-msg-header">
-        <span class="monitor-msg-time">${time}</span>
-        <span class="monitor-msg-trigger">${triggerLabel}</span>
+        <span class="monitor-msg-time">${fullTime}</span>
+        <span class="monitor-msg-trigger ${triggerCls}">${triggerLabel}</span>
       </div>
       <div class="monitor-msg-body">${_formatPlainContent(raw)}</div>
     </div>`;
   }
 
-  const headerMatch = raw.match(/^(.+?)(?=【)/s);
-  let headerText = '';
-  if (headerMatch) {
-    headerText = headerMatch[1].trim().split('\n').filter(l => l.trim()).slice(0, 2).join(' · ');
-  }
-
   let summaryMatch = raw.match(/10分钟内执行摘要([\s\S]*?)$/i) || raw.match(/执行摘要([\s\S]*?)$/i);
   let summaryHtml = '';
   if (summaryMatch) {
-    const lines = summaryMatch[1].trim().split('\n').filter(l => l.trim().startsWith('-')).slice(0, 3);
-    if (lines.length) {
-      summaryHtml = `<div class="monitor-summary"><b>执行摘要</b> ${lines.map(l => esc(l.replace(/^-\s*/, ''))).join(' | ')}</div>`;
+    const allLines = summaryMatch[1].trim().split('\n').filter(l => l.trim());
+    const keyLines = allLines.filter(l => l.trim().startsWith('-')).map(l => l.trim().replace(/^-\s*/, ''));
+    if (keyLines.length) {
+      const preview = keyLines.slice(0, 2).map(l => esc(l)).join(' | ');
+      const rest = keyLines.slice(2);
+      const restHtml = rest.length
+        ? `<div class="monitor-summary-detail" style="display:none">${rest.map(l => `<div>· ${esc(l)}</div>`).join('')}</div>
+           <span class="monitor-summary-toggle" onclick="this.previousElementSibling.style.display=this.previousElementSibling.style.display==='none'?'block':'none';this.textContent=this.previousElementSibling.style.display==='none'?'展开 ${rest.length} 条':'收起'">展开 ${rest.length} 条</span>`
+        : '';
+      summaryHtml = `<div class="monitor-summary"><b>执行摘要</b> ${preview}${restHtml}</div>`;
     }
   }
 
   const themesHtml = themes.map(t => {
-    const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : 'mid';
+    const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : t.level === '中' ? 'mid' : 'low';
     const stocksHtml = t.stocks.map(s =>
-      `<div class="mtheme-stock" data-symbol="${s.symbol}" data-name="${s.name}">` +
-      `<code>${s.symbol}</code> <b>${esc(s.name)}</b></div>`
+      `<div class="mtheme-stock" data-symbol="${s.symbol}" data-name="${s.name}" title="点击查看 ${esc(s.name)} K线预测">` +
+      `<code>${s.symbol}</code> <b>${esc(s.name)}</b><svg viewBox="0 0 20 20" fill="currentColor" class="mtheme-stock-arrow"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/></svg></div>`
     ).join('');
     const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
+    const riskHtml = t.risk ? `<div class="mtheme-risk">风险: ${esc(t.risk)}</div>` : '';
     return `<div class="mtheme-card ${levelCls}">
       <div class="mtheme-header">
         <span class="mtheme-level ${levelCls}">${esc(t.level)}</span>
         <span class="mtheme-title">${esc(t.title)}</span>
       </div>
       ${analysisHtml}
-      <div class="mtheme-pool-label">关注池 · ${t.stocks.length}只</div>
-      <div class="mtheme-pool">${stocksHtml || '<span class="muted">暂无</span>'}</div>
+      ${riskHtml}
+      <div class="mtheme-pool-section">
+        <div class="mtheme-pool-label">关注池 · ${t.stocks.length}只</div>
+        <div class="mtheme-pool">${stocksHtml || '<span class="muted">暂无</span>'}</div>
+      </div>
     </div>`;
   }).join('');
 
   return `<div class="monitor-msg-card">
     <div class="monitor-msg-header">
-      <span class="monitor-msg-time">${time}</span>
-      <span class="monitor-msg-trigger">${triggerLabel}</span>
+      <span class="monitor-msg-time">${fullTime}</span>
+      <span class="monitor-msg-trigger ${triggerCls}">${triggerLabel}</span>
     </div>
     ${summaryHtml}
     <div class="mtheme-grid">${themesHtml}</div>
@@ -2288,14 +2305,7 @@ async function init() {
 
   document.getElementById('btnMonitorPromptToggle').onclick = () => {
     const wrap = document.getElementById('monitorPromptWrap');
-    const btn = document.getElementById('btnMonitorPromptToggle');
-    if (wrap.style.display === 'none') {
-      wrap.style.display = 'block';
-      btn.textContent = '收起';
-    } else {
-      wrap.style.display = 'none';
-      btn.textContent = '展开编辑';
-    }
+    wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
   };
 
   document.getElementById('btnMonitorPromptSave').onclick = async () => {
