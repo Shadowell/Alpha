@@ -382,7 +382,7 @@ async def list_agent_tasks(limit: int = 10):
     return {"items": tasks}
 
 
-# ── 盘中监控 API ──
+# ── 智能监控 API ──
 
 
 @app.get("/api/agent/monitor/config")
@@ -424,7 +424,7 @@ async def trigger_monitor():
 @app.post("/api/agent/monitor/stop")
 async def stop_monitor():
     hermes_memory.save_monitor_config(enabled=False)
-    return {"success": True, "message": "盘中监控已停止"}
+    return {"success": True, "message": "智能监控已停止"}
 
 
 # ── 模拟盘 ──────────────────────────────────────────

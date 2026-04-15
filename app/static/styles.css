@@ -1349,7 +1349,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 0 2px; border-radius: 2px;
 }
 
-/* ── 盘中监控 ── */
+/* ── 智能监控 ── */
 
 .monitor-config { padding: 10px 14px; margin-bottom: 12px; }
 .monitor-ctrl-row {

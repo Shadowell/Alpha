@@ -10,7 +10,7 @@ Alpha 是一个面向 A 股市场的量化选股 Web 平台，集成 **[Kronos](
 | **策略选股** | 盘后自动筛选调整期未突破股票，三池漏斗管理（候选池 → 重点池 → 买入池），支持一键执行/停止 |
 | **公告选股** | 抓取当日公告 → 规则打分（+可选 LLM 打分）→ 关键词标签过滤（分红/回购/重组等），支持一键执行/停止 |
 | **Kronos 预测** | 基于金融 K 线基础模型，历史日 K 自回归生成未来多日 OHLC 预测 K 线；预测 K 线红涨绿跌虚线框展示，叠加盘中实时 K 线对比 |
-| **自进化智能体** | 集成 Hermes Agent，支持盘中监控（定时推送市场动态，按主线分框展示消息流，含关注池与 K 线预览）和提案管理（双 Tab 页面） |
+| **智能监控 / 进化** | 集成 Hermes Agent，支持智能监控（定时推送市场动态，按主线分框展示消息流，含关注池与 K 线预览）和提案管理（双 Tab 页面） |
 | **模拟盘** | 从买入池一键模拟买入，实时计算持仓盈亏；支持滑点、印花税、手续费等费用设置 |
 | **K 线缓存** | 每日 15:20 自动同步主板股票日 K（并发调度），同步完成飞书群通知 |
 | **实时推送** | WebSocket 实时推送概念行情与个股评分更新 |
@@ -245,7 +245,7 @@ python -m tests.benchmark_kronos
 
 ### 自进化智能体
 
-Hermes Agent 盘中监控，按主线分框展示消息流（Glassmorphism 卡片），含关注池 K 线预览；支持提案管理（双 Tab 页面）。
+Hermes Agent 智能监控，按主线分框展示消息流（Glassmorphism 卡片），含关注池 K 线预览；支持提案管理（双 Tab 页面）。
 
 ### 模拟盘
 
@@ -280,7 +280,7 @@ Alpha/
 │   │   ├── funnel_service.py      # 策略选股漏斗核心逻辑
 │   │   ├── notice_service.py      # 公告选股 & 规则/LLM 打分
 │   │   ├── paper_trading.py       # 模拟盘交易服务（持仓/交易/费用计算）
-│   │   ├── hermes_runtime.py      # Hermes Agent 运行时（盘中监控 tick）
+│   │   ├── hermes_runtime.py      # Hermes Agent 运行时（智能监控 tick）
 │   │   ├── hermes_memory.py       # Hermes Agent 记忆持久化
 │   │   ├── hermes_memory_bridge.py # Hermes 记忆桥接
 │   │   ├── kline_cache_service.py # K 线并发同步调度
@@ -399,7 +399,7 @@ pip3 install -r requirements.txt
 | POST | `/api/agent/proposals/{proposal_id}/reject` | 拒绝提案 |
 | POST | `/api/agent/proposals/create` | 创建提案 |
 | GET | `/api/agent/tasks` | Agent 任务列表 |
-| GET | `/api/agent/monitor/config` | 盘中监控配置 |
+| GET | `/api/agent/monitor/config` | 智能监控配置 |
 | POST | `/api/agent/monitor/config` | 更新监控配置 |
 | GET | `/api/agent/monitor/messages` | 监控消息流 |
 | POST | `/api/agent/monitor/trigger` | 手动触发监控 tick |
