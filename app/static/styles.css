@@ -666,11 +666,30 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ── Hermes Agent ── */
-.agent-page { display: flex; flex-direction: column; gap: 16px; }
+/* ── Agent 内部子 Tab ── */
+.agent-inner-tabs {
+  display: flex; align-items: center; gap: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px; position: relative;
+}
+.agent-inner-tab {
+  padding: 8px 20px; font-size: 13px; font-weight: 600;
+  color: var(--muted); background: none; border: none; cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all .15s;
+}
+.agent-inner-tab:hover { color: var(--text); }
+.agent-inner-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+.agent-inner-tabs-right {
+  margin-left: auto; display: flex; align-items: center; gap: 6px; padding-right: 4px;
+}
+.agent-subtab-content { display: none; }
+.agent-subtab-content.active { display: block; }
+
+.agent-page { display: flex; flex-direction: column; gap: 12px; }
 
 .agent-status-bar {
   display: flex; align-items: center; gap: 10px;
-  padding: 14px 18px; border-radius: var(--radius);
+  padding: 10px 14px; border-radius: var(--radius);
   background: var(--panel); border: 1px solid var(--line);
 }
 .agent-status-dot {
@@ -1231,9 +1250,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ── 盘中监控 ── */
-.monitor-section { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
 
-.monitor-config { padding: 16px 20px; }
+.monitor-config { padding: 10px 14px; margin-bottom: 12px; }
 .monitor-config-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px;
