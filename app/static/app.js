@@ -215,12 +215,13 @@ async function request(path, options = {}) {
     throw new Error('后端服务不可用(连接失败)，请确认服务已启动: ./start.sh');
   }
   if (!resp.ok) {
+    const raw = await resp.text();
     let message = '';
     try {
-      const payload = await resp.json();
-      message = payload.detail || payload.message || JSON.stringify(payload);
+      const payload = JSON.parse(raw);
+      message = payload.detail || payload.message || raw;
     } catch (_) {
-      message = await resp.text();
+      message = raw;
     }
     throw new Error(message || `HTTP ${resp.status}`);
   }
