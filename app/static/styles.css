@@ -339,7 +339,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .funnel-grid {
   display: grid;
-  grid-template-columns: 2fr 1.5fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
   height: calc(100vh - 240px);
 }
