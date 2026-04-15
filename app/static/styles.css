@@ -1843,6 +1843,15 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 .paper-history-table .neutral { color: var(--text-secondary); }
 .paper-hist-name { font-weight: 600; color: var(--text) !important; line-height: 1.4; }
 .paper-hist-name code { font-size: 11px; color: var(--muted); }
+.paper-trade-time { font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.paper-action-buy {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: rgba(239,68,68,0.15); color: #fca5a5;
+}
+.paper-action-sell {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: rgba(34,197,94,0.15); color: #86efac;
+}
 
 /* 增强空状态 */
 .paper-empty { text-align: center; padding: 32px 16px !important; }

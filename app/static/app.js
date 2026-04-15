@@ -318,24 +318,16 @@ async function paperBuy(symbol, name, _price) {
     setStatus('当前非交易时段，无法模拟买入', 'error');
     return;
   }
-  let price = 0;
-  try {
-    const rt = await request(`/api/stock/${symbol}/realtime`);
-    if (rt && rt.found && rt.close > 0) price = rt.close;
-  } catch {}
-  if (!price || price <= 0) {
-    setStatus('无法获取实时价格，请稍后重试', 'error');
-    return;
-  }
-  const qty = prompt(`模拟买入 ${name}(${symbol})\n实时价: ${price.toFixed(2)}\n请输入买入股数:`, '100');
+  const qty = prompt(`模拟买入 ${name}(${symbol})\n将以当前实时价成交\n请输入买入股数:`, '100');
   if (!qty) return;
   try {
     const res = await request('/api/paper/buy', {
       method: 'POST',
-      body: JSON.stringify({ symbol, name, price, qty: parseInt(qty) || 100 }),
+      body: JSON.stringify({ symbol, name, qty: parseInt(qty) || 100 }),
     });
     if (res.success) {
-      setStatus(`模拟买入 ${name} ${qty}股 @ ${price.toFixed(2)}`, 'success');
+      const p = res.position || {};
+      setStatus(`模拟买入 ${name} ${qty}股 @ ${fmtNum(res.realtime_price, 2)} (成本含滑点: ${fmtNum(p.cost_price, 2)})`, 'success');
       loadPaperData();
     }
   } catch (err) {
@@ -348,20 +340,15 @@ async function paperSell(positionId, symbol, name) {
     setStatus('当前非交易时段，无法模拟卖出', 'error');
     return;
   }
-  let price = 0;
-  try {
-    const rt = await request(`/api/stock/${symbol}/realtime`);
-    if (rt && rt.found && rt.close > 0) price = rt.close;
-  } catch {}
-  if (!price) { setStatus('无法获取实时价格', 'error'); return; }
-  if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n实时价: ${price.toFixed(2)}`)) return;
+  if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n将以当前实时价成交`)) return;
   try {
     const res = await request('/api/paper/sell', {
       method: 'POST',
-      body: JSON.stringify({ position_id: positionId, price }),
+      body: JSON.stringify({ position_id: positionId }),
     });
     if (res.success) {
-      setStatus(`模拟卖出 ${name} @ ${price.toFixed(2)}`, 'success');
+      const p = res.position || {};
+      setStatus(`模拟卖出 ${name} @ ${fmtNum(res.realtime_price, 2)} · 盈亏 ${fmtNum(p.realized_pnl, 2)}`, 'success');
       loadPaperData();
     }
   } catch (err) {
@@ -1391,14 +1378,16 @@ let _paperPollTimer = null;
 let _paperLastRefresh = 0;
 
 async function loadPaperData() {
-  const [posRes, histRes, sumRes] = await Promise.allSettled([
+  const [posRes, histRes, sumRes, tradeRes] = await Promise.allSettled([
     request('/api/paper/positions'),
     request('/api/paper/history?limit=50'),
     request('/api/paper/summary'),
+    request('/api/paper/trades?limit=100'),
   ]);
   if (posRes.status === 'fulfilled') renderPaperPositions(posRes.value.positions || []);
   if (histRes.status === 'fulfilled') renderPaperHistory(histRes.value.positions || []);
   if (sumRes.status === 'fulfilled') renderPaperSummary(sumRes.value);
+  if (tradeRes.status === 'fulfilled') renderPaperTrades(tradeRes.value.trades || []);
   _paperLastRefresh = Date.now();
   _updatePaperRefreshHint();
 }
@@ -1555,6 +1544,35 @@ function renderPaperHistory(positions) {
       <td class="${cls}">${sign}¥${fmtNum(rpnl, 2)}${pctStr}</td>
       <td title="${p.opened_at || ''}">${fmtShortTime(p.opened_at)}</td>
       <td title="${p.closed_at || ''}">${fmtShortTime(p.closed_at)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  root.innerHTML = html;
+}
+
+function renderPaperTrades(trades) {
+  const root = document.getElementById('paperTrades');
+  if (!root) return;
+  document.getElementById('paperTradeCount').textContent = trades.length;
+  if (!trades.length) {
+    root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无成交记录</div></div>';
+    return;
+  }
+  let html = `<table class="paper-history-table">
+    <thead><tr>
+      <th>时间</th><th>股票</th><th>操作</th><th>数量</th><th>成交价</th><th>费用</th>
+    </tr></thead><tbody>`;
+  trades.forEach(t => {
+    const actionCls = t.action === 'buy' ? 'paper-action-buy' : 'paper-action-sell';
+    const actionText = t.action === 'buy' ? '买入' : '卖出';
+    const time = (t.created_at || '').slice(0, 19).replace('T', ' ');
+    html += `<tr>
+      <td class="paper-trade-time">${time}</td>
+      <td class="paper-hist-name">${t.name}<br><code>${t.symbol}</code></td>
+      <td><span class="${actionCls}">${actionText}</span></td>
+      <td>${t.qty}</td>
+      <td>${fmtNum(t.price, 4)}</td>
+      <td>¥${fmtNum(t.fee, 2)}</td>
     </tr>`;
   });
   html += '</tbody></table>';
