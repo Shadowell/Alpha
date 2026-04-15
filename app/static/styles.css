@@ -673,26 +673,49 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ── Hermes Agent ── */
-/* ── Agent 内部子 Tab ── */
+
+/* Agent 顶部总状态 */
+.agent-top-status {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-radius: var(--radius);
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18), var(--glass-shine);
+  flex-wrap: wrap; gap: 8px;
+}
+.agent-top-status-left { display: flex; align-items: center; gap: 8px; }
+.agent-top-status-right { display: flex; align-items: center; gap: 16px; }
+.agent-top-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted); padding: 2px 8px; border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+}
+.agent-top-detail { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+.agent-top-meta { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+/* Agent 二级 Tab — 扁平、不与侧栏争夺 */
 .agent-inner-tabs {
   display: flex; align-items: center; gap: 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
-  margin-bottom: 14px; position: relative;
-  background: rgba(17, 24, 39, 0.4);
-  border-radius: var(--radius) var(--radius) 0 0;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  margin-bottom: 14px;
 }
 .agent-inner-tab {
-  padding: 8px 20px; font-size: 13px; font-weight: 600;
+  padding: 9px 18px; font-size: 13px; font-weight: 600;
   color: var(--muted); background: none; border: none; cursor: pointer;
   border-bottom: 2px solid transparent; transition: all .15s;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .agent-inner-tab:hover { color: var(--text); }
-.agent-inner-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
-.agent-inner-tabs-right {
-  margin-left: auto; display: flex; align-items: center; gap: 6px; padding-right: 4px;
+.agent-inner-tab.active { color: var(--text); border-bottom-color: var(--text); }
+
+.tab-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  font-size: 10px; font-weight: 700; border-radius: 9px;
+  background: rgba(255,255,255,0.06); color: var(--muted);
 }
+.agent-inner-tab.active .tab-count { background: rgba(59,130,246,0.15); color: var(--brand); }
+
 .agent-subtab-content { display: none; }
 .agent-subtab-content.active { display: block; }
 
@@ -1279,12 +1302,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── 盘中监控 ── */
 
 .monitor-config { padding: 10px 14px; margin-bottom: 12px; }
-.monitor-config-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 12px;
+.monitor-ctrl-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }
-.monitor-config-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.monitor-config-actions { display: flex; align-items: center; gap: 10px; }
+.monitor-ctrl-label { font-size: 12px; color: var(--muted); }
 
 .monitor-status-badge {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1383,9 +1404,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-weight: 600; color: var(--brand);
 }
 .monitor-msg-trigger {
-  font-size: 11px; padding: 2px 8px; border-radius: 999px;
-  background: rgba(148, 163, 184, 0.1); color: var(--muted);
+  font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
 }
+.monitor-msg-trigger.trigger-auto {
+  background: rgba(59, 130, 246, 0.1); color: #60a5fa;
+}
+.monitor-msg-trigger.trigger-manual {
+  background: rgba(245, 158, 11, 0.1); color: #f59e0b;
+}
+.monitor-feed-hint { font-size: 12px; color: var(--muted); font-weight: 400; }
 
 .monitor-msg-body {
   font-size: 13px; line-height: 1.8; color: var(--text-secondary);
@@ -1437,6 +1464,7 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 
 .mtheme-card {
   flex: 1 1 260px; min-width: 0; max-width: 100%;
+  min-height: 200px;
   padding: 16px 18px;
   border-radius: var(--radius);
   background: var(--glass-bg);
@@ -1445,15 +1473,17 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
   -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: 0 4px 12px rgba(0,0,0,0.25), var(--glass-shine);
   transition: all var(--transition);
+  display: flex; flex-direction: column;
 }
 .mtheme-card:hover {
   border-color: rgba(255,255,255,0.1);
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0,0,0,0.35), var(--glass-shine);
 }
-.mtheme-card.high  { border-top: 2px solid #ef4444; }
+.mtheme-card.high     { border-top: 2px solid #ef4444; }
 .mtheme-card.mid-high { border-top: 2px solid #f59e0b; }
-.mtheme-card.mid   { border-top: 2px solid #60a5fa; }
+.mtheme-card.mid      { border-top: 2px solid #60a5fa; }
+.mtheme-card.low      { border-top: 2px solid #6b7280; }
 
 .mtheme-header {
   display: flex; align-items: center; gap: 8px;
@@ -1469,6 +1499,7 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 .mtheme-level.high { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
 .mtheme-level.mid-high { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
 .mtheme-level.mid { background: rgba(59, 130, 246, 0.10); color: #60a5fa; }
+.mtheme-level.low { background: rgba(107, 114, 128, 0.10); color: #9ca3af; }
 
 .mtheme-title { font-size: 14px; }
 
@@ -1510,6 +1541,27 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
   border-radius: 4px; color: var(--brand);
 }
 .mtheme-stock b { color: var(--text); font-size: 12px; font-weight: 500; }
+
+.mtheme-pool-section { margin-top: auto; }
+
+.mtheme-risk {
+  font-size: 11px; color: var(--muted); line-height: 1.5;
+  margin-bottom: 8px; padding-left: 8px;
+  border-left: 2px solid rgba(239, 68, 68, 0.3);
+}
+
+.mtheme-stock-arrow {
+  width: 14px; height: 14px; color: var(--muted); opacity: 0;
+  transition: opacity 0.15s; flex-shrink: 0;
+}
+.mtheme-stock:hover .mtheme-stock-arrow { opacity: 1; color: var(--brand); }
+
+.monitor-summary-detail { margin-top: 6px; font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+.monitor-summary-toggle {
+  font-size: 11px; color: var(--brand); cursor: pointer;
+  margin-left: 6px; font-weight: 600;
+}
+.monitor-summary-toggle:hover { text-decoration: underline; }
 
 .monitor-summary {
   margin-bottom: 8px; padding: 10px 14px;
