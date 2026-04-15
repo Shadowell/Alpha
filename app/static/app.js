@@ -670,16 +670,44 @@ function _klineOption(rows) {
   };
 }
 
-function _klinePredictOption(merged, predStartIdx) {
+function _klinePredictOption(merged, predStartIdx, realtimeMap) {
+  realtimeMap = realtimeMap || {};
   const dates = merged.map(x => x.date);
+
   const candles = merged.map((x, i) => {
     const val = [x.open, x.close, x.low, x.high];
     if (i >= predStartIdx) {
-      return { value: val, itemStyle: { opacity: 0.6, borderWidth: 1, borderColor: x.close >= x.open ? 'rgba(239,68,68,0.7)' : 'rgba(22,163,106,0.7)', color: x.close >= x.open ? 'rgba(239,68,68,0.45)' : 'rgba(22,163,106,0.45)' } };
+      const isUp = x.close >= x.open;
+      return {
+        value: val,
+        itemStyle: {
+          color: 'transparent',
+          color0: 'transparent',
+          borderColor: isUp ? 'rgba(239,68,68,0.8)' : 'rgba(22,163,106,0.8)',
+          borderColor0: isUp ? 'rgba(239,68,68,0.8)' : 'rgba(22,163,106,0.8)',
+          borderWidth: 1.5,
+          borderType: 'dashed',
+        },
+      };
     }
     return val;
   });
-  const volumes = merged.map((x, i) => [i, i < predStartIdx ? x.volume : 0, x.close >= x.open ? 1 : -1]);
+
+  const realCandles = dates.map((d, i) => {
+    const rt = realtimeMap[d];
+    if (!rt || i < predStartIdx) return '-';
+    return { value: [rt.open, rt.close, rt.low, rt.high] };
+  });
+
+  const volumes = merged.map((x, i) => {
+    if (i >= predStartIdx) {
+      const rt = realtimeMap[dates[i]];
+      if (rt && rt.volume) return [i, rt.volume, rt.close >= rt.open ? 1 : -1];
+      return [i, 0, 0];
+    }
+    return [i, x.volume, x.close >= x.open ? 1 : -1];
+  });
+
   const closes = merged.map(x => x.close);
   const ma5 = _calcMA(closes, 5);
   const ma10 = _calcMA(closes, 10);
@@ -687,6 +715,10 @@ function _klinePredictOption(merged, predStartIdx) {
 
   const predBoundary = predStartIdx > 0 ? dates[predStartIdx] : null;
   const lastDate = dates[dates.length - 1];
+  const hasRealtime = Object.keys(realtimeMap).length > 0;
+
+  const legendData = ['MA5', 'MA10', 'MA30'];
+  if (hasRealtime) legendData.push('实际');
 
   return {
     animation: false, backgroundColor: 'transparent',
@@ -694,7 +726,7 @@ function _klinePredictOption(merged, predStartIdx) {
       show: true, top: 0, right: 20,
       textStyle: { color: '#8da2bb', fontSize: 11 },
       itemWidth: 14, itemHeight: 2, itemGap: 12,
-      data: ['MA5', 'MA10', 'MA30'],
+      data: legendData,
     },
     tooltip: {
       trigger: 'axis', axisPointer: { type: 'cross' },
@@ -705,11 +737,26 @@ function _klinePredictOption(merged, predStartIdx) {
         const idx = params[0].dataIndex;
         const isPred = idx >= predStartIdx;
         const k = merged[idx];
-        const tag = isPred ? '<span style="color:#facc15">[预测]</span>' : '[历史]';
-        let html = `<div style="font-weight:600;margin-bottom:4px">${k.date} ${tag}</div>`;
-        html += `<div>开: ${fmtNum(k.open, 2)} &nbsp; 高: ${fmtNum(k.high, 2)}</div>`;
-        html += `<div>低: ${fmtNum(k.low, 2)} &nbsp; 收: ${fmtNum(k.close, 2)}</div>`;
-        if (!isPred && k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
+        const rt = realtimeMap[k.date];
+        let html = `<div style="font-weight:600;margin-bottom:4px">${k.date}</div>`;
+        if (isPred) {
+          html += `<div style="color:#facc15;margin-bottom:3px">── 预测 ──</div>`;
+          html += `<div>开: ${fmtNum(k.open,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
+          html += `<div>低: ${fmtNum(k.low,2)} &nbsp; 收: ${fmtNum(k.close,2)}</div>`;
+          if (rt) {
+            html += `<div style="color:#38bdf8;margin:3px 0">── 实际 ──</div>`;
+            html += `<div>开: ${fmtNum(rt.open,2)} &nbsp; 高: ${fmtNum(rt.high,2)}</div>`;
+            html += `<div>低: ${fmtNum(rt.low,2)} &nbsp; 收: ${fmtNum(rt.close,2)}</div>`;
+            if (rt.volume) html += `<div>量: ${(rt.volume / 10000).toFixed(0)}万</div>`;
+            const diff = ((rt.close - k.close) / k.close * 100).toFixed(2);
+            const diffColor = diff >= 0 ? '#ef4444' : '#16a34a';
+            html += `<div style="color:${diffColor};margin-top:2px">偏差: ${diff >= 0 ? '+' : ''}${diff}%</div>`;
+          }
+        } else {
+          html += `<div>开: ${fmtNum(k.open,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
+          html += `<div>低: ${fmtNum(k.low,2)} &nbsp; 收: ${fmtNum(k.close,2)}</div>`;
+          if (k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
+        }
         return html;
       }
     },
@@ -731,8 +778,13 @@ function _klinePredictOption(merged, predStartIdx) {
       {
         name: '日K', type: 'candlestick', data: candles,
         itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
-        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.08)' } }, { xAxis: lastDate } ]] } : undefined,
+        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.06)' } }, { xAxis: lastDate } ]] } : undefined,
         markLine: predBoundary ? { silent: true, symbol: 'none', data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.5)', width: 1 }, label: { show: true, formatter: '预测', color: '#facc15', fontSize: 10, position: 'insideStartTop' } }] } : undefined,
+      },
+      {
+        name: '实际', type: 'candlestick', data: realCandles,
+        itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
+        barWidth: '40%',
       },
       { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fbbf24' }, connectNulls: false },
       { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
@@ -756,12 +808,12 @@ function renderChartPlaceholder(text) {
   chart.setOption(_placeholderOption(text));
 }
 
-function renderKlineChart(rows, predStartIdx) {
+function renderKlineChart(rows, predStartIdx, realtimeMap) {
   const chart = ensureChart();
   if (!chart) return;
   if (!rows.length) { renderChartPlaceholder('暂无K线数据'); return; }
   if (predStartIdx != null && predStartIdx > 0) {
-    chart.setOption(_klinePredictOption(rows, predStartIdx), true);
+    chart.setOption(_klinePredictOption(rows, predStartIdx, realtimeMap), true);
   } else {
     chart.setOption(_klineOption(rows), true);
   }
@@ -814,13 +866,28 @@ async function selectSymbol(symbol) {
   }
 }
 
+async function _fetchRealtimeMap(symbol, predictedDates) {
+  if (!predictedDates || !predictedDates.length) return {};
+  try {
+    const rt = await request(`/api/stock/${symbol}/realtime`);
+    if (!rt || !rt.found || !rt.open) return {};
+    const map = {};
+    if (predictedDates.includes(rt.date)) {
+      map[rt.date] = { open: rt.open, high: rt.high, low: rt.low, close: rt.close, volume: rt.volume, amount: rt.amount };
+    }
+    return map;
+  } catch { return {}; }
+}
+
 async function _fetchAndRenderFunnelPredict(symbol, name) {
   const summaryEl = document.getElementById('stockSummary');
   try {
     const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
-      renderKlineChart(pred.merged_kline, pred.prediction_start_index);
       const pk = pred.predicted_kline || [];
+      const predDates = pk.map(x => x.date);
+      const rtMap = await _fetchRealtimeMap(symbol, predDates);
+      renderKlineChart(pred.merged_kline, pred.prediction_start_index, rtMap);
       const hk = pred.history_kline || [];
       const lastClose = hk.length ? hk[hk.length - 1].close : 0;
       if (pk.length && lastClose) {
@@ -828,6 +895,11 @@ async function _fetchAndRenderFunnelPredict(symbol, name) {
         const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
         const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
         summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
+      }
+      const rtToday = Object.values(rtMap)[0];
+      if (rtToday && pk.length && lastClose) {
+        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
+        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
       }
       setStatus(`${name} 预测已加载`, 'success');
     }
@@ -861,9 +933,11 @@ async function _fetchAndRenderMarketPredict(symbol, name) {
   try {
     const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
-      const chart = ensureMarketChart();
-      if (chart) chart.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index), true);
       const pk = pred.predicted_kline || [];
+      const predDates = pk.map(x => x.date);
+      const rtMap = await _fetchRealtimeMap(symbol, predDates);
+      const chart = ensureMarketChart();
+      if (chart) chart.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index, rtMap), true);
       const hk = pred.history_kline || [];
       const lastClose = hk.length ? hk[hk.length - 1].close : 0;
       if (pk.length && lastClose) {
@@ -872,11 +946,14 @@ async function _fetchAndRenderMarketPredict(symbol, name) {
         const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
         summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
       }
+      const rtToday = Object.values(rtMap)[0];
+      if (rtToday && pk.length && lastClose) {
+        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
+        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
+      }
       setStatus(`${name} 预测已加载`, 'success');
     }
-  } catch (_) {
-    // K线不足等预测失败静默忽略，不影响行情展示
-  }
+  } catch (_) {}
 }
 
 /* ==================== Notice tab ==================== */
@@ -1051,8 +1128,10 @@ async function _fetchAndRenderNoticePredict(symbol, name) {
   try {
     const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
-      renderKlineChart(pred.merged_kline, pred.prediction_start_index);
       const pk = pred.predicted_kline || [];
+      const predDates = pk.map(x => x.date);
+      const rtMap = await _fetchRealtimeMap(symbol, predDates);
+      renderKlineChart(pred.merged_kline, pred.prediction_start_index, rtMap);
       const hk = pred.history_kline || [];
       const lastClose = hk.length ? hk[hk.length - 1].close : 0;
       if (pk.length && lastClose) {
@@ -1060,6 +1139,11 @@ async function _fetchAndRenderNoticePredict(symbol, name) {
         const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
         const tag = Number(chg) >= 0 ? `+${chg}%` : `${chg}%`;
         summaryEl.textContent += `  预测${pk.length}日: ${tag}`;
+      }
+      const rtToday = Object.values(rtMap)[0];
+      if (rtToday && pk.length && lastClose) {
+        const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
+        summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
       }
       setStatus(`${name} 预测已加载`, 'success');
     }

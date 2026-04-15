@@ -166,6 +166,33 @@ async def run_eod_screen(trade_date: str | None = None):
     return {"success": True, **result}
 
 
+@app.get("/api/stock/{symbol}/realtime")
+async def get_stock_realtime(symbol: str):
+    """盘中实时行情（当天 OHLCV），从全市场 snapshot 中过滤。"""
+    clean = normalize_symbol(symbol)
+    df = await provider.get_realtime_snapshot(cache_ttl_seconds=60)
+    if df.empty:
+        return {"symbol": clean, "found": False}
+    row = df[df["代码"] == clean]
+    if row.empty:
+        return {"symbol": clean, "found": False}
+    r = row.iloc[0]
+    from datetime import date as _date
+    return {
+        "symbol": clean,
+        "found": True,
+        "date": _date.today().isoformat(),
+        "open": float(r.get("今开", 0)),
+        "high": float(r.get("最高", 0)),
+        "low": float(r.get("最低", 0)),
+        "close": float(r.get("最新价", 0)),
+        "volume": float(r.get("成交量", 0)),
+        "amount": float(r.get("成交额", 0)),
+        "prev_close": float(r.get("昨收", 0)),
+        "change_pct": float(r.get("涨跌幅", 0)),
+    }
+
+
 @app.get("/api/predict/{symbol}/kronos")
 async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3):
     clean = normalize_symbol(symbol)
