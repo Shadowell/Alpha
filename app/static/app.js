@@ -2425,9 +2425,19 @@ async function init() {
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
       const filled = payload.missing_filled ?? 0;
-      const mTotal = payload.missing_total ?? payload.missing_filled ?? 0;
-      const extra = mTotal > 0 ? ` · 实补${filled}/${mTotal}条` : '';
-      setStatus(`同步完成: ${payload.message || ''} ${payload.success_symbols || 0}/${payload.total_symbols || 0}股${extra}`, 'success');
+      const mTotal = payload.missing_total ?? 0;
+      const unfillable = payload.missing_unfillable ?? 0;
+      let extra = '';
+      if (mTotal > 0) {
+        if (unfillable > 0 && filled === 0) {
+          extra = ` · ${mTotal}条缺失均为停牌/未上市`;
+        } else if (unfillable > 0) {
+          extra = ` · 实补${filled}条，${unfillable}条停牌无数据`;
+        } else {
+          extra = ` · 实补${filled}/${mTotal}条`;
+        }
+      }
+      setStatus(`同步完成: ${payload.success_symbols || 0}/${payload.total_symbols || 0}股${extra}`, 'success');
       await loadDataCenter();
     } catch (err) {
       setStatus(`同步失败: ${err.message}`, 'error');

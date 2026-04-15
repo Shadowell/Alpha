@@ -211,8 +211,17 @@ class KlineCacheService:
         completed, success_count, failed_count = result
 
         filled = self._count_filled(existing_pairs, missing_by_date)
+        unfillable = total_missing - filled
         final_status = "success" if completed > 0 else "failed"
-        final_msg = f"补缺同步完成(补入{filled}/{total_missing}条)" if completed > 0 else "补缺同步失败"
+        if completed > 0:
+            parts = [f"补缺同步完成(补入{filled}/{total_missing}条)"]
+            if unfillable > 0 and filled == 0:
+                parts = [f"补缺同步完成({total_missing}条缺失均为停牌/未上市)"]
+            elif unfillable > 0:
+                parts.append(f" {unfillable}条停牌/未上市无数据")
+            final_msg = "".join(parts)
+        else:
+            final_msg = "补缺同步失败"
         self.store.finish_sync_task(
             task_id=task_id,
             status=final_status,
@@ -245,6 +254,7 @@ class KlineCacheService:
             "failed_symbols": failed_count,
             "missing_total": total_missing,
             "missing_filled": filled,
+            "missing_unfillable": unfillable,
             "elapsed_sec": round(pytime.time() - t0, 1),
         }
 
