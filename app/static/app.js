@@ -814,8 +814,10 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
   const volumes = merged.map((x, i) => {
     if (i >= predStartIdx) {
       const rt = realtimeMap[dates[i]];
-      if (rt && rt.volume) return [i, rt.volume, rt.close >= rt.open ? 1 : -1];
-      return [i, x.volume || 0, x.close >= x.open ? 3 : 4];
+      if (rt && rt.volume) return { value: [i, rt.volume, 1], itemStyle: { color: rt.close >= rt.open ? '#ef4444' : '#16a34a' } };
+      const isUp = x.close >= x.open;
+      const bc = isUp ? 'rgba(239,68,68,0.7)' : 'rgba(22,163,106,0.7)';
+      return { value: [i, x.volume || 0, 5], itemStyle: { color: 'transparent', borderColor: bc, borderWidth: 1, borderType: 'dashed' } };
     }
     return [i, x.volume, x.close >= x.open ? 1 : -1];
   });
@@ -902,7 +904,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
       { name: 'MA5', type: 'line', data: ma5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#fbbf24' }, connectNulls: false },
       { name: 'MA10', type: 'line', data: ma10, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#60a5fa' }, connectNulls: false },
       { name: 'MA30', type: 'line', data: ma30, smooth: true, symbol: 'none', lineStyle: { width: 1, color: '#a78bfa' }, connectNulls: false },
-      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => { const flag = p.data[2]; if (flag === 3) return 'rgba(239,68,68,0.3)'; if (flag === 4) return 'rgba(22,163,106,0.3)'; return flag > 0 ? '#ef4444' : '#16a34a'; } } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => { const d = Array.isArray(p.data) ? p.data : (p.data?.value || p.data); const flag = d[2]; return flag > 0 ? '#ef4444' : '#16a34a'; } } },
     ],
   };
 }
