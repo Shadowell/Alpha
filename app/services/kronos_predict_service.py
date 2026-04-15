@@ -89,19 +89,21 @@ class KronosPredictService:
     async def _get_future_trade_days(self, history: list[dict], horizon: int) -> list[str]:
         last_date = history[-1]["date"]
         trade_days_df = await self._provider.get_trade_days()
-        if trade_days_df.empty or "trade_date" not in trade_days_df.columns:
-            raise RuntimeError("交易日历不可用，无法推算未来交易日。")
-
-        all_dates = pd.to_datetime(trade_days_df["trade_date"], errors="coerce").dropna()
         target = pd.to_datetime(last_date)
-        future = all_dates[all_dates > target].sort_values()
 
-        if len(future) < horizon:
-            raise RuntimeError(
-                f"交易日历中找不到 {last_date} 之后的 {horizon} 个交易日。"
-                "日历可能尚未更新。"
-            )
-        return [d.strftime("%Y-%m-%d") for d in future.iloc[:horizon]]
+        if not trade_days_df.empty and "trade_date" in trade_days_df.columns:
+            all_dates = pd.to_datetime(trade_days_df["trade_date"], errors="coerce").dropna()
+            future = all_dates[all_dates > target].sort_values()
+            if len(future) >= horizon:
+                return [d.strftime("%Y-%m-%d") for d in future.iloc[:horizon]]
+
+        result = []
+        d = target
+        while len(result) < horizon:
+            d += pd.Timedelta(days=1)
+            if d.weekday() < 5:
+                result.append(d.strftime("%Y-%m-%d"))
+        return result
 
     # ── inference ──
 
