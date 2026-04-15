@@ -233,7 +233,24 @@ class AkshareDataProvider:
             print(f"[data_provider] get_hist tx fallback failed for {symbol}: {tx_exc}")
             return pd.DataFrame()
 
-    async def get_all_concepts(self, cache_seconds: int = 30) -> pd.DataFrame:
+    async def get_all_concepts(self, cache_seconds: int = 300) -> pd.DataFrame:
+        if self.concept_snapshot_cache is not None:
+            ts, cached = self.concept_snapshot_cache
+            age = (datetime.now() - ts).total_seconds()
+            if age <= cache_seconds and not cached.empty:
+                return cached.copy()
+
+        try:
+            df = await asyncio.to_thread(ak.stock_board_industry_summary_ths)
+            if df is not None and not df.empty:
+                result = _normalize_ths_industry(df)
+                if not result.empty:
+                    self.concept_snapshot_cache = (datetime.now(), result)
+                    print(f"[data_provider] concepts via stock_board_industry_summary_ths: {len(result)} rows")
+                    return result
+        except Exception as e:
+            print(f"[data_provider] stock_board_industry_summary_ths failed: {e}")
+
         if self.concept_snapshot_cache is not None:
             _, cached = self.concept_snapshot_cache
             if not cached.empty:
@@ -283,13 +300,30 @@ class AkshareDataProvider:
         return pd.DataFrame(columns=["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"])
 
     async def _fetch_hot_stocks_from_spot(self) -> pd.DataFrame:
-        """从全市场实时行情中提取涨幅排行作为热门个股。"""
+        """优先用同花顺连续上涨排行，fallback 到创新高排行，最终 fallback 到新浪全市场。"""
+        # 1) stock_rank_lxsz_ths — 连续上涨排行
         try:
-            df = await asyncio.to_thread(ak.stock_hot_rank_em)
-            return normalize_hot_stocks_df(df)
-        except Exception:
-            pass
+            df = await asyncio.to_thread(ak.stock_rank_lxsz_ths)
+            if df is not None and not df.empty:
+                result = _normalize_ths_lxsz(df)
+                if not result.empty:
+                    print(f"[data_provider] hot stocks via stock_rank_lxsz_ths: {len(result)} rows")
+                    return result
+        except Exception as e:
+            print(f"[data_provider] stock_rank_lxsz_ths failed: {e}")
 
+        # 2) stock_rank_cxg_ths — 创新高排行
+        try:
+            df = await asyncio.to_thread(ak.stock_rank_cxg_ths)
+            if df is not None and not df.empty:
+                result = _normalize_ths_cxg(df)
+                if not result.empty:
+                    print(f"[data_provider] hot stocks via stock_rank_cxg_ths: {len(result)} rows")
+                    return result
+        except Exception as e:
+            print(f"[data_provider] stock_rank_cxg_ths failed: {e}")
+
+        # 3) stock_zh_a_spot — 新浪全市场行情（最终 fallback）
         try:
             df = await asyncio.to_thread(ak.stock_zh_a_spot)
             if df is None or df.empty:
@@ -299,7 +333,7 @@ class AkshareDataProvider:
                 return pd.DataFrame()
             payload = payload[payload["最新价"] > 0]
             payload = payload[~payload["名称"].str.upper().str.contains("ST", na=False)]
-            payload = payload[payload["代码"].str.startswith(("00", "30", "60"))]
+            payload = payload[payload["代码"].str.startswith(("00", "60"))]
             payload = payload.sort_values("涨跌幅", ascending=False)
             self.realtime_snapshot_cache = (datetime.now(), payload)
 
@@ -310,9 +344,10 @@ class AkshareDataProvider:
             result["latest_price"] = payload["最新价"].values
             result["change_amount"] = payload["涨跌额"].values
             result["change_pct"] = payload["涨跌幅"].values
+            print(f"[data_provider] hot stocks via stock_zh_a_spot: {len(result)} rows")
             return result.reset_index(drop=True)
         except Exception as exc:
-            print(f"[data_provider] _fetch_hot_stocks_from_spot fallback failed: {exc}")
+            print(f"[data_provider] _fetch_hot_stocks_from_spot all fallbacks failed: {exc}")
             return pd.DataFrame()
 
     async def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
@@ -380,6 +415,82 @@ def _to_tx_symbol(value: Any) -> str:
     if raw.startswith(("43", "83", "87", "92")):
         return f"bj{raw}"
     return raw.lower()
+
+
+def _normalize_ths_industry(df: pd.DataFrame) -> pd.DataFrame:
+    """stock_board_industry_summary_ths 返回: 序号, 板块, 涨跌幅, 总成交量, 总成交额, 净流入, 上涨家数, 下跌家数, 均价, 领涨股, 领涨股-涨跌幅。
+    映射为 build_concept_heat 需要的字段: 板块名称, 涨跌幅, 上涨家数, 下跌家数, 领涨股票。"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    name_col = "板块" if "板块" in df.columns else ("板块名称" if "板块名称" in df.columns else None)
+    if not name_col:
+        return pd.DataFrame()
+
+    out = pd.DataFrame()
+    out["板块名称"] = df[name_col].astype(str)
+    out["涨跌幅"] = pd.to_numeric(df.get("涨跌幅", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    out["上涨家数"] = pd.to_numeric(df.get("上涨家数", pd.Series(dtype=float)), errors="coerce").fillna(0).astype(int)
+    out["下跌家数"] = pd.to_numeric(df.get("下跌家数", pd.Series(dtype=float)), errors="coerce").fillna(0).astype(int)
+
+    leader_col = "领涨股" if "领涨股" in df.columns else None
+    leader_pct_col = "领涨股-涨跌幅" if "领涨股-涨跌幅" in df.columns else None
+    if leader_col:
+        if leader_pct_col:
+            out["领涨股票"] = df[leader_col].astype(str) + "(" + df[leader_pct_col].astype(str) + "%)"
+        else:
+            out["领涨股票"] = df[leader_col].astype(str)
+    else:
+        out["领涨股票"] = ""
+
+    return out.reset_index(drop=True)
+
+
+def _normalize_ths_lxsz(df: pd.DataFrame) -> pd.DataFrame:
+    """stock_rank_lxsz_ths 返回: 股票代码, 股票简称, 收盘价, 最高价, 最低价, 连涨天数, 连续涨跌幅, 累计换手率, 所属行业。"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    code_col = "股票代码" if "股票代码" in df.columns else None
+    name_col = "股票简称" if "股票简称" in df.columns else None
+    if not code_col or not name_col:
+        return pd.DataFrame()
+
+    out = pd.DataFrame()
+    out["symbol"] = df[code_col].apply(normalize_symbol)
+    out["name"] = df[name_col].astype(str)
+    price_col = "收盘价" if "收盘价" in df.columns else ("最新价" if "最新价" in df.columns else None)
+    out["latest_price"] = pd.to_numeric(df[price_col], errors="coerce").fillna(0.0) if price_col else 0.0
+    pct_col = "连续涨跌幅" if "连续涨跌幅" in df.columns else ("涨跌幅" if "涨跌幅" in df.columns else None)
+    out["change_pct"] = pd.to_numeric(df[pct_col], errors="coerce").fillna(0.0) if pct_col else 0.0
+    out["change_amount"] = 0.0
+
+    out = out[out["symbol"].str.startswith(("00", "60"))]
+    out = out[~out["name"].str.upper().str.contains("ST", na=False)]
+    out = out.sort_values("change_pct", ascending=False).reset_index(drop=True)
+    out["rank"] = range(1, len(out) + 1)
+    return out
+
+
+def _normalize_ths_cxg(df: pd.DataFrame) -> pd.DataFrame:
+    """stock_rank_cxg_ths 返回: 序号, 股票代码, 股票简称, 涨跌幅, 最新价, 成交量, 成交额, 创新高类型。"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    code_col = "股票代码" if "股票代码" in df.columns else None
+    name_col = "股票简称" if "股票简称" in df.columns else None
+    if not code_col or not name_col:
+        return pd.DataFrame()
+
+    out = pd.DataFrame()
+    out["symbol"] = df[code_col].apply(normalize_symbol)
+    out["name"] = df[name_col].astype(str)
+    out["latest_price"] = pd.to_numeric(df.get("最新价", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    out["change_pct"] = pd.to_numeric(df.get("涨跌幅", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    out["change_amount"] = 0.0
+
+    out = out[out["symbol"].str.startswith(("00", "60"))]
+    out = out[~out["name"].str.upper().str.contains("ST", na=False)]
+    out = out.sort_values("change_pct", ascending=False).reset_index(drop=True)
+    out["rank"] = range(1, len(out) + 1)
+    return out
 
 
 def normalize_hot_stocks_df(df: pd.DataFrame) -> pd.DataFrame:
