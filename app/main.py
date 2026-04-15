@@ -18,6 +18,7 @@ from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.hermes_memory import HermesMemory
 from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop
+from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
 
 from app.routers.kline import init_kline_router, kline_cache_loop
@@ -268,6 +269,27 @@ async def approve_agent_proposal(proposal_id: int, body: dict | None = None):
 
     hermes_memory.update_proposal_status(proposal_id, "approved", approved_by="user")
     hermes_memory.record_feedback(proposal_id, "approve", note)
+
+    record_feedback_to_hermes_memory(
+        proposal_title=proposal["title"],
+        proposal_type=proposal["type"],
+        action="approve",
+        note=note,
+        diff_payload=proposal.get("diff_payload"),
+    )
+
+    try:
+        funnel = await service.get_funnel()
+        baseline = {
+            "candidate_count": funnel.stats.get("candidate", 0) if hasattr(funnel, "stats") else 0,
+            "focus_count": funnel.stats.get("focus", 0) if hasattr(funnel, "stats") else 0,
+            "buy_count": funnel.stats.get("buy", 0) if hasattr(funnel, "stats") else 0,
+            "approved_at": proposal.get("approved_at", ""),
+        }
+        hermes_memory.create_outcome_tracking(proposal_id, baseline, check_after_days=3)
+    except Exception as e:
+        print(f"[hermes] outcome tracking setup failed: {e}")
+
     return {"success": True, "message": "提案已批准并应用"}
 
 
@@ -283,7 +305,44 @@ async def reject_agent_proposal(proposal_id: int, body: dict | None = None):
 
     hermes_memory.update_proposal_status(proposal_id, "rejected")
     hermes_memory.record_feedback(proposal_id, "reject", note)
+
+    record_feedback_to_hermes_memory(
+        proposal_title=proposal["title"],
+        proposal_type=proposal["type"],
+        action="reject",
+        note=note,
+        diff_payload=proposal.get("diff_payload"),
+    )
+
     return {"success": True, "message": "提案已驳回"}
+
+
+@app.post("/api/agent/proposals/create")
+async def create_agent_proposal(body: dict):
+    """直接创建提案（供 MCP 工具调用，跳过完整诊断流程）。"""
+    required = {"type", "title", "reasoning"}
+    if not required.issubset(body.keys()):
+        raise HTTPException(status_code=400, detail=f"缺少必填字段: {required - body.keys()}")
+
+    task_id = hermes_memory.create_task(
+        task_type=f"mcp_{body['type']}",
+        trigger="mcp",
+        input_summary=body,
+    )
+    hermes_memory.finish_task(task_id, status="success", output_summary={"source": "mcp"}, elapsed_ms=0)
+
+    proposal_id = hermes_memory.create_proposal(
+        task_id,
+        proposal_type=body["type"],
+        title=body["title"],
+        risk_level=body.get("risk_level", "medium"),
+        reasoning=body["reasoning"],
+        diff_payload=body.get("diff"),
+        expected_impact=body.get("expected_impact", ""),
+        confidence=float(body.get("confidence", 0.5)),
+        evidence=body.get("evidence", []),
+    )
+    return {"success": True, "proposal_id": proposal_id, "task_id": task_id}
 
 
 @app.get("/api/agent/tasks")

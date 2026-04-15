@@ -71,6 +71,20 @@ class HermesMemory:
                     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_feedback_proposal ON agent_feedback(proposal_id);
+
+                CREATE TABLE IF NOT EXISTS agent_outcome_tracking (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    proposal_id   INTEGER NOT NULL REFERENCES agent_proposals(id),
+                    baseline      TEXT NOT NULL,
+                    check_after_days INTEGER NOT NULL DEFAULT 3,
+                    check_date    TEXT NOT NULL,
+                    status        TEXT NOT NULL DEFAULT 'pending',
+                    outcome       TEXT,
+                    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                    checked_at    TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_outcome_tracking_status ON agent_outcome_tracking(status);
+                CREATE INDEX IF NOT EXISTS idx_outcome_tracking_date ON agent_outcome_tracking(check_date);
                 """
             )
 
@@ -220,6 +234,58 @@ class HermesMemory:
                 "SELECT * FROM agent_feedback WHERE proposal_id=? ORDER BY id", (proposal_id,)
             ).fetchall()
             return [_row_to_dict(r) for r in rows]
+
+    # ── agent_outcome_tracking ──
+
+    def create_outcome_tracking(
+        self,
+        proposal_id: int,
+        baseline: dict,
+        check_after_days: int = 3,
+    ) -> int:
+        from datetime import timedelta
+        check_date = (now_cn() + timedelta(days=check_after_days)).date().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO agent_outcome_tracking(proposal_id, baseline, check_after_days, check_date)
+                   VALUES (?, ?, ?, ?)""",
+                (proposal_id, _dumps(baseline), check_after_days, check_date),
+            )
+            conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def get_pending_outcome_checks(self, today: str | None = None) -> list[dict]:
+        if today is None:
+            today = now_cn().date().isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT ot.*, ap.title as proposal_title, ap.type as proposal_type,
+                          ap.diff_payload
+                   FROM agent_outcome_tracking ot
+                   JOIN agent_proposals ap ON ot.proposal_id = ap.id
+                   WHERE ot.status = 'pending' AND ot.check_date <= ?
+                   ORDER BY ot.check_date""",
+                (today,),
+            ).fetchall()
+            return [_row_to_dict(r) for r in rows]
+
+    def complete_outcome_check(self, tracking_id: int, outcome: dict) -> None:
+        ts = now_cn().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE agent_outcome_tracking
+                   SET status='checked', outcome=?, checked_at=?
+                   WHERE id=?""",
+                (_dumps(outcome), ts, tracking_id),
+            )
+            conn.execute(
+                """UPDATE agent_feedback
+                   SET outcome=?
+                   WHERE proposal_id=(SELECT proposal_id FROM agent_outcome_tracking WHERE id=?)
+                   AND action='approve'""",
+                (_dumps(outcome), tracking_id),
+            )
+            conn.commit()
 
 
 # ── helpers ──

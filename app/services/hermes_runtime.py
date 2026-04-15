@@ -1,4 +1,9 @@
-"""Hermes 运行时 — 调度、工具、LLM 调用、复盘任务。"""
+"""Hermes 运行时 — 调度、工具、LLM 调用、复盘任务。
+
+支持两种模式：
+1. Agent 模式：Hermes Agent 可用时，发送任务描述让 Agent 自主调用 MCP 工具
+2. 降级模式：Agent 不可用时，内部采集数据 + 单次 LLM 调用
+"""
 from __future__ import annotations
 
 import asyncio
@@ -10,10 +15,10 @@ from typing import Any
 from app.services.hermes_memory import HermesMemory
 from app.services.time_utils import now_cn
 
-_TASK_TIMEOUT = 120  # 单任务超时秒数
+_TASK_TIMEOUT = 180  # Agent 模式需要更长超时
 _MAX_CONCURRENT = 2
 _CIRCUIT_BREAKER_THRESHOLD = 3
-_CIRCUIT_BREAKER_COOLDOWN = 3600  # 熔断冷却 1h
+_CIRCUIT_BREAKER_COOLDOWN = 3600
 
 
 class HermesRuntime:
@@ -32,7 +37,7 @@ class HermesRuntime:
         self._failures: dict[str, list[float]] = {}
         self._running = False
 
-    # ── P0 工具集 ──
+    # ── P0 工具集（降级模式使用）──
 
     async def _tool_get_funnel_snapshot(self, trade_date: str | None = None) -> dict:
         f = await self.funnel.get_funnel(trade_date)
@@ -87,7 +92,7 @@ class HermesRuntime:
 
             try:
                 result = await asyncio.wait_for(
-                    self._dispatch(task_type, task_id, tool_calls),
+                    self._dispatch(task_type, task_id, tool_calls, params or {}),
                     timeout=_TASK_TIMEOUT,
                 )
                 elapsed = int((time.time() - t0) * 1000)
@@ -120,16 +125,16 @@ class HermesRuntime:
             finally:
                 self._running = False
 
-    async def _dispatch(self, task_type: str, task_id: int, tool_calls: list) -> dict:
+    async def _dispatch(self, task_type: str, task_id: int, tool_calls: list, params: dict) -> dict:
         if task_type == "daily_review":
-            return await self._do_daily_review(task_id, tool_calls)
+            return await self._do_daily_review(task_id, tool_calls, params)
         if task_type == "notice_review":
-            return await self._do_notice_review(task_id, tool_calls)
+            return await self._do_notice_review(task_id, tool_calls, params)
         if task_type == "full_diagnosis":
-            return await self._do_full_diagnosis(task_id, tool_calls)
+            return await self._do_full_diagnosis(task_id, tool_calls, params)
         return {"summary": {"message": f"未知任务类型: {task_type}"}, "observations": {}}
 
-    # ── 数据采集（Observer 层）──
+    # ── 数据采集（Observer 层，降级模式使用）──
 
     async def _collect_observations(self, tool_calls: list) -> dict:
         obs: dict[str, Any] = {}
@@ -172,12 +177,11 @@ class HermesRuntime:
         obs["metrics"] = metrics
         return obs
 
-    # ── LLM 调用（优先本地 hermes-agent API Server）──
+    # ── LLM / Agent 调用 ──
 
     _HERMES_AGENT_BASE = os.environ.get("HERMES_AGENT_URL", "http://127.0.0.1:8642/v1")
 
     async def _check_hermes_agent(self) -> bool:
-        """检测本地 hermes-agent API Server 是否可用。"""
         import httpx
         health_url = self._HERMES_AGENT_BASE.replace("/v1", "/health")
         try:
@@ -187,25 +191,76 @@ class HermesRuntime:
         except Exception:
             return False
 
-    async def _call_llm(self, system_prompt: str, user_prompt: str) -> dict | None:
+    async def _delegate_to_hermes_agent(self, task_description: str) -> dict | None:
+        """向 Hermes Agent 发送任务描述，让其自主调用 MCP 工具进行诊断。
+
+        Hermes Agent 已通过 MCP 连接到 Alpha API，并且拥有 SKILL.md 中的领域知识
+        和 MEMORY.md 中的历史经验。它会自主决定调哪些工具、分析什么数据。
+        """
         import httpx
         import json as _json
 
-        hermes_available = await self._check_hermes_agent()
+        api_key = os.environ.get("API_SERVER_KEY", "")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
-        if hermes_available:
-            base_url = self._HERMES_AGENT_BASE
-            api_key = os.environ.get("API_SERVER_KEY", "")
-            model = "hermes-agent"
-            timeout = 90
-            print("[hermes] using local hermes-agent API Server")
-        else:
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            if not api_key:
+        payload = {
+            "model": "hermes-agent",
+            "messages": [
+                {"role": "system", "content": self._AGENT_SYSTEM_PROMPT},
+                {"role": "user", "content": task_description},
+            ],
+            "temperature": 0.3,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=150) as client:
+                resp = await client.post(
+                    f"{self._HERMES_AGENT_BASE}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                return _json.loads(content)
+        except _json.JSONDecodeError:
+            try:
+                raw = data["choices"][0]["message"]["content"]
+                start = raw.find("{")
+                end = raw.rfind("}") + 1
+                if start >= 0 and end > start:
+                    return _json.loads(raw[start:end])
+            except Exception:
+                pass
+            return None
+        except Exception as e:
+            print(f"[hermes] agent delegation failed: {e}")
+            return None
+
+    async def _call_llm(self, system_prompt: str, user_prompt: str) -> dict | None:
+        """降级模式：直接调用 LLM API（不经过 Hermes Agent）。"""
+        import httpx
+        import json as _json
+
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            hermes_available = await self._check_hermes_agent()
+            if hermes_available:
+                api_key = os.environ.get("API_SERVER_KEY", "")
+                base_url = self._HERMES_AGENT_BASE
+                model = "hermes-agent"
+                timeout = 90
+                use_json_format = False
+                print("[hermes] fallback: using local hermes-agent API Server")
+            else:
                 return None
+        else:
             model = os.environ.get("HERMES_MODEL", "gpt-4o-mini")
             base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
             timeout = 30
+            use_json_format = True
 
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -219,7 +274,7 @@ class HermesRuntime:
             ],
             "temperature": 0.3,
         }
-        if not hermes_available:
+        if use_json_format:
             payload["response_format"] = {"type": "json_object"}
 
         try:
@@ -248,9 +303,38 @@ class HermesRuntime:
             print(f"[hermes] LLM call failed: {e}")
             return None
 
-    # ── 系统 Prompt ──
+    # ── System Prompts ──
 
-    _SYSTEM_PROMPT = """你是 Hermes，Alpha 量化选股系统的内嵌投研代理。
+    _AGENT_SYSTEM_PROMPT = """你是 Hermes，Alpha 量化选股系统的内嵌投研代理。
+
+你可以通过 MCP 工具直接访问 Alpha 系统的实时数据。请主动调用工具获取你需要的信息，
+不要等待数据被喂给你。
+
+## 职责
+1. 主动调用工具观察系统运行数据（漏斗状态、公告筛选结果、策略参数、K线同步质量）
+2. 根据收集到的数据，诊断问题（候选池过空/过满、转化率异常、参数偏差、数据质量问题）
+3. 如果发现需要调整的地方，使用提案工具（propose_rule_patch / propose_notice_rule_patch）直接创建提案
+
+## 约束
+- 你只能建议，不能直接修改系统配置
+- 所有建议必须包含理由、证据、预期影响和置信度
+- 参数调整建议每次变动不超过 20%，一次最多调 2 个参数
+- 最终输出一个 JSON 对象作为任务总结
+
+## 诊断参考
+- 候选池健康范围: 5-30 只（0=过严, >50=过松）
+- box_range_threshold 默认 0.18，正常范围 0.14-0.24
+- buy_score_threshold 默认 78，不低于 70
+- 公告分池: ≥80→buy, ≥65→focus, 其余→candidate
+- 检查 MEMORY.md 中的历史调参经验，避免重复过去被驳回的建议
+
+## 技能经验库
+你的 skills/alpha/references/ 目录下有详细的诊断流程和参数调优经验，
+在做复杂诊断时请参考这些经验文档。
+
+请用中文回答。"""
+
+    _FALLBACK_SYSTEM_PROMPT = """你是 Hermes，Alpha 量化选股系统的内嵌投研代理。
 
 你的职责是：
 1. 观察系统运行数据（漏斗状态、公告筛选结果、策略参数、K线同步质量）
@@ -266,15 +350,74 @@ class HermesRuntime:
 
     # ── daily_review 盘后复盘 ──
 
-    async def _do_daily_review(self, task_id: int, tool_calls: list) -> dict:
+    async def _do_daily_review(self, task_id: int, tool_calls: list, params: dict) -> dict:
+        hermes_available = await self._check_hermes_agent()
+
+        if hermes_available:
+            return await self._do_daily_review_agent(task_id, tool_calls)
+        return await self._do_daily_review_fallback(task_id, tool_calls)
+
+    async def _do_daily_review_agent(self, task_id: int, tool_calls: list) -> dict:
+        """Agent 模式：让 Hermes Agent 自主采集数据并诊断。"""
+        task_description = f"""## 任务：盘后复盘
+
+请完成以下工作：
+
+1. **数据采集**：调用以下工具获取系统当前状态
+   - get_funnel_snapshot：获取策略漏斗状态
+   - get_strategy_profile：获取当前策略参数
+   - get_kline_sync_status：检查K线数据同步状态
+   - get_hot_concepts：查看热门板块
+
+2. **诊断分析**：
+   - 评估候选池数量是否合理（0只=过严, >30只=过松）
+   - 检查各池转化率
+   - 评估参数是否存在偏差
+   - 检查数据完整性
+
+3. **产出建议**：
+   - 如果发现问题，调用 propose_rule_patch 创建参数调优提案
+   - 每个提案必须包含：理由、证据、预期影响、置信度(0-1)
+
+4. **返回总结**：输出以下 JSON 格式
+```json
+{{
+  "summary": "一句话总结今日状态",
+  "diagnosis": [
+    {{"issue": "问题描述", "severity": "low/medium/high", "detail": "详细说明"}}
+  ],
+  "proposals_created": 0
+}}
+```
+
+当前时间：{now_cn().isoformat()}
+"""
+        tool_calls.append({"tool": "hermes_agent_delegate", "status": "started"})
+        result = await self._delegate_to_hermes_agent(task_description)
+        tool_calls.append({"tool": "hermes_agent_delegate", "status": "ok" if result else "failed"})
+
+        if result:
+            return {
+                "summary": {
+                    "task": "daily_review",
+                    "mode": "agent",
+                    "llm_used": True,
+                    "proposals_created": result.get("proposals_created", 0),
+                    "message": result.get("summary", "Agent 模式复盘完成"),
+                },
+                "observations": {"diagnosis": result.get("diagnosis", [])},
+            }
+
+        print("[hermes] agent delegation failed, falling back to legacy mode")
+        return await self._do_daily_review_fallback(task_id, tool_calls)
+
+    async def _do_daily_review_fallback(self, task_id: int, tool_calls: list) -> dict:
+        """降级模式：内部采集数据 + 单次 LLM 调用。"""
         obs = await self._collect_observations(tool_calls)
         metrics = obs.get("metrics", {})
 
-        # 尝试 LLM 分析
-        funnel_data = obs.get("get_funnel_snapshot") or {}
         strategy = obs.get("get_strategy_profile") or {}
         sync_status = obs.get("get_kline_sync_status") or {}
-        concepts = obs.get("get_hot_concepts") or {}
 
         user_prompt = f"""## 任务：盘后复盘
 
@@ -321,7 +464,7 @@ class HermesRuntime:
   ]
 }}"""
 
-        llm_result = await self._call_llm(self._SYSTEM_PROMPT, user_prompt)
+        llm_result = await self._call_llm(self._FALLBACK_SYSTEM_PROMPT, user_prompt)
         tool_calls.append({"tool": "llm_daily_review", "status": "ok" if llm_result else "skipped"})
 
         proposals_created = 0
@@ -342,7 +485,6 @@ class HermesRuntime:
                 )
                 proposals_created += 1
 
-        # 即使 LLM 不可用，也做规则化诊断
         if not llm_result:
             llm_result = self._rule_based_daily_diagnosis(metrics)
             for p in llm_result.get("proposals", []):
@@ -362,6 +504,7 @@ class HermesRuntime:
         return {
             "summary": {
                 "task": "daily_review",
+                "mode": "fallback",
                 "llm_used": llm_result is not None,
                 "proposals_created": proposals_created,
                 "message": (llm_result or {}).get("summary", "复盘完成"),
@@ -402,7 +545,67 @@ class HermesRuntime:
 
     # ── notice_review 公告复盘 ──
 
-    async def _do_notice_review(self, task_id: int, tool_calls: list) -> dict:
+    async def _do_notice_review(self, task_id: int, tool_calls: list, params: dict) -> dict:
+        hermes_available = await self._check_hermes_agent()
+
+        if hermes_available:
+            return await self._do_notice_review_agent(task_id, tool_calls)
+        return await self._do_notice_review_fallback(task_id, tool_calls)
+
+    async def _do_notice_review_agent(self, task_id: int, tool_calls: list) -> dict:
+        """Agent 模式：让 Hermes Agent 自主分析公告筛选质量。"""
+        task_description = f"""## 任务：公告选股复盘
+
+请完成以下工作：
+
+1. **数据采集**：调用以下工具获取公告筛选数据
+   - get_notice_funnel：获取公告池状态
+   - get_notice_keywords：获取关键词规则列表
+   - get_funnel_snapshot：对照策略漏斗（看重叠度）
+
+2. **诊断分析**：
+   - 评估公告筛选命中质量
+   - 分析各关键词类型的命中分布是否合理
+   - 检查是否有新类型的利好公告未被覆盖
+
+3. **产出建议**：
+   - 如果发现权重偏差或规则缺失，调用 propose_notice_rule_patch 创建提案
+   - 每个提案包含具体的调整建议
+
+4. **返回总结**：输出以下 JSON 格式
+```json
+{{
+  "summary": "一句话总结公告筛选状态",
+  "diagnosis": [
+    {{"issue": "问题描述", "severity": "low/medium/high", "detail": "详细说明"}}
+  ],
+  "proposals_created": 0
+}}
+```
+
+当前时间：{now_cn().isoformat()}
+"""
+        tool_calls.append({"tool": "hermes_agent_delegate", "status": "started"})
+        result = await self._delegate_to_hermes_agent(task_description)
+        tool_calls.append({"tool": "hermes_agent_delegate", "status": "ok" if result else "failed"})
+
+        if result:
+            return {
+                "summary": {
+                    "task": "notice_review",
+                    "mode": "agent",
+                    "llm_used": True,
+                    "proposals_created": result.get("proposals_created", 0),
+                    "message": result.get("summary", "Agent 模式公告复盘完成"),
+                },
+                "observations": {"diagnosis": result.get("diagnosis", [])},
+            }
+
+        print("[hermes] agent delegation failed, falling back to legacy mode")
+        return await self._do_notice_review_fallback(task_id, tool_calls)
+
+    async def _do_notice_review_fallback(self, task_id: int, tool_calls: list) -> dict:
+        """降级模式：内部采集 + 单次 LLM。"""
         obs = await self._collect_observations(tool_calls)
         metrics = obs.get("metrics", {})
         notice_data = obs.get("get_notice_snapshot") or {}
@@ -451,7 +654,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
   ]
 }}"""
 
-        llm_result = await self._call_llm(self._SYSTEM_PROMPT, user_prompt)
+        llm_result = await self._call_llm(self._FALLBACK_SYSTEM_PROMPT, user_prompt)
         tool_calls.append({"tool": "llm_notice_review", "status": "ok" if llm_result else "skipped"})
 
         proposals_created = 0
@@ -476,6 +679,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         return {
             "summary": {
                 "task": "notice_review",
+                "mode": "fallback",
                 "llm_used": llm_result is not None,
                 "proposals_created": proposals_created,
                 "message": result_data.get("summary", "公告复盘完成"),
@@ -485,9 +689,9 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
 
     # ── full_diagnosis 全面诊断 ──
 
-    async def _do_full_diagnosis(self, task_id: int, tool_calls: list) -> dict:
-        daily = await self._do_daily_review(task_id, tool_calls)
-        notice = await self._do_notice_review(task_id, tool_calls)
+    async def _do_full_diagnosis(self, task_id: int, tool_calls: list, params: dict) -> dict:
+        daily = await self._do_daily_review(task_id, tool_calls, params)
+        notice = await self._do_notice_review(task_id, tool_calls, params)
         total_proposals = (daily["summary"].get("proposals_created", 0)
                           + notice["summary"].get("proposals_created", 0))
         return {
@@ -513,6 +717,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             "llm_available": hermes_ok or bool(api_key),
             "hermes_agent_available": hermes_ok,
             "hermes_agent_url": self._HERMES_AGENT_BASE,
+            "mode": "agent" if hermes_ok else "fallback",
             "last_run": _format_last_run(last) if last else None,
             "stats": {
                 "total_proposals": sum(counts.values()),
@@ -563,10 +768,76 @@ async def hermes_scheduler_loop(runtime: HermesRuntime) -> None:
                     print("[hermes] scheduled notice_review")
                     await runtime.run_task("notice_review", trigger="scheduled")
 
+            # 效果追踪检查 16:00（盘后数据已更新）
+            if h == 16 and 0 <= m < 10:
+                await _check_outcome_tracking(runtime)
+
         except Exception as e:
             print(f"[hermes] scheduler error: {e}")
 
         await asyncio.sleep(300)
+
+
+async def _check_outcome_tracking(runtime: HermesRuntime) -> None:
+    """检查到期的提案效果追踪，比较基线与当前指标。"""
+    from app.services.hermes_memory_bridge import record_outcome_to_hermes_memory
+
+    pending = runtime.memory.get_pending_outcome_checks()
+    if not pending:
+        return
+
+    print(f"[hermes] checking {len(pending)} outcome tracking records")
+
+    try:
+        funnel = await runtime.funnel.get_funnel()
+        current = {
+            "candidate_count": funnel.stats.get("candidate", 0) if hasattr(funnel, "stats") else 0,
+            "focus_count": funnel.stats.get("focus", 0) if hasattr(funnel, "stats") else 0,
+            "buy_count": funnel.stats.get("buy", 0) if hasattr(funnel, "stats") else 0,
+        }
+    except Exception as e:
+        print(f"[hermes] outcome tracking: cannot get current funnel: {e}")
+        return
+
+    for record in pending:
+        try:
+            import json
+            baseline = record.get("baseline") or {}
+            if isinstance(baseline, str):
+                baseline = json.loads(baseline)
+
+            outcome = {
+                "baseline": baseline,
+                "current": current,
+                "delta": {
+                    "candidate": current["candidate_count"] - baseline.get("candidate_count", 0),
+                    "focus": current["focus_count"] - baseline.get("focus_count", 0),
+                    "buy": current["buy_count"] - baseline.get("buy_count", 0),
+                },
+                "days_elapsed": record.get("check_after_days", 3),
+            }
+
+            delta = outcome["delta"]
+            if delta["candidate"] > 0:
+                effect = f"候选池+{delta['candidate']}"
+            elif delta["candidate"] < 0:
+                effect = f"候选池{delta['candidate']}"
+            else:
+                effect = "候选池不变"
+
+            if delta["focus"] != 0:
+                effect += f", 重点池{'+'if delta['focus']>0 else ''}{delta['focus']}"
+            if delta["buy"] != 0:
+                effect += f", 买入池{'+'if delta['buy']>0 else ''}{delta['buy']}"
+
+            runtime.memory.complete_outcome_check(record["id"], outcome)
+
+            title = record.get("proposal_title", "未知提案")
+            record_outcome_to_hermes_memory(title, effect)
+
+            print(f"[hermes] outcome tracked: {title} -> {effect}")
+        except Exception as e:
+            print(f"[hermes] outcome tracking error for record {record.get('id')}: {e}")
 
 
 # ── helpers ──
