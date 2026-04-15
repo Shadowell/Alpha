@@ -1680,6 +1680,11 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 .paper-account-left { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
 .paper-account-right { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .paper-account-actions { display: flex; gap: 6px; align-items: center; }
+.paper-refresh-hint {
+  font-size: 11px; color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
 
 .paper-asset-card {
   display: flex; flex-direction: column; justify-content: center; gap: 2px;
