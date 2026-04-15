@@ -54,6 +54,35 @@ function setMeta() {
   }
 }
 
+function _updateMarketStatus() {
+  const dot = document.getElementById('marketDot');
+  const label = document.getElementById('marketLabel');
+  if (!dot || !label) return;
+  const now = new Date();
+  const h = now.getHours(), m = now.getMinutes();
+  const t = h * 60 + m;
+  const day = now.getDay();
+  const isWeekend = day === 0 || day === 6;
+  let cls, text;
+  if (isWeekend) {
+    cls = 'close'; text = '休市';
+  } else if (t >= 570 && t < 690) {
+    cls = 'open'; text = '上午盘中';
+  } else if (t >= 690 && t < 780) {
+    cls = 'pre'; text = '午间休市';
+  } else if (t >= 780 && t < 900) {
+    cls = 'open'; text = '下午盘中';
+  } else if (t >= 900) {
+    cls = 'close'; text = '已收盘';
+  } else {
+    cls = 'pre'; text = '盘前';
+  }
+  dot.className = 'market-dot ' + cls;
+  label.textContent = text;
+  const timeStr = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  label.title = timeStr;
+}
+
 function setStatus(text, tone = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${tone}`;
@@ -1703,27 +1732,8 @@ async function init() {
     if (e.target === e.currentTarget) closePredictModal();
   };
 
-  document.getElementById('btnRefreshSidebar').onclick = async (e) => {
-    e.preventDefault();
-    setStatus('刷新中...', 'info');
-    if (state.activeTab === 'market') {
-      await reloadFunnel();
-      setStatus('大盘数据已刷新', 'success');
-    } else if (state.activeTab === 'data') {
-      await loadDataCenter();
-      setStatus('数据中心已刷新', 'success');
-    } else if (state.activeTab === 'funnel') {
-      await request('/api/score/recompute', { method: 'POST', body: JSON.stringify({}) });
-      await reloadFunnel();
-      setStatus('策略选股已刷新', 'success');
-    } else if (state.activeTab === 'notice') {
-      await reloadNotice();
-      setStatus('公告池已刷新', 'success');
-    } else if (state.activeTab === 'agent') {
-      await loadAgentData();
-      setStatus('Agent 数据已刷新', 'success');
-    }
-  };
+  _updateMarketStatus();
+  setInterval(_updateMarketStatus, 30000);
 
   const dcSyncDate = document.getElementById('dcSyncDate');
   const today = new Date();
