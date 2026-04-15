@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415m" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415n" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -336,7 +336,8 @@
                   <span class="paper-stat-mini-value" id="paperWinLose">0/0</span>
                 </div>
                 <div class="paper-account-actions">
-                  <button id="btnPaperRefresh" class="btn-secondary btn-sm">刷新</button>
+                  <button id="btnPaperRefresh" class="btn-secondary btn-sm">刷新行情</button>
+                  <span id="paperRefreshHint" class="paper-refresh-hint"></span>
                   <button id="btnPaperSettings" class="text-btn text-btn-sm">费用设置</button>
                 </div>
               </div>
@@ -406,6 +407,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415v"></script>
+  <script src="/static/app.js?v=20260415w"></script>
 </body>
 </html>

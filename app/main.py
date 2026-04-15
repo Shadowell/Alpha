@@ -462,7 +462,7 @@ async def paper_positions():
     opens = paper_trading.get_open_positions()
     price_map = {}
     if opens:
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=60)
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=30)
         if not df.empty:
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
@@ -480,7 +480,7 @@ async def paper_history(limit: int = 50):
 async def paper_summary():
     opens = paper_trading.get_open_positions()
     if opens:
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=60)
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=30)
         if not df.empty:
             price_map = {}
             for _, r in df.iterrows():

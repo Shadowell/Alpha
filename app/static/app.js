@@ -287,6 +287,9 @@ function switchTab(tab) {
   }
   if (tab === 'paper') {
     loadPaperData();
+    _startPaperPoll();
+  } else {
+    _stopPaperPoll();
   }
   setTimeout(() => {
     if (state.chart) state.chart.resize();
@@ -337,7 +340,10 @@ async function paperBuy(symbol, name, price) {
       method: 'POST',
       body: JSON.stringify({ symbol, name, price, qty: parseInt(qty) || 100 }),
     });
-    if (res.success) setStatus(`模拟买入 ${name} ${qty}股 @ ${price.toFixed(2)}`, 'success');
+    if (res.success) {
+      setStatus(`模拟买入 ${name} ${qty}股 @ ${price.toFixed(2)}`, 'success');
+      loadPaperData();
+    }
   } catch (err) {
     setStatus(`模拟买入失败: ${err.message}`, 'error');
   }
@@ -1354,6 +1360,9 @@ async function reload() {
 
 /* ==================== 模拟盘 ==================== */
 
+let _paperPollTimer = null;
+let _paperLastRefresh = 0;
+
 async function loadPaperData() {
   const [posRes, histRes, sumRes] = await Promise.allSettled([
     request('/api/paper/positions'),
@@ -1363,6 +1372,40 @@ async function loadPaperData() {
   if (posRes.status === 'fulfilled') renderPaperPositions(posRes.value.positions || []);
   if (histRes.status === 'fulfilled') renderPaperHistory(histRes.value.positions || []);
   if (sumRes.status === 'fulfilled') renderPaperSummary(sumRes.value);
+  _paperLastRefresh = Date.now();
+  _updatePaperRefreshHint();
+}
+
+async function refreshPaperPrices() {
+  const hint = document.getElementById('paperRefreshHint');
+  if (hint) hint.textContent = '刷新中...';
+  const [posRes, sumRes] = await Promise.allSettled([
+    request('/api/paper/positions'),
+    request('/api/paper/summary'),
+  ]);
+  if (posRes.status === 'fulfilled') renderPaperPositions(posRes.value.positions || []);
+  if (sumRes.status === 'fulfilled') renderPaperSummary(sumRes.value);
+  _paperLastRefresh = Date.now();
+  _updatePaperRefreshHint();
+}
+
+function _startPaperPoll() {
+  _stopPaperPoll();
+  _paperPollTimer = setInterval(() => {
+    if (state.activeTab === 'paper') refreshPaperPrices();
+  }, 30000);
+}
+
+function _stopPaperPoll() {
+  if (_paperPollTimer) { clearInterval(_paperPollTimer); _paperPollTimer = null; }
+}
+
+function _updatePaperRefreshHint() {
+  const hint = document.getElementById('paperRefreshHint');
+  if (!hint) return;
+  if (!_paperLastRefresh) { hint.textContent = ''; return; }
+  const ago = Math.round((Date.now() - _paperLastRefresh) / 1000);
+  hint.textContent = ago < 5 ? '刚刚更新' : `${ago}s 前更新`;
 }
 
 function renderPaperSummary(s) {
@@ -2261,7 +2304,11 @@ async function init() {
   _updateMarketStatus();
   setInterval(_updateMarketStatus, 30000);
 
-  document.getElementById('btnPaperRefresh').onclick = () => loadPaperData();
+  document.getElementById('btnPaperRefresh').onclick = () => {
+    refreshPaperPrices();
+    _startPaperPoll();
+  };
+  setInterval(_updatePaperRefreshHint, 5000);
   document.getElementById('btnPaperSettings').onclick = () => {
     const panel = document.getElementById('paperSettingsPanel');
     panel.style.display = panel.style.display === 'none' ? '' : 'none';
