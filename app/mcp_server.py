@@ -153,6 +153,54 @@ async def get_hot_stocks() -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+# ── Kronos 预测 ──
+
+
+@mcp.tool()
+async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3) -> str:
+    """调用 Kronos 时序模型预测个股未来 K 线走势。返回历史+预测合并 K 线、预测起始索引、预测明细。
+
+    这是真实的 AI 模型推理结果，任何关于股价走势的预测必须通过本工具获取，禁止自行编造预测数据。
+
+    Args:
+        symbol: 股票代码，如 '603577'
+        lookback: 回看天数（默认30）
+        horizon: 预测天数（默认3）
+    """
+    try:
+        data = await _get(f"/api/predict/{symbol}/kronos", {"lookback": lookback, "horizon": horizon})
+        pk = data.get("predicted_kline", [])
+        if not pk:
+            return json.dumps({"symbol": symbol, "prediction": "无预测结果（可能K线数据不足）"}, ensure_ascii=False)
+        summary = []
+        for k in pk:
+            chg = round((k["close"] - k["open"]) / k["open"] * 100, 2) if k["open"] else 0
+            summary.append(f"{k['date']}: 开{k['open']:.2f} 高{k['high']:.2f} 低{k['low']:.2f} 收{k['close']:.2f} 量{k.get('volume',0):.0f} ({'+' if chg>=0 else ''}{chg}%)")
+        result = {
+            "symbol": symbol,
+            "model": "Kronos",
+            "horizon": horizon,
+            "prediction_summary": summary,
+            "predicted_kline": pk,
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except httpx.HTTPStatusError as e:
+        return json.dumps({"symbol": symbol, "error": f"预测失败({e.response.status_code}): {e.response.text[:200]}"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"symbol": symbol, "error": f"预测异常: {str(e)[:200]}"}, ensure_ascii=False)
+
+
+@mcp.tool()
+async def get_stock_realtime(symbol: str) -> str:
+    """获取个股盘中实时行情（当天 OHLCV、涨跌幅、成交额）。
+
+    Args:
+        symbol: 股票代码，如 '603577'
+    """
+    data = await _get(f"/api/stock/{symbol}/realtime")
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
 # ── 提案管理 ──
 
 

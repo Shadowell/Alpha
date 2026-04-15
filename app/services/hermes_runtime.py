@@ -332,6 +332,12 @@ class HermesRuntime:
 你的 skills/alpha/references/ 目录下有详细的诊断流程和参数调优经验，
 在做复杂诊断时请参考这些经验文档。
 
+## 预测数据规则（严格遵守）
+- 使用 predict_kronos 工具获取股票走势预测，这是真实的 AI 模型推理结果
+- 使用 get_stock_realtime 工具获取个股实时行情
+- 严禁自行编造、推算、臆测任何股价预测数值
+- 若 Kronos 预测失败（K线不足等），不对该股票做价格预测
+
 请用中文回答。"""
 
     _FALLBACK_SYSTEM_PROMPT = """你是 Hermes，Alpha 量化选股系统的内嵌投研代理。
@@ -722,6 +728,13 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             market_data = await self._collect_monitor_data()
 
             n = now_cn()
+            kronos_section = ""
+            if market_data.get("kronos_predictions"):
+                kronos_section = f"""
+#### Kronos 模型预测（真实 AI 推理结果）
+{market_data['kronos_predictions']}
+"""
+
             user_prompt = f"""## A股盘中机会监控（采样时间：{n.strftime('%H:%M')}）
 
 ### 实时市场数据
@@ -734,8 +747,8 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
 
 #### 策略漏斗状态
 {market_data.get('funnel_summary', '暂无数据')}
-
-请根据以上实时数据，输出本轮盘中机会分析报告。"""
+{kronos_section}
+请根据以上实时数据，输出本轮盘中机会分析报告。如需引用股价预测，只能使用上方 Kronos 模型提供的数据，禁止自行编造预测值。"""
 
             content = await self._call_monitor_llm(system_prompt, user_prompt)
 
@@ -755,8 +768,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             self._monitor_running = False
 
     async def _collect_monitor_data(self) -> dict:
-        """收集盘中监控所需的实时市场数据。"""
-        import json as _json
+        """收集盘中监控所需的实时市场数据 + 漏斗池股票的 Kronos 预测。"""
         data: dict[str, str] = {}
 
         try:
@@ -792,6 +804,8 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         except Exception as e:
             data["hot_stocks"] = f"获取失败: {e}"
 
+        # 漏斗状态 + 收集 buy/focus 池股票
+        pool_symbols: list[tuple[str, str, str]] = []  # (symbol, name, pool)
         try:
             funnel = await self.funnel.get_funnel()
             stats = funnel.stats if hasattr(funnel, "stats") else (funnel.get("stats", {}) if isinstance(funnel, dict) else {})
@@ -799,8 +813,38 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
                 data["funnel_summary"] = f"候选池: {stats.get('candidate', 0)}只 | 重点池: {stats.get('focus', 0)}只 | 买入池: {stats.get('buy', 0)}只"
             else:
                 data["funnel_summary"] = f"候选池: {getattr(stats, 'candidate', 0)}只 | 重点池: {getattr(stats, 'focus', 0)}只 | 买入池: {getattr(stats, 'buy', 0)}只"
+
+            pools = funnel.pools if hasattr(funnel, "pools") else (funnel.get("pools", {}) if isinstance(funnel, dict) else {})
+            for pool_name in ("buy", "focus"):
+                pool_list = pools.get(pool_name, []) if isinstance(pools, dict) else getattr(pools, pool_name, [])
+                for card in pool_list:
+                    sym = card.get("symbol", "") if isinstance(card, dict) else getattr(card, "symbol", "")
+                    nm = card.get("name", "") if isinstance(card, dict) else getattr(card, "name", "")
+                    if sym:
+                        pool_symbols.append((sym, nm, pool_name))
         except Exception as e:
             data["funnel_summary"] = f"获取失败: {e}"
+
+        # Kronos 预测 — 对 buy/focus 池的股票调真实模型
+        if pool_symbols:
+            from app.services.kronos_predict_service import KronosPredictService
+            kronos = KronosPredictService()
+            pred_lines = []
+            for sym, nm, pool in pool_symbols[:10]:
+                try:
+                    result = await kronos.predict(sym, lookback=30, horizon=3)
+                    pk = result.get("predicted_kline", [])
+                    if pk:
+                        parts = []
+                        for k in pk:
+                            chg = round((k["close"] - k["open"]) / k["open"] * 100, 2) if k["open"] else 0
+                            parts.append(f"{k['date']}:收{k['close']:.2f}({'+' if chg>=0 else ''}{chg}%)")
+                        pred_lines.append(f"- {sym} {nm} [{pool}池] → {' | '.join(parts)}")
+                    else:
+                        pred_lines.append(f"- {sym} {nm} [{pool}池] → K线不足，无法预测")
+                except Exception:
+                    pred_lines.append(f"- {sym} {nm} [{pool}池] → 预测失败")
+            data["kronos_predictions"] = "\n".join(pred_lines)
 
         return data
 
