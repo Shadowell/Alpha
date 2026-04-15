@@ -1504,12 +1504,12 @@ function renderPaperPositions(positions) {
         <div class="paper-card-pnl ${cls}">${sign}¥${fmtNum(p.pnl, 2)} (${sign}${fmtNum(p.pnl_pct, 2)}%)</div>
       </div>
       <div class="paper-card-info">
-        <span>成本: ${fmtNum(p.cost_price, 2)}</span>
-        <span>现价: ${fmtNum(p.current_price, 2)}</span>
-        <span>数量: ${p.qty}股</span>
-        <span>市值: ¥${fmtNum(p.current_price * p.qty, 2)}</span>
+        <span>成本 ${fmtNum(p.cost_price, 2)}</span>
+        <span>现价 ${fmtNum(p.current_price, 2)}</span>
+        <span>数量 ${p.qty}股</span>
+        <span>市值 ¥${fmtNum(p.current_price * p.qty, 2)}</span>
+        <span>开仓 ${fmtShortTime(p.opened_at)}</span>
       </div>
-      <div class="paper-card-info"><span>开仓: ${fmtShortTime(p.opened_at)}</span></div>
       <div class="paper-card-actions">
         <button class="btn-sell" data-id="${p.id}" data-symbol="${p.symbol}" data-name="${p.name}">模拟卖出</button>
       </div>
