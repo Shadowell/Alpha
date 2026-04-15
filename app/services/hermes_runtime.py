@@ -805,11 +805,22 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         return data
 
     async def _call_monitor_llm(self, system_prompt: str, user_prompt: str) -> str | None:
-        """调用 LLM 生成盘中监控报告，返回纯文本。"""
+        """调用 LLM 生成盘中监控报告。优先用本地 hermes CLI，其次 HTTP API。"""
+        import shutil
+
+        # 1) 本地 hermes CLI（通过 hermes chat -q 调用，使用其已配置的 LLM）
+        hermes_bin = shutil.which("hermes")
+        if hermes_bin:
+            try:
+                result = await self._call_hermes_cli(system_prompt, user_prompt)
+                if result:
+                    return result
+            except Exception as e:
+                print(f"[hermes] CLI call failed: {e}")
+
+        # 2) HTTP API fallback
         import httpx
-
         hermes_available = await self._check_hermes_agent()
-
         if hermes_available:
             api_key = os.environ.get("API_SERVER_KEY", "")
             base_url = self._HERMES_AGENT_BASE
@@ -843,8 +854,60 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"[hermes] monitor LLM call failed: {e}")
+            print(f"[hermes] monitor HTTP LLM call failed: {e}")
             return None
+
+    async def _call_hermes_cli(self, system_prompt: str, user_prompt: str) -> str | None:
+        """通过 hermes chat -q 子进程调用本地 Hermes Agent。"""
+        combined_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+
+        proc = await asyncio.create_subprocess_exec(
+            "hermes", "chat", "-q", combined_prompt, "--quiet",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            proc.kill()
+            print("[hermes] CLI call timed out (180s)")
+            return None
+
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()[:500]
+            print(f"[hermes] CLI exit code {proc.returncode}: {err}")
+            return None
+
+        raw = stdout.decode(errors="replace").strip()
+        lines = raw.split("\n")
+        content_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("session_id:"):
+                continue
+            # 跳过 logging 行
+            if stripped.startswith("[") and "INFO" in line and ".py:" in line:
+                continue
+            # 跳过 Hermes ASCII 框线
+            if stripped.startswith("╭─") or stripped.startswith("╰─") or stripped.startswith("│"):
+                continue
+            content_lines.append(line)
+
+        content = "\n".join(content_lines).strip()
+        # hermes --quiet 有时重复输出（box + plain），取前半段
+        if content:
+            half = len(content) // 2
+            if half > 200:
+                first_half = content[:half].strip()
+                second_half = content[half:].strip()
+                # 检查前后是否高度相似（取前 200 字符比较）
+                if first_half[:200] == second_half[:200]:
+                    content = first_half
+
+        if not content:
+            return None
+        print(f"[hermes] CLI response: {len(content)} chars")
+        return content
 
     # ── 状态查询 ──
 
