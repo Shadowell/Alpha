@@ -1573,6 +1573,30 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 .paper-stat-value.up { color: #ef4444; }
 .paper-stat-value.down { color: #22c55e; }
 
+.paper-settings-panel {
+  padding: 12px 16px; margin-bottom: 12px;
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-radius: var(--radius); backdrop-filter: blur(8px);
+  box-shadow: var(--glass-shine);
+}
+.paper-settings-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 10px;
+}
+.paper-settings-grid label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; color: var(--muted); font-weight: 500;
+}
+.paper-settings-grid input {
+  width: 100%; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--card-nested);
+  color: var(--text); font-size: 12px; font-family: var(--font-mono);
+}
+.paper-settings-grid input:focus {
+  outline: none; border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
 .paper-body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
 }

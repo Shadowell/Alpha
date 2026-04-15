@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415f" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415g" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -302,7 +302,22 @@
                 <div class="paper-stat-label">胜/负</div>
                 <div class="paper-stat-value" id="paperWinLose">0/0</div>
               </div>
-              <button id="btnPaperRefresh" class="btn-secondary btn-sm" style="margin-left:auto">刷新行情</button>
+              <div class="paper-stat-card">
+                <div class="paper-stat-label">总费用</div>
+                <div class="paper-stat-value" id="paperTotalFee">¥0.00</div>
+              </div>
+              <button id="btnPaperRefresh" class="btn-secondary btn-sm" style="margin-left:auto">刷新</button>
+              <button id="btnPaperSettings" class="text-btn text-btn-sm">费用设置</button>
+            </div>
+
+            <div id="paperSettingsPanel" class="paper-settings-panel" style="display:none">
+              <div class="paper-settings-grid">
+                <label>佣金费率<input id="psCommission" type="number" step="0.00001" value="0.00025"></label>
+                <label>最低佣金<input id="psMinComm" type="number" step="0.5" value="5"></label>
+                <label>印花税率<input id="psStampTax" type="number" step="0.0001" value="0.0005"></label>
+                <label>滑点比例<input id="psSlippage" type="number" step="0.0001" value="0.001"></label>
+              </div>
+              <button id="btnPaperSettingsSave" class="btn-primary btn-sm">保存设置</button>
             </div>
 
             <div class="paper-body">
@@ -355,6 +370,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415g"></script>
+  <script src="/static/app.js?v=20260415h"></script>
 </body>
 </html>
