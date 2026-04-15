@@ -1002,6 +1002,8 @@ async function _fetchAndRenderFunnelPredict(symbol, name) {
 async function selectHotStock(item) {
   state.selectedHotSymbol = item.symbol;
   renderHotStocks();
+  const klineSection = document.getElementById('marketKlineSection');
+  if (klineSection) klineSection.style.display = '';
   renderMarketChartPlaceholder('加载中...');
   try {
     let payload = await request(`/api/kline/${item.symbol}?days=30`);
@@ -2284,7 +2286,7 @@ async function init() {
   };
 
   const urlTab = new URLSearchParams(window.location.search).get('tab');
-  if (urlTab && TAB_TITLES[urlTab]) switchTab(urlTab);
+  switchTab((urlTab && TAB_TITLES[urlTab]) ? urlTab : (state.activeTab || 'market'));
 
   await reload();
   connectWs();
