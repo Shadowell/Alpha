@@ -741,41 +741,46 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .agent-empty { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
 
 /* ── 数据中心 ── */
+
+.dc-top-bar { margin-bottom: 16px; }
+
+.dc-sync-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; flex-wrap: wrap;
+}
+.dc-sync-label {
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.dc-sync-divider {
+  width: 1px; height: 20px; background: var(--line); flex-shrink: 0;
+}
+
 .dc-stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .dc-stat-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--card-nested);
-  padding: 16px;
-  display: flex; flex-direction: column; gap: 6px;
-  position: relative;
-  overflow: hidden;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
   transition: all var(--transition);
 }
 
-.dc-stat-card:hover {
-  border-color: var(--line-strong);
-}
+.dc-stat-card:hover { border-color: var(--line-strong); }
 
 .dc-stat-label {
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 400;
-  letter-spacing: 0.02em;
+  font-size: 11px; color: var(--muted); font-weight: 400; letter-spacing: 0.02em;
 }
 
 .dc-stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--text);
-  line-height: 1.1;
+  font-size: 18px; font-weight: 700; font-family: var(--font-mono);
+  color: var(--text); line-height: 1.1;
 }
 
 .dc-stat-value.brand { color: var(--brand); }
@@ -784,27 +789,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .dc-stat-value.error { color: #ef4444; }
 
 .dc-stat-sub {
-  font-size: 12px;
-  color: var(--muted);
-  font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted); font-family: var(--font-mono);
 }
 
-.dc-body {
-  display: flex; flex-direction: column;
-  gap: 16px;
+.dc-bottom-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  margin-bottom: 16px;
 }
 
-.dc-control-btns {
-  display: flex; flex-direction: column; gap: 10px;
-}
-
-.dc-incr-row {
-  display: flex; gap: 8px; align-items: center;
-}
-
-.dc-progress-section {
-  margin-top: 12px;
-}
+.dc-progress-section { margin-top: 8px; }
 
 .dc-progress-text {
   font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;
@@ -953,10 +946,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @media (max-width: 1280px) {
   .dc-stats-grid { grid-template-columns: repeat(3, 1fr); }
+  .dc-bottom-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 900px) {
   .dc-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .dc-sync-bar { gap: 6px; padding: 8px 12px; }
 }
 
 /* ── Kronos 预测弹窗 ── */

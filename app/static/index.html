@@ -87,40 +87,44 @@
         <!-- ========== 数据中心 ========== -->
         <section id="tab-data" class="tab-content">
           <div id="dataSummary" class="page-summary"></div>
-          <div class="dc-stats-grid" id="dcStatsGrid"></div>
-          <section class="dc-control card-solid panel">
-            <div class="panel-title-row">
-              <h2>同步控制</h2>
-            </div>
-            <div class="dc-control-btns">
-              <button id="btnDcFullSync" class="btn-primary">全量同步（智能补缺）</button>
-              <div class="dc-incr-row">
-                <input type="date" id="dcSyncDate" class="sync-date-input" />
-                <button id="btnDcIncrSync" class="btn-incremental">增量同步</button>
-              </div>
+
+          <div class="dc-top-bar">
+            <div class="dc-sync-bar card-solid">
+              <span class="dc-sync-label">同步</span>
+              <button id="btnDcFullSync" class="btn-primary btn-sm">全量补缺</button>
+              <div class="dc-sync-divider"></div>
+              <input type="date" id="dcSyncDate" class="sync-date-input" />
+              <button id="btnDcIncrSync" class="btn-incremental btn-sm">增量同步</button>
+              <div class="dc-sync-divider"></div>
+              <button id="btnDcCheck" class="btn-secondary btn-sm">完整性检查</button>
             </div>
             <div class="dc-progress-section" id="dcProgressSection" style="display:none">
               <div id="dcProgressText" class="dc-progress-text"></div>
               <div class="sync-progress-wrap"><div id="dcProgressBar" class="sync-progress-bar"></div></div>
             </div>
-          </section>
-          <section class="dc-tasks card panel">
-            <div class="panel-title-row">
-              <h2>任务历史</h2>
-              <div id="dcTaskFilters" class="dc-task-filters"></div>
-            </div>
-            <div id="dcTaskList" class="dc-task-list"></div>
-            <div id="dcTaskPager" class="dc-task-pager"></div>
-          </section>
-          <section class="dc-report card panel">
-            <div class="panel-title-row">
-              <h2>数据完整性检查</h2>
-              <button id="btnDcCheck" class="btn-primary">手动检查</button>
-            </div>
-            <div id="dcReportContent" class="dc-report-content">
-              <div class="empty-state"><div class="empty-state-text">点击「手动检查」生成数据完整性报告</div></div>
-            </div>
-          </section>
+          </div>
+
+          <div class="dc-stats-grid" id="dcStatsGrid"></div>
+
+          <div class="dc-bottom-grid">
+            <section class="dc-tasks card panel">
+              <div class="panel-title-row">
+                <h2>任务历史</h2>
+                <div id="dcTaskFilters" class="dc-task-filters"></div>
+              </div>
+              <div id="dcTaskList" class="dc-task-list"></div>
+              <div id="dcTaskPager" class="dc-task-pager"></div>
+            </section>
+            <section class="dc-report card panel">
+              <div class="panel-title-row">
+                <h2>数据完整性</h2>
+              </div>
+              <div id="dcReportContent" class="dc-report-content">
+                <div class="empty-state"><div class="empty-state-text">点击上方「完整性检查」生成报告</div></div>
+              </div>
+            </section>
+          </div>
+
           <section class="dc-logs card-light panel" id="dcLogsSection">
             <div class="panel-title-row">
               <h2>同步日志流</h2>
