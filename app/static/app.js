@@ -1712,18 +1712,15 @@ function _renderMonitorCard(msg) {
     const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : 'mid';
     const stocksHtml = t.stocks.map(s =>
       `<div class="mtheme-stock" data-symbol="${s.symbol}" data-name="${s.name}">` +
-      `<code>${s.symbol}</code> <b>${esc(s.name)}</b> <span class="mtheme-stock-reason">${esc(s.reason)}</span></div>`
+      `<code>${s.symbol}</code> <b>${esc(s.name)}</b></div>`
     ).join('');
     const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
-    const riskHtml = t.risk ? `<div class="mtheme-risk">风险: ${esc(t.risk)}</div>` : '';
     return `<div class="mtheme-card">
       <div class="mtheme-header">
         <span class="mtheme-level ${levelCls}">${esc(t.level)}</span>
-        <span class="mtheme-title">主线${esc(t.idx)}: ${esc(t.title)}</span>
+        <span class="mtheme-title">${esc(t.title)}</span>
       </div>
       ${analysisHtml}
-      ${riskHtml}
-      <div class="mtheme-pool-label">关注池 (${t.stocks.length})</div>
       <div class="mtheme-pool">${stocksHtml || '<span class="muted">暂无</span>'}</div>
     </div>`;
   }).join('');
@@ -1732,9 +1729,8 @@ function _renderMonitorCard(msg) {
     <div class="monitor-msg-header">
       <span class="monitor-msg-time">${time}</span>
       <span class="monitor-msg-trigger">${triggerLabel}</span>
-      ${headerText ? `<span class="monitor-msg-subtitle">${esc(headerText)}</span>` : ''}
     </div>
-    ${themesHtml}
+    <div class="mtheme-grid">${themesHtml}</div>
     ${summaryHtml}
   </div>`;
 }
