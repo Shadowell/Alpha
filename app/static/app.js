@@ -1845,9 +1845,9 @@ const _hoverKline = {
 function _positionHoverPopup(popup, anchorEl) {
   const rect = anchorEl.getBoundingClientRect();
   const pw = 480, ph = 310;
-  let left = rect.right + 8;
+  let left = rect.right + 4;
   let top = rect.top;
-  if (left + pw > window.innerWidth) left = rect.left - pw - 8;
+  if (left + pw > window.innerWidth) left = rect.left - pw - 4;
   if (left < 4) left = 4;
   if (top + ph > window.innerHeight) top = window.innerHeight - ph - 8;
   if (top < 4) top = 4;
@@ -1856,8 +1856,11 @@ function _positionHoverPopup(popup, anchorEl) {
 }
 
 function _showHoverKline(symbol, name, anchorEl) {
-  if (_hoverKline.activeSymbol === symbol) return;
-  _hideHoverKline();
+  if (_hoverKline.activeSymbol === symbol) {
+    clearTimeout(_hoverKline.timer);
+    return;
+  }
+  _hideHoverKlineNow();
   _hoverKline.activeSymbol = symbol;
 
   const popup = document.getElementById('hoverKlinePopup');
@@ -1921,27 +1924,46 @@ function _showHoverKline(symbol, name, anchorEl) {
   })();
 }
 
-function _hideHoverKline() {
+function _hideHoverKlineNow() {
   const popup = document.getElementById('hoverKlinePopup');
   popup.classList.remove('visible');
-  setTimeout(() => { popup.style.display = 'none'; }, 150);
+  popup.style.display = 'none';
   if (_hoverKline.abortCtrl) { _hoverKline.abortCtrl.abort(); _hoverKline.abortCtrl = null; }
   if (_hoverKline.chart) { _hoverKline.chart.dispose(); _hoverKline.chart = null; }
   _hoverKline.activeSymbol = null;
   clearTimeout(_hoverKline.timer);
 }
 
+function _scheduleHideHoverKline() {
+  clearTimeout(_hoverKline.timer);
+  _hoverKline.timer = setTimeout(() => {
+    const popup = document.getElementById('hoverKlinePopup');
+    popup.classList.remove('visible');
+    setTimeout(() => {
+      if (!popup.classList.contains('visible')) {
+        popup.style.display = 'none';
+        if (_hoverKline.abortCtrl) { _hoverKline.abortCtrl.abort(); _hoverKline.abortCtrl = null; }
+        if (_hoverKline.chart) { _hoverKline.chart.dispose(); _hoverKline.chart = null; }
+        _hoverKline.activeSymbol = null;
+      }
+    }, 200);
+  }, 400);
+}
+
+function _cancelHideHoverKline() {
+  clearTimeout(_hoverKline.timer);
+}
+
 function bindHoverKline(container) {
   container.querySelectorAll('.mtheme-stock').forEach(el => {
     el.addEventListener('mouseenter', () => {
-      clearTimeout(_hoverKline.timer);
+      _cancelHideHoverKline();
       _hoverKline.timer = setTimeout(() => {
         _showHoverKline(el.dataset.symbol, el.dataset.name, el);
-      }, 200);
+      }, 150);
     });
     el.addEventListener('mouseleave', () => {
-      clearTimeout(_hoverKline.timer);
-      _hoverKline.timer = setTimeout(() => _hideHoverKline(), 300);
+      _scheduleHideHoverKline();
     });
   });
 }
@@ -1949,11 +1971,8 @@ function bindHoverKline(container) {
 function _initHoverKlinePopupEvents() {
   const popup = document.getElementById('hoverKlinePopup');
   if (!popup) return;
-  popup.addEventListener('mouseenter', () => clearTimeout(_hoverKline.timer));
-  popup.addEventListener('mouseleave', () => {
-    clearTimeout(_hoverKline.timer);
-    _hoverKline.timer = setTimeout(() => _hideHoverKline(), 300);
-  });
+  popup.addEventListener('mouseenter', () => _cancelHideHoverKline());
+  popup.addEventListener('mouseleave', () => _scheduleHideHoverKline());
 }
 
 function _parseMonitorThemes(text) {
