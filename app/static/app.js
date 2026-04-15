@@ -146,13 +146,15 @@ function renderFunnelSummary() {
   const el = document.getElementById('funnelSummary');
   if (!el) return;
   if (!state.funnel) { el.innerHTML = ''; return; }
-  const s = state.funnel.stats;
+  const c = (state.funnel.pools.candidate || []).filter(passConceptFilter).length;
+  const f = (state.funnel.pools.focus || []).filter(passConceptFilter).length;
+  const b = (state.funnel.pools.buy || []).filter(passConceptFilter).length;
   el.innerHTML = [
-    _psItem('候选', s.candidate + '只'),
+    _psItem('候选', c + '只'),
     _psSep(),
-    _psItem('重点关注', s.focus + '只', 'warning'),
+    _psItem('重点关注', f + '只', 'warning'),
     _psSep(),
-    _psItem('买入池', s.buy + '只', 'success'),
+    _psItem('买入池', b + '只', 'success'),
     _psSep(),
     _psItem('更新', state.funnel.updated_at || '--'),
   ].join('');
@@ -278,9 +280,12 @@ function passConceptFilter(stock) {
 
 function renderCounts() {
   if (!state.funnel) return;
-  document.getElementById('count-candidate').textContent = state.funnel.stats.candidate;
-  document.getElementById('count-focus').textContent = state.funnel.stats.focus;
-  document.getElementById('count-buy').textContent = state.funnel.stats.buy;
+  const c = (state.funnel.pools.candidate || []).filter(passConceptFilter).length;
+  const f = (state.funnel.pools.focus || []).filter(passConceptFilter).length;
+  const b = (state.funnel.pools.buy || []).filter(passConceptFilter).length;
+  document.getElementById('count-candidate').textContent = c;
+  document.getElementById('count-focus').textContent = f;
+  document.getElementById('count-buy').textContent = b;
 }
 
 function cardActions(stock) {
@@ -392,7 +397,12 @@ function renderPool(poolName, list) {
     }
     root.appendChild(div);
   });
-  if (!filtered.length) root.innerHTML = '<div class="empty-state"><div class="empty-state-text">尚未运行筛选，点击上方「盘后筛选」开始</div></div>';
+  if (!filtered.length) {
+    const hint = state.selectedConcept
+      ? `当前概念「${state.selectedConcept}」下无匹配股票`
+      : '尚未运行筛选，点击上方「盘后筛选」开始';
+    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
+  }
 }
 
 function renderFunnel() {
