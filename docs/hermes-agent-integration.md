@@ -1,9 +1,9 @@
 # Alpha x Hermes Agent：受控自治研究与策略进化架构设计
 
-> **版本**: v1.0 Draft  
-> **日期**: 2026-04-14  
-> **状态**: 设计阶段  
-> **核心原则**: 自动发现问题 → 自动形成优化提案 → 自动排序 → **人工审批执行**
+> **版本**: v2.0  
+> **日期**: 2026-04-15  
+> **状态**: 已实现 Phase 1-3  
+> **核心原则**: 自动发现问题 → 自动形成优化提案 → 自动排序 → **人工审批执行** → 效果追踪 → 经验沉淀
 
 ---
 
@@ -128,17 +128,28 @@ Hermes 不是单一 agent，而是三类能力的统一运行时：
 
 ## 3. 内嵌式架构设计
 
-### 3.1 模块拆分（v1 精简版）
-
-基于项目当前体量，v1 采用精简拆分，避免过早分散：
+### 3.1 模块拆分
 
 ```
-app/services/
-├── hermes_runtime.py      # 运行时 + 调度 + 工具注册
-└── hermes_memory.py       # 记忆持久化 + 提案评估
-```
+app/
+├── mcp_server.py                # MCP 工具服务器（供 Hermes Agent 通过 MCP 调用）
+└── services/
+    ├── hermes_runtime.py        # 运行时 + 调度 + Agent/降级双模式
+    ├── hermes_memory.py         # 记忆持久化 + 提案 + outcome tracking
+    └── hermes_memory_bridge.py  # Hermes MEMORY.md 同步桥接
 
-> v2 视复杂度再拆出 `hermes_scheduler.py`、`hermes_tools.py`、`hermes_evaluator.py`。
+~/.hermes/
+├── config.yaml                  # 已添加 alpha MCP server 配置
+├── memories/
+│   ├── MEMORY.md                # Alpha 项目上下文 + 历史调参经验
+│   └── USER.md                  # 用户投资画像
+└── skills/alpha/
+    ├── SKILL.md                 # Alpha 投研代理技能定义
+    └── references/
+        ├── alpha-daily-review.md    # 盘后复盘最佳实践
+        ├── alpha-notice-diagnosis.md # 公告选股诊断流程
+        └── alpha-param-tuning.md    # 参数调优经验库
+```
 
 ### 3.2 hermes_runtime.py 职责
 
