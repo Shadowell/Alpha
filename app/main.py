@@ -17,7 +17,7 @@ from app.services.kline_cache_service import KlineCacheService
 from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.hermes_memory import HermesMemory
-from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop
+from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop, monitor_loop
 from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
 
@@ -83,8 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(kline_cache_loop(kline_cache_service))
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
+    app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
     yield
-    for key in ["ticker_task", "kline_cache_task", "hermes_task"]:
+    for key in ["ticker_task", "kline_cache_task", "hermes_task", "monitor_task"]:
         task = getattr(app.state, key, None)
         if task:
             task.cancel()
@@ -349,6 +350,51 @@ async def create_agent_proposal(body: dict):
 async def list_agent_tasks(limit: int = 10):
     tasks = hermes_memory.get_recent_tasks(limit)
     return {"items": tasks}
+
+
+# ── 盘中监控 API ──
+
+
+@app.get("/api/agent/monitor/config")
+async def get_monitor_config():
+    return hermes_memory.get_monitor_config()
+
+
+@app.post("/api/agent/monitor/config")
+async def save_monitor_config(body: dict):
+    prompt = body.get("system_prompt")
+    if "system_prompt" in body and prompt is None:
+        prompt = hermes_memory._DEFAULT_MONITOR_PROMPT
+    return hermes_memory.save_monitor_config(
+        system_prompt=prompt,
+        interval_minutes=body.get("interval_minutes"),
+        enabled=body.get("enabled"),
+    )
+
+
+@app.get("/api/agent/monitor/messages")
+async def list_monitor_messages(limit: int = 50, offset: int = 0, today_only: bool = True):
+    items, total = hermes_memory.list_monitor_messages(limit=limit, offset=offset, today_only=today_only)
+    return {"items": items, "total": total}
+
+
+@app.post("/api/agent/monitor/trigger")
+async def trigger_monitor():
+    result = await hermes_runtime.run_monitor_tick(trigger="manual")
+    if result.get("success"):
+        await hub.broadcast("monitor_update", {
+            "message_id": result["message_id"],
+            "content": result["content"],
+            "created_at": result.get("created_at", ""),
+            "trigger": "manual",
+        })
+    return result
+
+
+@app.post("/api/agent/monitor/stop")
+async def stop_monitor():
+    hermes_memory.save_monitor_config(enabled=False)
+    return {"success": True, "message": "盘中监控已停止"}
 
 
 @app.websocket("/ws/realtime")

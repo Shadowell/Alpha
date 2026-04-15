@@ -705,6 +705,147 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             "observations": daily.get("observations", {}),
         }
 
+    # ── 盘中监控 ──
+
+    _monitor_running = False
+
+    async def run_monitor_tick(self, trigger: str = "scheduled") -> dict:
+        """单次盘中监控：收集实时数据 → 调 LLM → 返回分析文本。"""
+        if self._monitor_running:
+            return {"success": False, "message": "监控任务正在执行中"}
+        self._monitor_running = True
+        t0 = time.time()
+        try:
+            config = self.memory.get_monitor_config()
+            system_prompt = config.get("system_prompt") or self.memory._DEFAULT_MONITOR_PROMPT
+
+            market_data = await self._collect_monitor_data()
+
+            n = now_cn()
+            user_prompt = f"""## A股盘中机会监控（采样时间：{n.strftime('%H:%M')}）
+
+### 实时市场数据
+
+#### 热门概念板块
+{market_data.get('hot_concepts', '暂无数据')}
+
+#### 热门个股排行
+{market_data.get('hot_stocks', '暂无数据')}
+
+#### 策略漏斗状态
+{market_data.get('funnel_summary', '暂无数据')}
+
+请根据以上实时数据，输出本轮盘中机会分析报告。"""
+
+            content = await self._call_monitor_llm(system_prompt, user_prompt)
+
+            if not content:
+                content = f"[{n.strftime('%H:%M')}] 盘中监控：LLM 未返回结果，请检查 API 配置。\n\n市场概况：\n{market_data.get('hot_concepts', '暂无')}"
+
+            msg_id = self.memory.create_monitor_message(content, trigger)
+            elapsed = int((time.time() - t0) * 1000)
+            return {"success": True, "message_id": msg_id, "content": content, "elapsed_ms": elapsed}
+
+        except Exception as exc:
+            print(f"[hermes] monitor tick failed: {exc}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+        finally:
+            self._monitor_running = False
+
+    async def _collect_monitor_data(self) -> dict:
+        """收集盘中监控所需的实时市场数据。"""
+        import json as _json
+        data: dict[str, str] = {}
+
+        try:
+            hot = await self.funnel.get_hot_concepts()
+            items = hot.items if hasattr(hot, "items") else (hot.get("items", []) if isinstance(hot, dict) else [])
+            if items:
+                lines = []
+                for i, c in enumerate(items[:15], 1):
+                    name = c.get("name", "") if isinstance(c, dict) else getattr(c, "name", "")
+                    pct = c.get("change_pct", 0) if isinstance(c, dict) else getattr(c, "change_pct", 0)
+                    leader = c.get("leader", "") if isinstance(c, dict) else getattr(c, "leader", "")
+                    lines.append(f"{i}. {name}  涨跌幅:{pct}%  领涨:{leader}")
+                data["hot_concepts"] = "\n".join(lines)
+            else:
+                data["hot_concepts"] = "暂无数据"
+        except Exception as e:
+            data["hot_concepts"] = f"获取失败: {e}"
+
+        try:
+            hot_stocks = await self.funnel.get_hot_stocks()
+            items = hot_stocks.items if hasattr(hot_stocks, "items") else (hot_stocks.get("items", []) if isinstance(hot_stocks, dict) else [])
+            if items:
+                lines = []
+                for i, s in enumerate(items[:20], 1):
+                    if isinstance(s, dict):
+                        sym, name, price, pct = s.get("symbol", ""), s.get("name", ""), s.get("latest_price", 0), s.get("change_pct", 0)
+                    else:
+                        sym, name, price, pct = getattr(s, "symbol", ""), getattr(s, "name", ""), getattr(s, "latest_price", 0), getattr(s, "change_pct", 0)
+                    lines.append(f"{i}. {sym} {name}  价格:{price}  涨跌幅:{pct}%")
+                data["hot_stocks"] = "\n".join(lines)
+            else:
+                data["hot_stocks"] = "暂无数据"
+        except Exception as e:
+            data["hot_stocks"] = f"获取失败: {e}"
+
+        try:
+            funnel = await self.funnel.get_funnel()
+            stats = funnel.stats if hasattr(funnel, "stats") else (funnel.get("stats", {}) if isinstance(funnel, dict) else {})
+            if isinstance(stats, dict):
+                data["funnel_summary"] = f"候选池: {stats.get('candidate', 0)}只 | 重点池: {stats.get('focus', 0)}只 | 买入池: {stats.get('buy', 0)}只"
+            else:
+                data["funnel_summary"] = f"候选池: {getattr(stats, 'candidate', 0)}只 | 重点池: {getattr(stats, 'focus', 0)}只 | 买入池: {getattr(stats, 'buy', 0)}只"
+        except Exception as e:
+            data["funnel_summary"] = f"获取失败: {e}"
+
+        return data
+
+    async def _call_monitor_llm(self, system_prompt: str, user_prompt: str) -> str | None:
+        """调用 LLM 生成盘中监控报告，返回纯文本。"""
+        import httpx
+
+        hermes_available = await self._check_hermes_agent()
+
+        if hermes_available:
+            api_key = os.environ.get("API_SERVER_KEY", "")
+            base_url = self._HERMES_AGENT_BASE
+            model = "hermes-agent"
+            timeout = 120
+        else:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                return None
+            model = os.environ.get("HERMES_MODEL", "gpt-4o-mini")
+            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            timeout = 60
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.4,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[hermes] monitor LLM call failed: {e}")
+            return None
+
     # ── 状态查询 ──
 
     async def get_status_async(self) -> dict:
@@ -776,6 +917,44 @@ async def hermes_scheduler_loop(runtime: HermesRuntime) -> None:
             print(f"[hermes] scheduler error: {e}")
 
         await asyncio.sleep(300)
+
+
+async def monitor_loop(runtime: HermesRuntime, hub: Any = None) -> None:
+    """盘中监控定时循环——独立于 hermes_scheduler_loop 运行。"""
+    await asyncio.sleep(10)
+    while True:
+        try:
+            config = runtime.memory.get_monitor_config()
+            if config.get("enabled"):
+                n = now_cn()
+                h, m = n.hour, n.minute
+                in_morning = (h == 9 and m >= 30) or (h == 10) or (h == 11 and m <= 30)
+                in_afternoon = (h >= 13 and h < 15)
+                if in_morning or in_afternoon:
+                    last = runtime.memory.get_latest_monitor_message()
+                    interval = max(config.get("interval_minutes", 10), 1)
+                    should_run = True
+                    if last and last.get("created_at"):
+                        from datetime import datetime
+                        try:
+                            last_ts = datetime.fromisoformat(last["created_at"])
+                            diff_min = (n - last_ts).total_seconds() / 60
+                            should_run = diff_min >= interval
+                        except Exception:
+                            pass
+                    if should_run:
+                        print(f"[monitor] tick at {n.strftime('%H:%M')}")
+                        result = await runtime.run_monitor_tick(trigger="scheduled")
+                        if result.get("success") and hub:
+                            await hub.broadcast("monitor_update", {
+                                "message_id": result["message_id"],
+                                "content": result["content"],
+                                "created_at": n.isoformat(),
+                                "trigger": "scheduled",
+                            })
+        except Exception as e:
+            print(f"[monitor] loop error: {e}")
+        await asyncio.sleep(30)
 
 
 async def _check_outcome_tracking(runtime: HermesRuntime) -> None:

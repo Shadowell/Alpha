@@ -250,15 +250,70 @@ class AkshareDataProvider:
 
     async def get_hot_stocks(
         self,
-        top_n: int = 10,
+        top_n: int = 30,
         retries: int = 2,
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
     ) -> pd.DataFrame:
         if self.hot_stocks_cache is not None:
+            ts, cached = self.hot_stocks_cache
+            age = (datetime.now() - ts).total_seconds()
+            if age <= cache_ttl_seconds and not cached.empty:
+                return cached.head(top_n).copy()
+
+        last_exc: Exception | None = None
+        for idx in range(retries + 1):
+            try:
+                df = await self._fetch_hot_stocks_from_spot()
+                if not df.empty:
+                    self.hot_stocks_cache = (datetime.now(), df)
+                    return df.head(top_n).copy()
+            except Exception as exc:
+                last_exc = exc
+                if idx < retries:
+                    await asyncio.sleep(retry_wait_seconds * (idx + 1))
+
+        if self.hot_stocks_cache is not None:
             _, cached = self.hot_stocks_cache
-            return cached.head(top_n).copy()
+            if not cached.empty:
+                return cached.head(top_n).copy()
+
+        if last_exc is not None:
+            print(f"[data_provider] get_hot_stocks failed: {last_exc}")
         return pd.DataFrame(columns=["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"])
+
+    async def _fetch_hot_stocks_from_spot(self) -> pd.DataFrame:
+        """从全市场实时行情中提取涨幅排行作为热门个股。"""
+        try:
+            df = await asyncio.to_thread(ak.stock_hot_rank_em)
+            return normalize_hot_stocks_df(df)
+        except Exception:
+            pass
+
+        try:
+            df = await asyncio.to_thread(ak.stock_zh_a_spot)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            payload = self._normalize_snapshot(df)
+            if payload.empty:
+                return pd.DataFrame()
+            payload = payload[payload["最新价"] > 0]
+            payload = payload[~payload["名称"].str.upper().str.contains("ST", na=False)]
+            payload = payload[payload["代码"].str.startswith(("00", "30", "60"))]
+            payload = payload.sort_values("涨跌幅", ascending=False)
+            self.realtime_snapshot_cache = (datetime.now(), payload)
+
+            result = pd.DataFrame()
+            result["rank"] = range(1, len(payload) + 1)
+            result["symbol"] = payload["代码"].values
+            result["name"] = payload["名称"].values
+            result["latest_price"] = payload["最新价"].values
+            result["change_amount"] = payload["涨跌额"].values
+            result["change_pct"] = payload["涨跌幅"].values
+            return result.reset_index(drop=True)
+        except Exception as exc:
+            print(f"[data_provider] _fetch_hot_stocks_from_spot fallback failed: {exc}")
+            return pd.DataFrame()
 
     async def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
         now = datetime.now()
