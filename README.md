@@ -6,12 +6,15 @@ Alpha 是一个面向 A 股市场的量化选股 Web 平台，集成 **[Kronos](
 
 | 模块 | 说明 |
 |------|------|
-| **大盘总览** | 热门概念 Top10（涨幅/涨停数/领涨股）、热门个股 Top10（实时价格/涨跌幅） |
-| **策略选股** | 盘后自动筛选调整期未突破股票，三池漏斗管理（候选池 → 重点池 → 买入池） |
-| **公告选股** | 抓取当日公告 → 规则打分（+可选 LLM 打分）→ 关键词标签过滤（分红/回购/重组等） |
-| **Kronos 预测** | 基于金融 K 线基础模型，输入历史日 K 自回归生成未来多日 OHLC 预测 K 线 |
+| **大盘总览** | 热门概念 Top10 + 热门个股 Top10，每 10 秒自动刷新实时行情 |
+| **策略选股** | 盘后自动筛选调整期未突破股票，三池漏斗管理（候选池 → 重点池 → 买入池），支持一键执行/停止 |
+| **公告选股** | 抓取当日公告 → 规则打分（+可选 LLM 打分）→ 关键词标签过滤（分红/回购/重组等），支持一键执行/停止 |
+| **Kronos 预测** | 基于金融 K 线基础模型，历史日 K 自回归生成未来多日 OHLC 预测 K 线；预测 K 线红涨绿跌虚线框展示，叠加盘中实时 K 线对比 |
+| **自进化智能体** | 集成 Hermes Agent，支持盘中监控（定时推送市场动态，按主线分框展示消息流，含关注池与 K 线预览）和提案管理（双 Tab 页面） |
+| **模拟盘** | 从买入池一键模拟买入，实时计算持仓盈亏；支持滑点、印花税、手续费等费用设置 |
 | **K 线缓存** | 每日 15:20 自动同步主板股票日 K（并发调度），同步完成飞书群通知 |
 | **实时推送** | WebSocket 实时推送概念行情与个股评分更新 |
+| **MCP 工具集** | 通过 Alpha MCP Server 向 Hermes Agent 暴露 Kronos 预测、实时行情等工具，禁止 LLM 编造预测数据 |
 
 ---
 
@@ -222,13 +225,13 @@ python -m tests.benchmark_kronos
 
 ### 大盘总览
 
-热门概念 Top10，展示板块热度、涨停数、上涨/下跌家数等实时行情。
+热门概念 Top10 + 热门个股 Top10，每 10 秒自动刷新实时行情。
 
 ![大盘总览](docs/screenshots/market.png)
 
 ### 策略选股
 
-三池漏斗管理：调整期候选池 → 重点关注池 → 买入池，支持概念筛选和盘后筛选。
+三池漏斗管理：调整期候选池 → 重点关注池 → 买入池，支持概念筛选、盘后筛选和一键执行。
 
 ![策略选股](docs/screenshots/funnel.png)
 
@@ -240,13 +243,22 @@ python -m tests.benchmark_kronos
 
 ![公告候选池](docs/screenshots/notice-list.png)
 
+### 自进化智能体
+
+Hermes Agent 盘中监控，按主线分框展示消息流（Glassmorphism 卡片），含关注池 K 线预览；支持提案管理（双 Tab 页面）。
+
+### 模拟盘
+
+从买入池一键模拟买入，实时计算持仓盈亏，支持滑点/印花税/手续费参数设置。
+
 ## 技术栈
 
 - **后端**：Python 3.11+ / FastAPI / Uvicorn
 - **预测模型**：[Kronos](https://huggingface.co/NeoQuasar/Kronos-base)（PyTorch, HuggingFace Hub）
-- **数据源**：AkShare（A 股行情、公告、概念板块）
-- **存储**：SQLite（`data/funnel_state.db` 状态存储 + `data/market_kline.db` K 线缓存）
-- **前端**：原生 HTML/CSS/JS + ECharts（K 线图 + 预测可视化）
+- **智能体**：Hermes Agent（本地 CLI `hermes chat -q`）+ MCP 工具协议
+- **数据源**：同花顺（热门概念/个股）、新浪（实时行情 fallback）、AkShare（公告、K线历史）
+- **存储**：SQLite（`data/funnel_state.db` 状态/持仓/交易 + `data/market_kline.db` K 线缓存）
+- **前端**：原生 HTML/CSS/JS + ECharts（K 线图 + 预测可视化）、Glassmorphism 设计风格
 - **通知**：飞书 Webhook（同步完成推送）
 - **测试**：pytest
 - **CI**：GitHub Actions
@@ -256,21 +268,33 @@ python -m tests.benchmark_kronos
 ```
 Alpha/
 ├── app/
-│   ├── main.py                    # FastAPI 入口、后台调度循环
+│   ├── main.py                    # FastAPI 入口、后台调度循环、全部 API 路由
 │   ├── config.py                  # StrategyConfig（策略参数配置）
 │   ├── models.py                  # Pydantic 数据模型
+│   ├── mcp_server.py              # Alpha MCP Server（向 Hermes Agent 暴露工具）
+│   ├── routers/
+│   │   └── kline.py               # K 线相关路由
 │   ├── services/
 │   │   ├── kronos_predict_service.py  # Kronos 预测服务（惰性加载、异步推理）
 │   │   ├── kronos_model/          # Kronos 模型实现（Tokenizer + Transformer + Predictor）
 │   │   ├── funnel_service.py      # 策略选股漏斗核心逻辑
 │   │   ├── notice_service.py      # 公告选股 & 规则/LLM 打分
+│   │   ├── paper_trading.py       # 模拟盘交易服务（持仓/交易/费用计算）
+│   │   ├── hermes_runtime.py      # Hermes Agent 运行时（盘中监控 tick）
+│   │   ├── hermes_memory.py       # Hermes Agent 记忆持久化
+│   │   ├── hermes_memory_bridge.py # Hermes 记忆桥接
 │   │   ├── kline_cache_service.py # K 线并发同步调度
 │   │   ├── kline_store.py         # K 线 SQLite 存储
 │   │   ├── strategy_engine.py     # 盘后策略评分引擎
-│   │   ├── data_provider.py       # AkShare 数据适配层
+│   │   ├── data_provider.py       # 多数据源适配层（同花顺/新浪/AkShare）
 │   │   ├── realtime.py            # WebSocket 实时推送
-│   │   └── ...
-│   └── static/                    # 前端（HTML/CSS/JS + ECharts）
+│   │   ├── concept_engine.py      # 概念板块评分引擎
+│   │   ├── time_utils.py          # 交易日/时段工具函数
+│   │   └── feishu_notify.py       # 飞书 Webhook 通知
+│   └── static/
+│       ├── index.html             # 主页面（6 Tab：大盘/策略/公告/智能体/模拟盘/数据中心）
+│       ├── app.js                 # 前端核心逻辑（路由/渲染/轮询/ECharts）
+│       └── styles.css             # Glassmorphism 风格样式
 ├── tests/
 │   ├── benchmark_kronos.py        # Kronos 模型 benchmark 脚本
 │   └── ...
@@ -356,6 +380,43 @@ pip3 install -r requirements.txt
 | POST | `/api/jobs/kline-cache/sync` | 手动触发同步 |
 | GET | `/api/jobs/kline-cache/progress` | 同步进度 |
 | GET | `/api/jobs/kline-cache/logs` | 同步日志 |
+
+### 实时行情
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/stock/{symbol}/realtime` | 个股盘中实时行情（当日 OHLCV） |
+
+### 自进化智能体（Hermes Agent）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/agent/status` | Agent 运行状态 |
+| POST | `/api/agent/run` | 触发 Agent 执行 |
+| GET | `/api/agent/proposals` | 提案列表 |
+| GET | `/api/agent/proposals/{proposal_id}` | 提案详情 |
+| POST | `/api/agent/proposals/{proposal_id}/approve` | 批准提案 |
+| POST | `/api/agent/proposals/{proposal_id}/reject` | 拒绝提案 |
+| POST | `/api/agent/proposals/create` | 创建提案 |
+| GET | `/api/agent/tasks` | Agent 任务列表 |
+| GET | `/api/agent/monitor/config` | 盘中监控配置 |
+| POST | `/api/agent/monitor/config` | 更新监控配置 |
+| GET | `/api/agent/monitor/messages` | 监控消息流 |
+| POST | `/api/agent/monitor/trigger` | 手动触发监控 tick |
+| POST | `/api/agent/monitor/stop` | 停止监控 |
+
+### 模拟盘
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/paper/buy` | 模拟买入 |
+| POST | `/api/paper/sell` | 模拟卖出 |
+| GET | `/api/paper/positions` | 当前持仓 |
+| GET | `/api/paper/history` | 历史持仓 |
+| GET | `/api/paper/summary` | 盈亏汇总 |
+| GET | `/api/paper/trades` | 交易记录 |
+| GET | `/api/paper/settings` | 费用设置（滑点/印花税/手续费） |
+| POST | `/api/paper/settings` | 更新费用设置 |
 
 ### 其他
 
