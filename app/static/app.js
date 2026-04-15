@@ -21,6 +21,7 @@ const state = {
   dcLogsExpanded: false,
   monitorConfig: null,
   monitorMessages: [],
+  monitorKlineChart: null,
 };
 
 function fmtNum(v, digits = 2) {
@@ -1585,32 +1586,162 @@ function renderMonitorFeed() {
     return;
   }
   container.innerHTML = msgs.map(m => _renderMonitorCard(m)).join('');
+  container.querySelectorAll('.mtheme-stock').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.onclick = () => _loadMonitorKline(el.dataset.symbol, el.dataset.name);
+  });
+}
+
+async function _loadMonitorKline(symbol, name) {
+  const section = document.getElementById('monitorKlineSection');
+  const titleEl = document.getElementById('monitorKlineTitle');
+  const chartEl = document.getElementById('monitorKlineChart');
+  section.style.display = 'block';
+  titleEl.textContent = `${name}(${symbol}) K线 + 预测`;
+
+  if (state.monitorKlineChart) state.monitorKlineChart.dispose();
+  state.monitorKlineChart = echarts.init(chartEl);
+  state.monitorKlineChart.setOption(_placeholderOption('加载中...'));
+
+  try {
+    let kline = [];
+    try {
+      const payload = await request(`/api/kline/${symbol}?days=29`);
+      kline = payload?.items || [];
+    } catch {}
+    if (!kline.length) {
+      try {
+        const detail = await request(`/api/stock/${symbol}/detail?kline_days=29`);
+        kline = detail?.kline || [];
+      } catch {}
+    }
+
+    if (!kline.length) {
+      state.monitorKlineChart.setOption(_placeholderOption('暂无K线数据'));
+      return;
+    }
+
+    state.monitorKlineChart.setOption(_klineOption(kline), true);
+
+    try {
+      const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+      if (pred.merged_kline && pred.merged_kline.length) {
+        const pk = pred.predicted_kline || [];
+        const predDates = pk.map(x => x.date);
+        const rtMap = await _fetchRealtimeMap(symbol, predDates);
+        state.monitorKlineChart.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index, rtMap), true);
+      }
+    } catch {}
+  } catch (err) {
+    state.monitorKlineChart.setOption(_placeholderOption(`加载失败: ${err.message}`));
+  }
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _parseMonitorThemes(text) {
+  const themes = [];
+  const blocks = text.split(/(?=【[高中低]+[高]?】\s*主线)/);
+  for (const block of blocks) {
+    const m = block.match(/【([高中低]+[高]?)】\s*主线([一二三四五六七八九十\d]+)[：:]\s*(.+?)(?:\n|$)/);
+    if (!m) continue;
+    const level = m[1];
+    const idx = m[2];
+    const title = m[3].trim();
+
+    const stocks = [];
+    const stockRe = /[-·]\s*(\d{6})\s+([^\s：:]+)[：:]\s*(.+)/g;
+    let sm;
+    const stockSection = block.match(/关注个股[\s\S]*?(?=\d\)\s|失效条件|【|$)/i);
+    const stockText = stockSection ? stockSection[0] : block;
+    while ((sm = stockRe.exec(stockText)) !== null) {
+      stocks.push({ symbol: sm[1], name: sm[2], reason: sm[3].trim() });
+    }
+
+    let analysis = '';
+    const logicMatch = block.match(/逻辑链[\s\S]*?(?=\d\)\s*关注|$)/i);
+    if (logicMatch) {
+      analysis = logicMatch[0].replace(/^.*逻辑链[（(].*?[)）]\s*/i, '').trim();
+      analysis = analysis.split('\n').filter(l => l.trim().startsWith('-')).map(l => l.trim().replace(/^-\s*/, '')).join(' ');
+    }
+
+    let risk = '';
+    const riskMatch = block.match(/失效条件[\s\S]*?(?=\d\)\s|【稳健|【激进|$)/i);
+    if (riskMatch) {
+      risk = riskMatch[0].replace(/^.*失效条件.*?\n/i, '').trim();
+      risk = risk.split('\n').filter(l => l.trim().startsWith('-')).map(l => l.trim().replace(/^-\s*/, '')).slice(0, 2).join('；');
+    }
+
+    themes.push({ level, idx, title, analysis, risk, stocks });
+  }
+  return themes;
 }
 
 function _renderMonitorCard(msg) {
   const time = (msg.created_at || '').slice(11, 16) || '--:--';
   const triggerLabel = msg.trigger === 'manual' ? '手动' : '定时';
-  const content = _formatMonitorContent(msg.content || '');
+  const raw = msg.content || '';
+  const themes = _parseMonitorThemes(raw);
+
+  if (!themes.length) {
+    return `<div class="monitor-msg-card">
+      <div class="monitor-msg-header">
+        <span class="monitor-msg-time">${time}</span>
+        <span class="monitor-msg-trigger">${triggerLabel}</span>
+      </div>
+      <div class="monitor-msg-body">${_formatPlainContent(raw)}</div>
+    </div>`;
+  }
+
+  const headerMatch = raw.match(/^(.+?)(?=【)/s);
+  let headerText = '';
+  if (headerMatch) {
+    headerText = headerMatch[1].trim().split('\n').filter(l => l.trim()).slice(0, 2).join(' · ');
+  }
+
+  let summaryMatch = raw.match(/10分钟内执行摘要([\s\S]*?)$/i) || raw.match(/执行摘要([\s\S]*?)$/i);
+  let summaryHtml = '';
+  if (summaryMatch) {
+    const lines = summaryMatch[1].trim().split('\n').filter(l => l.trim().startsWith('-')).slice(0, 3);
+    if (lines.length) {
+      summaryHtml = `<div class="monitor-summary"><b>执行摘要</b> ${lines.map(l => esc(l.replace(/^-\s*/, ''))).join(' | ')}</div>`;
+    }
+  }
+
+  const themesHtml = themes.map(t => {
+    const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : 'mid';
+    const stocksHtml = t.stocks.map(s =>
+      `<div class="mtheme-stock" data-symbol="${s.symbol}" data-name="${s.name}">` +
+      `<code>${s.symbol}</code> <b>${esc(s.name)}</b> <span class="mtheme-stock-reason">${esc(s.reason)}</span></div>`
+    ).join('');
+    const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
+    const riskHtml = t.risk ? `<div class="mtheme-risk">风险: ${esc(t.risk)}</div>` : '';
+    return `<div class="mtheme-card">
+      <div class="mtheme-header">
+        <span class="mtheme-level ${levelCls}">${esc(t.level)}</span>
+        <span class="mtheme-title">主线${esc(t.idx)}: ${esc(t.title)}</span>
+      </div>
+      ${analysisHtml}
+      ${riskHtml}
+      <div class="mtheme-pool-label">关注池 (${t.stocks.length})</div>
+      <div class="mtheme-pool">${stocksHtml || '<span class="muted">暂无</span>'}</div>
+    </div>`;
+  }).join('');
+
   return `<div class="monitor-msg-card">
     <div class="monitor-msg-header">
       <span class="monitor-msg-time">${time}</span>
       <span class="monitor-msg-trigger">${triggerLabel}</span>
+      ${headerText ? `<span class="monitor-msg-subtitle">${esc(headerText)}</span>` : ''}
     </div>
-    <div class="monitor-msg-body">${content}</div>
+    ${themesHtml}
+    ${summaryHtml}
   </div>`;
 }
 
-function _formatMonitorContent(text) {
+function _formatPlainContent(text) {
   let html = esc(text);
-  html = html.replace(/^(#{1,3})\s+(.+)$/gm, (_, hashes, title) => {
-    const level = hashes.length;
-    return `<h${level + 2} class="monitor-heading">${title}</h${level + 2}>`;
-  });
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/^(\d+)\)\s+(.+)$/gm, '<div class="monitor-topic"><span class="monitor-topic-num">$1</span> $2</div>');
-  html = html.replace(/^([A-Za-z0-9]{6})\s+(.+?)[:：](.+)$/gm, '<div class="monitor-stock"><code>$1</code> <b>$2</b>：$3</div>');
   html = html.replace(/【(.+?)】/g, '<span class="monitor-tag">$1</span>');
-  html = html.replace(/（机会等级[：:](.+?)）/g, '<span class="monitor-level">$1</span>');
   html = html.replace(/\n/g, '<br>');
   return html;
 }
@@ -1897,6 +2028,10 @@ async function init() {
   setInterval(_updateMarketStatus, 30000);
 
   document.getElementById('btnPaperRefresh').onclick = () => loadPaperData();
+  document.getElementById('btnMonitorKlineClose').onclick = () => {
+    document.getElementById('monitorKlineSection').style.display = 'none';
+    if (state.monitorKlineChart) { state.monitorKlineChart.dispose(); state.monitorKlineChart = null; }
+  };
 
   const dcSyncDate = document.getElementById('dcSyncDate');
   const today = new Date();
