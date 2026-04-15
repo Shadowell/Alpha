@@ -1688,10 +1688,7 @@ function renderMonitorFeed() {
     return;
   }
   container.innerHTML = msgs.map(m => _renderMonitorCard(m)).join('');
-  container.querySelectorAll('.mtheme-stock').forEach(el => {
-    el.style.cursor = 'pointer';
-    el.onclick = () => _loadMonitorKline(el.dataset.symbol, el.dataset.name);
-  });
+  bindHoverKline(container);
 }
 
 async function _loadMonitorKline(symbol, name) {
@@ -1738,6 +1735,129 @@ async function _loadMonitorKline(symbol, name) {
     state.monitorKlineChart.setOption(_placeholderOption(`加载失败: ${err.message}`));
   }
   section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/* ==================== Hover K线预览浮窗 ==================== */
+
+const _hoverKline = {
+  chart: null,
+  timer: null,
+  activeSymbol: null,
+  abortCtrl: null,
+};
+
+function _positionHoverPopup(popup, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const pw = 480, ph = 310;
+  let left = rect.right + 8;
+  let top = rect.top;
+  if (left + pw > window.innerWidth) left = rect.left - pw - 8;
+  if (left < 4) left = 4;
+  if (top + ph > window.innerHeight) top = window.innerHeight - ph - 8;
+  if (top < 4) top = 4;
+  popup.style.left = left + 'px';
+  popup.style.top = top + 'px';
+}
+
+function _showHoverKline(symbol, name, anchorEl) {
+  if (_hoverKline.activeSymbol === symbol) return;
+  _hideHoverKline();
+  _hoverKline.activeSymbol = symbol;
+
+  const popup = document.getElementById('hoverKlinePopup');
+  const titleEl = document.getElementById('hoverKlineTitle');
+  const chartEl = document.getElementById('hoverKlineChartEl');
+
+  titleEl.textContent = `${name}(${symbol}) · 30日K线 + 预测`;
+  _positionHoverPopup(popup, anchorEl);
+  popup.style.display = '';
+  requestAnimationFrame(() => popup.classList.add('visible'));
+
+  if (_hoverKline.chart) _hoverKline.chart.dispose();
+  _hoverKline.chart = echarts.init(chartEl);
+  _hoverKline.chart.setOption(_placeholderOption('加载中...'));
+
+  if (_hoverKline.abortCtrl) _hoverKline.abortCtrl.abort();
+  _hoverKline.abortCtrl = new AbortController();
+  const signal = _hoverKline.abortCtrl.signal;
+
+  (async () => {
+    try {
+      let kline = [];
+      try {
+        const payload = await request(`/api/kline/${symbol}?days=29`);
+        kline = payload?.items || [];
+      } catch {}
+      if (!kline.length) {
+        try {
+          const detail = await request(`/api/stock/${symbol}/detail?kline_days=29`);
+          kline = detail?.kline || [];
+        } catch {}
+      }
+      if (signal.aborted) return;
+      if (!kline.length) {
+        _hoverKline.chart?.setOption(_placeholderOption('暂无K线数据'));
+        return;
+      }
+      _hoverKline.chart?.setOption(_klineOption(kline), true);
+
+      try {
+        const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+        if (signal.aborted) return;
+        if (pred.merged_kline && pred.merged_kline.length) {
+          const pk = pred.predicted_kline || [];
+          const predDates = pk.map(x => x.date);
+          const rtMap = await _fetchRealtimeMap(symbol, predDates);
+          if (signal.aborted) return;
+          _hoverKline.chart?.setOption(_klinePredictOption(pred.merged_kline, pred.prediction_start_index, rtMap), true);
+          const hk = pred.history_kline || [];
+          const lastClose = hk.length ? hk[hk.length - 1].close : 0;
+          if (pk.length && lastClose) {
+            const day3Close = pk[pk.length - 1].close;
+            const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
+            const cls = Number(chg) > 0 ? 'up' : (Number(chg) < 0 ? 'down' : 'neutral');
+            const sign = Number(chg) > 0 ? '+' : '';
+            titleEl.innerHTML = `${esc(name)}(${symbol}) · <span class="${cls}">预测3日 ${sign}${chg}%</span>`;
+          }
+        }
+      } catch {}
+    } catch {}
+  })();
+}
+
+function _hideHoverKline() {
+  const popup = document.getElementById('hoverKlinePopup');
+  popup.classList.remove('visible');
+  setTimeout(() => { popup.style.display = 'none'; }, 150);
+  if (_hoverKline.abortCtrl) { _hoverKline.abortCtrl.abort(); _hoverKline.abortCtrl = null; }
+  if (_hoverKline.chart) { _hoverKline.chart.dispose(); _hoverKline.chart = null; }
+  _hoverKline.activeSymbol = null;
+  clearTimeout(_hoverKline.timer);
+}
+
+function bindHoverKline(container) {
+  container.querySelectorAll('.mtheme-stock').forEach(el => {
+    el.addEventListener('mouseenter', () => {
+      clearTimeout(_hoverKline.timer);
+      _hoverKline.timer = setTimeout(() => {
+        _showHoverKline(el.dataset.symbol, el.dataset.name, el);
+      }, 200);
+    });
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(_hoverKline.timer);
+      _hoverKline.timer = setTimeout(() => _hideHoverKline(), 300);
+    });
+  });
+}
+
+function _initHoverKlinePopupEvents() {
+  const popup = document.getElementById('hoverKlinePopup');
+  if (!popup) return;
+  popup.addEventListener('mouseenter', () => clearTimeout(_hoverKline.timer));
+  popup.addEventListener('mouseleave', () => {
+    clearTimeout(_hoverKline.timer);
+    _hoverKline.timer = setTimeout(() => _hideHoverKline(), 300);
+  });
 }
 
 function _parseMonitorThemes(text) {
@@ -2168,6 +2288,8 @@ async function init() {
     document.getElementById('monitorKlineSection').style.display = 'none';
     if (state.monitorKlineChart) { state.monitorKlineChart.dispose(); state.monitorKlineChart = null; }
   };
+
+  _initHoverKlinePopupEvents();
 
   const dcSyncDate = document.getElementById('dcSyncDate');
   const today = new Date();

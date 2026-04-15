@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415k" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415m" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -399,7 +399,13 @@
     </div>
   </div>
 
+  <!-- Hover K线预览浮窗 -->
+  <div id="hoverKlinePopup" class="hover-kline-popup" style="display:none">
+    <div class="hover-kline-title" id="hoverKlineTitle">加载中...</div>
+    <div class="hover-kline-chart" id="hoverKlineChartEl"></div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415u"></script>
+  <script src="/static/app.js?v=20260415v"></script>
 </body>
 </html>
