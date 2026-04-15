@@ -2016,6 +2016,15 @@ async function init() {
     el.onclick = (e) => { e.preventDefault(); switchTab(el.dataset.tab); };
   });
 
+  document.querySelectorAll('.agent-inner-tab').forEach(btn => {
+    btn.onclick = () => {
+      const sub = btn.dataset.subtab;
+      document.querySelectorAll('.agent-inner-tab').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('agentSubMonitor').classList.toggle('active', sub === 'monitor');
+      document.getElementById('agentSubProposal').classList.toggle('active', sub === 'proposal');
+    };
+  });
+
   document.getElementById('predictModalClose').onclick = closePredictModal;
   document.getElementById('predictModal').onclick = (e) => {
     if (e.target === e.currentTarget) closePredictModal();

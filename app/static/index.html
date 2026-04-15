@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415c" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -202,53 +202,45 @@
         <!-- ========== Hermes Agent ========== -->
         <section id="tab-agent" class="tab-content">
           <div class="agent-page">
-            <div id="agentSummary" class="page-summary"></div>
-            <div class="agent-status-bar" id="agentStatusBar">
-              <span class="agent-status-dot" id="agentStatusDot"></span>
-              <span id="agentStatusText">加载中...</span>
-              <button id="btnAgentRun" class="btn-primary" style="margin-left:auto">手动触发复盘</button>
+            <div class="agent-inner-tabs">
+              <button class="agent-inner-tab active" data-subtab="monitor">盘中监控</button>
+              <button class="agent-inner-tab" data-subtab="proposal">提案管理</button>
+              <div class="agent-inner-tabs-right">
+                <span class="agent-status-dot" id="agentStatusDot"></span>
+                <span id="agentStatusText" style="font-size:12px;color:var(--muted)">加载中...</span>
+              </div>
             </div>
 
-            <!-- 盘中监控 -->
-            <div class="monitor-section">
+            <!-- ── 子Tab: 盘中监控 ── -->
+            <div id="agentSubMonitor" class="agent-subtab-content active">
               <div class="monitor-config card-solid">
                 <div class="monitor-config-header">
-                  <h3>盘中动态推送</h3>
-                  <div class="monitor-config-actions">
+                  <div class="monitor-config-actions" style="width:100%;display:flex;align-items:center;gap:8px">
                     <span id="monitorStatus" class="monitor-status-badge off">已停止</span>
+                    <label style="font-size:12px;color:var(--muted)">间隔</label>
+                    <select id="monitorInterval" class="monitor-select">
+                      <option value="5">5min</option>
+                      <option value="10" selected>10min</option>
+                      <option value="15">15min</option>
+                      <option value="30">30min</option>
+                    </select>
+                    <button id="btnMonitorToggle" class="btn-primary btn-sm">启动</button>
                     <button id="btnMonitorTrigger" class="btn-secondary btn-sm">手动触发</button>
+                    <button id="btnMonitorPromptToggle" class="text-btn text-btn-sm" style="margin-left:auto">提示词</button>
                   </div>
                 </div>
-                <div class="monitor-config-body">
-                  <div class="monitor-config-row">
-                    <label>推送间隔</label>
-                    <select id="monitorInterval" class="monitor-select">
-                      <option value="5">5 分钟</option>
-                      <option value="10" selected>10 分钟</option>
-                      <option value="15">15 分钟</option>
-                      <option value="30">30 分钟</option>
-                    </select>
-                    <button id="btnMonitorToggle" class="btn-primary btn-sm">启动监控</button>
-                  </div>
-                  <div class="monitor-prompt-row">
-                    <div class="monitor-prompt-header">
-                      <label>系统提示词</label>
-                      <button id="btnMonitorPromptToggle" class="text-btn text-btn-sm">展开编辑</button>
-                    </div>
-                    <div id="monitorPromptWrap" class="monitor-prompt-wrap" style="display:none">
-                      <textarea id="monitorPrompt" class="monitor-prompt-textarea" rows="10" placeholder="自定义系统提示词..."></textarea>
-                      <div class="monitor-prompt-actions">
-                        <button id="btnMonitorPromptReset" class="text-btn text-btn-sm">恢复默认</button>
-                        <button id="btnMonitorPromptSave" class="btn-secondary btn-sm">保存提示词</button>
-                      </div>
-                    </div>
+                <div id="monitorPromptWrap" class="monitor-prompt-wrap" style="display:none">
+                  <textarea id="monitorPrompt" class="monitor-prompt-textarea" rows="6" placeholder="自定义系统提示词..."></textarea>
+                  <div class="monitor-prompt-actions">
+                    <button id="btnMonitorPromptReset" class="text-btn text-btn-sm">恢复默认</button>
+                    <button id="btnMonitorPromptSave" class="btn-secondary btn-sm">保存</button>
                   </div>
                 </div>
               </div>
 
               <div class="monitor-feed-section card-light">
                 <div class="monitor-feed-header">
-                  <h3>推送消息流</h3>
+                  <h3>消息流</h3>
                   <span id="monitorMsgCount" class="pool-count">0</span>
                 </div>
                 <div id="monitorFeed" class="monitor-feed">
@@ -265,15 +257,21 @@
               </div>
             </div>
 
-            <div class="agent-body">
-              <div class="agent-section card-solid">
-                <h3>待审批提案 <span id="agentPendingCount" class="pool-count">0</span></h3>
-                <div id="agentProposals" class="agent-proposals"></div>
+            <!-- ── 子Tab: 提案管理 ── -->
+            <div id="agentSubProposal" class="agent-subtab-content">
+              <div class="agent-status-bar" id="agentStatusBar">
+                <button id="btnAgentRun" class="btn-primary btn-sm">手动触发复盘</button>
               </div>
-              <div class="agent-right">
-                <div class="agent-section card-light">
-                  <h3>最近运行记录</h3>
-                  <div id="agentTasks" class="agent-tasks"></div>
+              <div class="agent-body">
+                <div class="agent-section card-solid">
+                  <h3>待审批提案 <span id="agentPendingCount" class="pool-count">0</span></h3>
+                  <div id="agentProposals" class="agent-proposals"></div>
+                </div>
+                <div class="agent-right">
+                  <div class="agent-section card-light">
+                    <h3>运行记录</h3>
+                    <div id="agentTasks" class="agent-tasks"></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -357,6 +355,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415d"></script>
+  <script src="/static/app.js?v=20260415e"></script>
 </body>
 </html>
