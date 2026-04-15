@@ -2348,7 +2348,10 @@ async function init() {
     setStatus('全量同步（智能补缺）执行中...', 'info');
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
-      setStatus(`同步完成: ${payload.message || ''} ${payload.success_symbols || 0}/${payload.total_symbols || 0}`, 'success');
+      const filled = payload.missing_filled ?? 0;
+      const mTotal = payload.missing_total ?? payload.missing_filled ?? 0;
+      const extra = mTotal > 0 ? ` · 实补${filled}/${mTotal}条` : '';
+      setStatus(`同步完成: ${payload.message || ''} ${payload.success_symbols || 0}/${payload.total_symbols || 0}股${extra}`, 'success');
       await loadDataCenter();
     } catch (err) {
       setStatus(`同步失败: ${err.message}`, 'error');

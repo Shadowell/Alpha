@@ -154,8 +154,8 @@ class AkshareDataProvider:
             print(f"[data_provider] get_trade_days failed: {exc}")
             return pd.DataFrame(columns=["trade_date"])
 
-    async def get_hist(self, symbol: str, start_date: str, end_date: str, adjust: str = "qfq") -> pd.DataFrame:
-        if self.kline_store is not None:
+    async def get_hist(self, symbol: str, start_date: str, end_date: str, adjust: str = "qfq", force_remote: bool = False) -> pd.DataFrame:
+        if self.kline_store is not None and not force_remote:
             try:
                 import sqlite3
                 s_fmt = start_date.replace("-", "")
