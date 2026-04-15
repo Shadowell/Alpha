@@ -258,12 +258,13 @@ class PaperTradingService:
         return [self._to_position_dict(r) for r in rows]
 
     def get_summary(self) -> dict[str, Any]:
-        """汇总统计：持仓数、总浮盈、已平仓总盈亏、胜率、总费用。"""
+        """汇总统计：持仓数、总浮盈、已平仓总盈亏、胜率、总费用、账户概览。"""
         opens = self.get_open_positions()
         closed = self.get_closed_positions(limit=9999)
 
         total_float_pnl = sum(p["pnl"] for p in opens)
         total_float_cost = sum(p["cost_price"] * p["qty"] for p in opens)
+        total_market_value = sum(p["current_price"] * p["qty"] for p in opens)
 
         total_realized = sum(p.get("realized_pnl") or 0 for p in closed)
         wins = sum(1 for p in closed if (p.get("realized_pnl") or 0) > 0)
@@ -272,17 +273,40 @@ class PaperTradingService:
         total_fee = sum((p.get("buy_fee") or 0) + (p.get("sell_fee") or 0)
                         for p in opens + closed)
 
+        total_trades = len(closed)
+        initial_capital = 1_000_000
+        total_asset = initial_capital + total_realized + total_float_pnl - total_fee
+
+        rpnl_list = [p.get("realized_pnl") or 0 for p in closed]
+        max_drawdown = 0.0
+        if rpnl_list:
+            cumulative = 0.0
+            peak = 0.0
+            for r in rpnl_list:
+                cumulative += r
+                if cumulative > peak:
+                    peak = cumulative
+                dd = peak - cumulative
+                if dd > max_drawdown:
+                    max_drawdown = dd
+
         return {
             "open_count": len(opens),
             "closed_count": len(closed),
             "total_float_pnl": round(total_float_pnl, 2),
             "total_float_pnl_pct": round(total_float_pnl / total_float_cost * 100, 2) if total_float_cost else 0,
             "total_realized_pnl": round(total_realized, 2),
+            "total_market_value": round(total_market_value, 2),
+            "total_asset": round(total_asset, 2),
+            "initial_capital": initial_capital,
+            "total_trades": total_trades,
+            "max_drawdown": round(max_drawdown, 2),
             "win_count": wins,
             "lose_count": len(closed) - wins,
             "win_rate": round(win_rate, 1),
             "total_fee": round(total_fee, 2),
             "settings": self.get_settings(),
+            "updated_at": now_cn(),
         }
 
     def get_trades(self, limit: int = 100) -> list[dict[str, Any]]:
