@@ -887,7 +887,6 @@ async function selectSymbol(symbol) {
     renderStockSummary(detail);
     renderKlineChart(detail.kline || []);
     _scrollToRightPanel();
-    setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
     _fetchAndRenderFunnelPredict(symbol, detail.name);
   } catch (err) {
     renderStockSummary(null);
@@ -930,7 +929,6 @@ async function _fetchAndRenderFunnelPredict(symbol, name) {
         const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
         summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
       }
-      setStatus(`${name} 预测已加载`, 'success');
     }
   } catch (_) {}
 }
@@ -949,7 +947,6 @@ async function selectHotStock(item) {
     }
     renderStockSummaryLite(item, payload || {});
     renderMarketKlineChart(payload?.items || []);
-    setStatus(`${item.name} K线已加载，正在请求预测...`, 'info');
     _fetchAndRenderMarketPredict(item.symbol, item.name);
   } catch (err) {
     renderMarketChartPlaceholder(`加载失败: ${err.message}`);
@@ -980,7 +977,6 @@ async function _fetchAndRenderMarketPredict(symbol, name) {
         const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
         summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
       }
-      setStatus(`${name} 预测已加载`, 'success');
     }
   } catch (_) {}
 }
@@ -1139,10 +1135,8 @@ async function selectNoticeSymbol(symbol) {
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
     if (kline.length) {
       renderKlineChart(kline);
-      setStatus(`${detail.name} K线已加载，正在请求预测...`, 'info');
     } else {
       renderChartPlaceholder('K线数据未同步，请先执行数据同步');
-      setStatus(`${detail.name} 暂无K线缓存`, 'info');
     }
     _fetchAndRenderNoticePredict(symbol, detail.name);
     _scrollToRightPanel();
@@ -1174,7 +1168,6 @@ async function _fetchAndRenderNoticePredict(symbol, name) {
         const realChg = ((rtToday.close - lastClose) / lastClose * 100).toFixed(2);
         summaryEl.textContent += `  实际: ${realChg >= 0 ? '+' : ''}${realChg}%`;
       }
-      setStatus(`${name} 预测已加载`, 'success');
     }
   } catch (_) {}
 }
