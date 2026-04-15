@@ -1721,6 +1721,7 @@ function _renderMonitorCard(msg) {
         <span class="mtheme-title">${esc(t.title)}</span>
       </div>
       ${analysisHtml}
+      <div class="mtheme-pool-label">关注池 · ${t.stocks.length}只</div>
       <div class="mtheme-pool">${stocksHtml || '<span class="muted">暂无</span>'}</div>
     </div>`;
   }).join('');
