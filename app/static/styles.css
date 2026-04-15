@@ -1625,21 +1625,20 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
 /* Hover K线预览浮窗 */
 .hover-kline-popup {
   position: fixed; z-index: 8000;
-  width: 480px; padding: 12px 14px;
+  width: 480px; padding: 12px 14px 12px 14px;
   border-radius: var(--radius);
   background: rgba(15, 23, 42, 0.96);
   border: 1px solid rgba(59, 130, 246, 0.25);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.03);
-  pointer-events: none;
+  pointer-events: auto;
   opacity: 0;
   transform: translateY(4px);
-  transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .hover-kline-popup.visible {
   opacity: 1; transform: translateY(0);
-  pointer-events: auto;
 }
 .hover-kline-title {
   font-size: 13px; font-weight: 600; color: var(--text);
