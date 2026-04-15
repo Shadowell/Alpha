@@ -305,18 +305,29 @@ function cardActions(stock) {
   return actions;
 }
 
-async function paperBuy(symbol, name, price) {
-  if (!price || price <= 0) {
-    try {
-      const rt = await request(`/api/stock/${symbol}/realtime`);
-      if (rt && rt.found && rt.close > 0) price = rt.close;
-    } catch {}
+function _isMarketOpen() {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+  const t = now.getHours() * 60 + now.getMinutes();
+  return (t >= 570 && t < 690) || (t >= 780 && t < 900);
+}
+
+async function paperBuy(symbol, name, _price) {
+  if (!_isMarketOpen()) {
+    setStatus('当前非交易时段，无法模拟买入', 'error');
+    return;
   }
+  let price = 0;
+  try {
+    const rt = await request(`/api/stock/${symbol}/realtime`);
+    if (rt && rt.found && rt.close > 0) price = rt.close;
+  } catch {}
   if (!price || price <= 0) {
     setStatus('无法获取实时价格，请稍后重试', 'error');
     return;
   }
-  const qty = prompt(`模拟买入 ${name}(${symbol})\n现价: ${price.toFixed(2)}\n请输入买入股数:`, '100');
+  const qty = prompt(`模拟买入 ${name}(${symbol})\n实时价: ${price.toFixed(2)}\n请输入买入股数:`, '100');
   if (!qty) return;
   try {
     const res = await request('/api/paper/buy', {
@@ -333,13 +344,17 @@ async function paperBuy(symbol, name, price) {
 }
 
 async function paperSell(positionId, symbol, name) {
+  if (!_isMarketOpen()) {
+    setStatus('当前非交易时段，无法模拟卖出', 'error');
+    return;
+  }
   let price = 0;
   try {
     const rt = await request(`/api/stock/${symbol}/realtime`);
     if (rt && rt.found && rt.close > 0) price = rt.close;
   } catch {}
   if (!price) { setStatus('无法获取实时价格', 'error'); return; }
-  if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n现价: ${price.toFixed(2)}`)) return;
+  if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n实时价: ${price.toFixed(2)}`)) return;
   try {
     const res = await request('/api/paper/sell', {
       method: 'POST',
@@ -1401,15 +1416,22 @@ async function refreshPaperPrices() {
   _updatePaperRefreshHint();
 }
 
+function _paperPollInterval() {
+  return _isMarketOpen() ? 10000 : 60000;
+}
+
 function _startPaperPoll() {
   _stopPaperPoll();
-  _paperPollTimer = setInterval(() => {
-    if (state.activeTab === 'paper') refreshPaperPrices();
-  }, 30000);
+  const tick = () => {
+    if (state.activeTab !== 'paper') { _stopPaperPoll(); return; }
+    refreshPaperPrices();
+    _paperPollTimer = setTimeout(tick, _paperPollInterval());
+  };
+  _paperPollTimer = setTimeout(tick, _paperPollInterval());
 }
 
 function _stopPaperPoll() {
-  if (_paperPollTimer) { clearInterval(_paperPollTimer); _paperPollTimer = null; }
+  if (_paperPollTimer) { clearTimeout(_paperPollTimer); _paperPollTimer = null; }
 }
 
 function _updatePaperRefreshHint() {
@@ -1417,7 +1439,8 @@ function _updatePaperRefreshHint() {
   if (!hint) return;
   if (!_paperLastRefresh) { hint.textContent = ''; return; }
   const ago = Math.round((Date.now() - _paperLastRefresh) / 1000);
-  hint.textContent = ago < 5 ? '刚刚更新' : `${ago}s 前更新`;
+  const freq = _isMarketOpen() ? '10s' : '60s';
+  hint.textContent = (ago < 5 ? '刚刚更新' : `${ago}s 前`) + ` · ${_isMarketOpen() ? '盘中' : '盘后'}${freq}`;
 }
 
 function renderPaperSummary(s) {

@@ -433,6 +433,8 @@ async def stop_monitor():
 
 @app.post("/api/paper/buy")
 async def paper_buy(req: dict):
+    if not _is_a_market_open():
+        raise HTTPException(400, "当前非交易时段，无法模拟买入")
     symbol = normalize_symbol(req.get("symbol", ""))
     name = req.get("name", symbol)
     price = float(req.get("price", 0))
@@ -447,6 +449,8 @@ async def paper_buy(req: dict):
 
 @app.post("/api/paper/sell")
 async def paper_sell(req: dict):
+    if not _is_a_market_open():
+        raise HTTPException(400, "当前非交易时段，无法模拟卖出")
     position_id = req.get("position_id", "")
     price = float(req.get("price", 0))
     if not position_id or price <= 0:
@@ -457,12 +461,22 @@ async def paper_sell(req: dict):
     return {"success": True, "position": asdict(pos)}
 
 
+def _is_a_market_open() -> bool:
+    from datetime import datetime
+    now = datetime.now()
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return (570 <= t < 690) or (780 <= t < 900)
+
+
 @app.get("/api/paper/positions")
 async def paper_positions():
     opens = paper_trading.get_open_positions()
     price_map = {}
     if opens:
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=30)
+        ttl = 8 if _is_a_market_open() else 60
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=ttl)
         if not df.empty:
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
@@ -480,7 +494,8 @@ async def paper_history(limit: int = 50):
 async def paper_summary():
     opens = paper_trading.get_open_positions()
     if opens:
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=30)
+        ttl = 8 if _is_a_market_open() else 60
+        df = await provider.get_realtime_snapshot(cache_ttl_seconds=ttl)
         if not df.empty:
             price_map = {}
             for _, r in df.iterrows():
