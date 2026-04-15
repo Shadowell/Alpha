@@ -22,11 +22,26 @@ const state = {
   monitorConfig: null,
   monitorMessages: [],
   monitorKlineChart: null,
+  paperUpdatedAt: null,
 };
 
 function fmtNum(v, digits = 2) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n.toFixed(digits) : '0.00';
+}
+
+function pnlCls(v) { return v > 0 ? 'up' : v < 0 ? 'down' : 'neutral'; }
+
+function fmtShortTime(iso) {
+  if (!iso) return '--';
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : iso.slice(0, 16);
+}
+
+function fmtMoney(v) {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n)) return '¥0.00';
+  return '¥' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function _scrollToRightPanel() {
@@ -52,6 +67,9 @@ function setMeta() {
     meta.textContent = `公告日 ${nf.trade_date} · 更新 ${nf.updated_at} · 打分源 ${nf.source}`;
   } else if (state.activeTab === 'agent') {
     meta.textContent = 'Hermes 投研代理 — 观察系统表现、产出优化提案、人工审批执行';
+  } else if (state.activeTab === 'paper') {
+    const ts = state.paperUpdatedAt || '--';
+    meta.textContent = `模拟账户 · 初始资金 ¥1,000,000 · 更新 ${ts}`;
   }
 }
 
@@ -1313,16 +1331,38 @@ async function loadPaperData() {
 
 function renderPaperSummary(s) {
   if (!s) return;
-  const fpnl = document.getElementById('paperFloatPnl');
-  const rpnl = document.getElementById('paperRealizedPnl');
+  state.paperUpdatedAt = fmtShortTime(s.updated_at);
+  if (state.activeTab === 'paper') setMeta();
+
+  const _set = (id, text, cls) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (cls !== undefined) el.className = el.className.replace(/\b(up|down|neutral)\b/g, '').trim() + ' ' + cls;
+  };
+
+  _set('paperTotalAsset', fmtMoney(s.total_asset), pnlCls((s.total_asset || 0) - (s.initial_capital || 1e6)));
+  _set('paperMarketValue', fmtMoney(s.total_market_value));
+  _set('paperFloatPnl', `${s.total_float_pnl >= 0 ? '+' : ''}${fmtMoney(s.total_float_pnl)}`, pnlCls(s.total_float_pnl));
+  _set('paperRealizedPnl', `${s.total_realized_pnl >= 0 ? '+' : ''}${fmtMoney(s.total_realized_pnl)}`, pnlCls(s.total_realized_pnl));
+  _set('paperTotalFee', fmtMoney(s.total_fee || 0));
+  _set('paperMaxDrawdown', fmtMoney(s.max_drawdown || 0));
+
   document.getElementById('paperOpenCount').textContent = s.open_count || 0;
-  fpnl.textContent = `¥${fmtNum(s.total_float_pnl, 2)}`;
-  fpnl.className = 'paper-stat-value ' + (s.total_float_pnl >= 0 ? 'up' : 'down');
-  rpnl.textContent = `¥${fmtNum(s.total_realized_pnl, 2)}`;
-  rpnl.className = 'paper-stat-value ' + (s.total_realized_pnl >= 0 ? 'up' : 'down');
-  document.getElementById('paperWinRate').textContent = `${fmtNum(s.win_rate, 1)}%`;
+  document.getElementById('paperTotalTrades').textContent = s.total_trades || 0;
+
+  const totalClosed = (s.win_count || 0) + (s.lose_count || 0);
+  if (totalClosed === 0) {
+    document.getElementById('paperWinRate').textContent = '--';
+  } else if (totalClosed < 5) {
+    document.getElementById('paperWinRate').textContent = `${fmtNum(s.win_rate, 1)}%`;
+    document.getElementById('paperWinRate').title = `样本 ${totalClosed}，仅供参考`;
+  } else {
+    document.getElementById('paperWinRate').textContent = `${fmtNum(s.win_rate, 1)}%`;
+    document.getElementById('paperWinRate').title = `样本 ${totalClosed}`;
+  }
   document.getElementById('paperWinLose').textContent = `${s.win_count || 0}/${s.lose_count || 0}`;
-  document.getElementById('paperTotalFee').textContent = `¥${fmtNum(s.total_fee || 0, 2)}`;
+
   if (s.settings) {
     document.getElementById('psCommission').value = s.settings.commission_rate;
     document.getElementById('psMinComm').value = s.settings.min_commission;
@@ -1336,18 +1376,26 @@ function renderPaperPositions(positions) {
   document.getElementById('paperHoldCount').textContent = positions.length;
   root.innerHTML = '';
   if (!positions.length) {
-    root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无持仓，在买入池点击「模拟买入」开始</div></div>';
+    root.innerHTML = `<div class="empty-state paper-empty">
+      <div class="empty-state-icon">📭</div>
+      <div class="empty-state-text">当前无持仓</div>
+      <div class="empty-state-hint">在买入池点击「模拟买入」开始模拟交易</div>
+      <div class="empty-state-actions">
+        <button class="btn-primary btn-sm" onclick="switchTab('funnel')">前往策略选股</button>
+        <button class="btn-secondary btn-sm" onclick="switchTab('notice')">前往公告选股</button>
+      </div>
+    </div>`;
     return;
   }
   positions.forEach(p => {
-    const pnlCls = p.pnl >= 0 ? 'up' : 'down';
-    const pnlSign = p.pnl >= 0 ? '+' : '';
+    const cls = pnlCls(p.pnl);
+    const sign = p.pnl > 0 ? '+' : '';
     const div = document.createElement('div');
     div.className = 'paper-card';
     div.innerHTML = `
       <div class="paper-card-top">
         <div class="paper-card-name">${p.name} (${p.symbol})</div>
-        <div class="paper-card-pnl ${pnlCls}">${pnlSign}¥${fmtNum(p.pnl, 2)} (${pnlSign}${fmtNum(p.pnl_pct, 2)}%)</div>
+        <div class="paper-card-pnl ${cls}">${sign}¥${fmtNum(p.pnl, 2)} (${sign}${fmtNum(p.pnl_pct, 2)}%)</div>
       </div>
       <div class="paper-card-info">
         <span>成本: ${fmtNum(p.cost_price, 2)}</span>
@@ -1355,7 +1403,7 @@ function renderPaperPositions(positions) {
         <span>数量: ${p.qty}股</span>
         <span>市值: ¥${fmtNum(p.current_price * p.qty, 2)}</span>
       </div>
-      <div class="paper-card-info"><span>开仓: ${p.opened_at}</span></div>
+      <div class="paper-card-info"><span>开仓: ${fmtShortTime(p.opened_at)}</span></div>
       <div class="paper-card-actions">
         <button class="btn-sell" data-id="${p.id}" data-symbol="${p.symbol}" data-name="${p.name}">模拟卖出</button>
       </div>
@@ -1376,28 +1424,27 @@ function renderPaperHistory(positions) {
     root.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无平仓记录</div></div>';
     return;
   }
+  let html = `<table class="paper-history-table">
+    <thead><tr>
+      <th>股票</th><th>数量</th><th>买入</th><th>卖出</th><th>盈亏</th><th>开仓</th><th>平仓</th>
+    </tr></thead><tbody>`;
   positions.forEach(p => {
-    const pnlCls = (p.realized_pnl || 0) >= 0 ? 'up' : 'down';
-    const pnlSign = (p.realized_pnl || 0) >= 0 ? '+' : '';
-    const div = document.createElement('div');
-    div.className = 'paper-card closed';
-    div.innerHTML = `
-      <div class="paper-card-top">
-        <div class="paper-card-name">${p.name} (${p.symbol})</div>
-        <div class="paper-card-pnl ${pnlCls}">${pnlSign}¥${fmtNum(p.realized_pnl, 2)} (${pnlSign}${fmtNum(p.realized_pnl_pct, 2)}%)</div>
-      </div>
-      <div class="paper-card-info">
-        <span>成本: ${fmtNum(p.cost_price, 2)}</span>
-        <span>平仓: ${fmtNum(p.close_price, 2)}</span>
-        <span>数量: ${p.qty}股</span>
-      </div>
-      <div class="paper-card-info">
-        <span>开仓: ${p.opened_at}</span>
-        <span>平仓: ${p.closed_at}</span>
-      </div>
-    `;
-    root.appendChild(div);
+    const rpnl = p.realized_pnl || 0;
+    const cls = pnlCls(rpnl);
+    const sign = rpnl > 0 ? '+' : '';
+    const pctStr = p.realized_pnl_pct != null ? ` (${sign}${fmtNum(p.realized_pnl_pct, 2)}%)` : '';
+    html += `<tr>
+      <td class="paper-hist-name">${p.name}<br><code>${p.symbol}</code></td>
+      <td>${p.qty}</td>
+      <td>${fmtNum(p.cost_price, 2)}</td>
+      <td>${fmtNum(p.close_price, 2)}</td>
+      <td class="${cls}">${sign}¥${fmtNum(rpnl, 2)}${pctStr}</td>
+      <td title="${p.opened_at || ''}">${fmtShortTime(p.opened_at)}</td>
+      <td title="${p.closed_at || ''}">${fmtShortTime(p.closed_at)}</td>
+    </tr>`;
   });
+  html += '</tbody></table>';
+  root.innerHTML = html;
 }
 
 /* ==================== Hermes Agent ==================== */

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260415h" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260415i" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -42,12 +42,7 @@
         <span>模拟盘</span>
       </a>
     </div>
-    <div class="sidebar-bottom">
-      <div class="market-status" id="marketStatus">
-        <span class="market-dot" id="marketDot"></span>
-        <span class="market-label" id="marketLabel">--</span>
-      </div>
-    </div>
+    <div class="sidebar-bottom"></div>
   </nav>
 
   <!-- ========== 主区域 ========== -->
@@ -57,7 +52,12 @@
         <h1 id="pageTitle">大盘</h1>
         <p id="meta">加载中...</p>
       </div>
-      <div class="actions"></div>
+      <div class="actions">
+        <div class="market-status" id="marketStatus">
+          <span class="market-dot" id="marketDot"></span>
+          <span class="market-label" id="marketLabel">--</span>
+        </div>
+      </div>
     </header>
 
     <main class="layout">
@@ -281,33 +281,56 @@
         <!-- ========== 模拟盘 ========== -->
         <section id="tab-paper" class="tab-content">
           <div class="paper-page">
-            <div class="paper-summary-bar" id="paperSummaryBar">
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">持仓数</div>
-                <div class="paper-stat-value" id="paperOpenCount">0</div>
+            <!-- 账户概览条 -->
+            <div class="paper-account-bar">
+              <div class="paper-account-left">
+                <div class="paper-asset-card">
+                  <div class="paper-asset-label">总资产</div>
+                  <div class="paper-asset-value" id="paperTotalAsset">¥1,000,000.00</div>
+                </div>
+                <div class="paper-stat-card">
+                  <div class="paper-stat-label">持仓市值</div>
+                  <div class="paper-stat-value" id="paperMarketValue">¥0.00</div>
+                </div>
+                <div class="paper-stat-card">
+                  <div class="paper-stat-label">浮动盈亏</div>
+                  <div class="paper-stat-value" id="paperFloatPnl">¥0.00</div>
+                </div>
+                <div class="paper-stat-card">
+                  <div class="paper-stat-label">已实现盈亏</div>
+                  <div class="paper-stat-value" id="paperRealizedPnl">¥0.00</div>
+                </div>
+                <div class="paper-stat-card">
+                  <div class="paper-stat-label">总费用</div>
+                  <div class="paper-stat-value paper-stat-fee" id="paperTotalFee">¥0.00</div>
+                </div>
+                <div class="paper-stat-card">
+                  <div class="paper-stat-label">最大回撤</div>
+                  <div class="paper-stat-value" id="paperMaxDrawdown">¥0.00</div>
+                </div>
               </div>
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">浮动盈亏</div>
-                <div class="paper-stat-value" id="paperFloatPnl">¥0.00</div>
+              <div class="paper-account-right">
+                <div class="paper-stat-mini">
+                  <span class="paper-stat-mini-label">持仓</span>
+                  <span class="paper-stat-mini-value" id="paperOpenCount">0</span>
+                </div>
+                <div class="paper-stat-mini">
+                  <span class="paper-stat-mini-label">交易</span>
+                  <span class="paper-stat-mini-value" id="paperTotalTrades">0</span>
+                </div>
+                <div class="paper-stat-mini">
+                  <span class="paper-stat-mini-label">胜率</span>
+                  <span class="paper-stat-mini-value" id="paperWinRate">--</span>
+                </div>
+                <div class="paper-stat-mini">
+                  <span class="paper-stat-mini-label">胜/负</span>
+                  <span class="paper-stat-mini-value" id="paperWinLose">0/0</span>
+                </div>
+                <div class="paper-account-actions">
+                  <button id="btnPaperRefresh" class="btn-secondary btn-sm">刷新</button>
+                  <button id="btnPaperSettings" class="text-btn text-btn-sm">费用设置</button>
+                </div>
               </div>
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">已实现盈亏</div>
-                <div class="paper-stat-value" id="paperRealizedPnl">¥0.00</div>
-              </div>
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">胜率</div>
-                <div class="paper-stat-value" id="paperWinRate">0%</div>
-              </div>
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">胜/负</div>
-                <div class="paper-stat-value" id="paperWinLose">0/0</div>
-              </div>
-              <div class="paper-stat-card">
-                <div class="paper-stat-label">总费用</div>
-                <div class="paper-stat-value" id="paperTotalFee">¥0.00</div>
-              </div>
-              <button id="btnPaperRefresh" class="btn-secondary btn-sm" style="margin-left:auto">刷新</button>
-              <button id="btnPaperSettings" class="text-btn text-btn-sm">费用设置</button>
             </div>
 
             <div id="paperSettingsPanel" class="paper-settings-panel" style="display:none">
@@ -370,6 +393,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260415q"></script>
+  <script src="/static/app.js?v=20260415r"></script>
 </body>
 </html>
