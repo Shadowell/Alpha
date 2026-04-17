@@ -22,12 +22,12 @@ class KlineCacheService:
         provider: AkshareDataProvider,
         store: KlineSQLiteStore | None = None,
         schedule_after: time = time(15, 20),
-        window_days: int = 30,
+        window_days: int = 180,
     ) -> None:
         self.provider = provider
         self.store = store or KlineSQLiteStore()
         self.schedule_after = schedule_after
-        self.window_days = max(10, min(window_days, 180))
+        self.window_days = max(10, min(window_days, 365))
         self._syncing = False
 
     async def run_if_due(self) -> dict[str, Any] | None:
@@ -52,12 +52,15 @@ class KlineCacheService:
         trade_date: str | None = None,
         force: bool = False,
         trigger_mode: str = "manual",
+        window_days: int | None = None,
     ) -> dict[str, Any]:
         if self._syncing:
             return {"success": False, "message": "同步任务正在执行中", "trade_date": trade_date or "", "symbol_count": 0}
         self._syncing = True
         try:
-            return await self._do_sync(trade_date=trade_date, force=force, trigger_mode=trigger_mode)
+            return await self._do_sync(
+                trade_date=trade_date, force=force, trigger_mode=trigger_mode, window_days=window_days,
+            )
         finally:
             self._syncing = False
 
@@ -66,6 +69,7 @@ class KlineCacheService:
         trade_date: str | None = None,
         force: bool = False,
         trigger_mode: str = "manual",
+        window_days: int | None = None,
     ) -> dict[str, Any]:
         t0 = pytime.time()
         target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
@@ -114,7 +118,8 @@ class KlineCacheService:
             )
             return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
-        trade_dates_list = await self._resolve_trade_dates(target_trade_date, self.window_days)
+        effective_window = max(10, min(window_days if window_days is not None else self.window_days, 365))
+        trade_dates_list = await self._resolve_trade_dates(target_trade_date, effective_window)
         if not trade_dates_list:
             self.store.set_sync_state(
                 attempt_trade_date=target_trade_date,
@@ -641,7 +646,7 @@ class KlineCacheService:
 
     async def _resolve_trade_dates(self, trade_date: str, days: int) -> list[str]:
         """返回截至 trade_date 最近 days 个交易日的 ISO 日期列表。"""
-        trade_days = await self.provider.get_trade_days()
+        trade_days = await self.provider.get_trade_days(min_days=days)
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return []
         dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date

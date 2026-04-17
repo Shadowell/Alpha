@@ -22,6 +22,7 @@ from app.services.hermes_runtime import HermesRuntime, hermes_scheduler_loop, mo
 from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
+from app.services.predict_funnel_service import PredictFunnelService
 
 from app.routers.kline import init_kline_router, kline_cache_loop
 
@@ -43,6 +44,11 @@ kronos_service = KronosPredictService(
 )
 
 paper_trading = PaperTradingService()
+predict_funnel_service = PredictFunnelService(
+    provider=provider,
+    kronos_service=kronos_service,
+    state_store=service.state_store,
+)
 hermes_memory = HermesMemory()
 hermes_runtime = HermesRuntime(
     memory=hermes_memory,
@@ -78,6 +84,33 @@ async def _ticker_loop() -> None:
         await asyncio.sleep(60)
 
 
+async def _predict_funnel_scheduler_loop() -> None:
+    """收盘后 16:15 自动触发预测选股扫描（每日一次）。"""
+    from app.services.time_utils import now_cn
+    await asyncio.sleep(60)
+    last_run_date: str | None = None
+    while True:
+        try:
+            cfg = predict_funnel_service.get_config()
+            if cfg.get("auto_after_close"):
+                n = now_cn()
+                today = n.date().isoformat()
+                if n.hour == 16 and 15 <= n.minute < 30 and last_run_date != today:
+                    snap = predict_funnel_service.get_snapshot()
+                    if (snap.get("trade_date") != today) or not snap.get("entries"):
+                        print(f"[predict_funnel] scheduled auto run at {n.isoformat()}")
+                        try:
+                            await predict_funnel_service.run(trigger="auto")
+                            last_run_date = today
+                        except Exception as exc:
+                            print(f"[predict_funnel] scheduled run failed: {exc}")
+                    else:
+                        last_run_date = today
+        except Exception as exc:
+            print(f"[predict_funnel] scheduler error: {exc}")
+        await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async def _startup_backfill() -> None:
@@ -93,8 +126,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.kline_cache_task = asyncio.create_task(kline_cache_loop(kline_cache_service))
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
     app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
+    app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
     yield
-    for key in ["backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task"]:
+    for key in ["backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task", "predict_funnel_task"]:
         task = getattr(app.state, key, None)
         if task:
             task.cancel()
@@ -203,7 +237,7 @@ async def get_stock_realtime(symbol: str):
 
 
 @app.get("/api/predict/{symbol}/kronos")
-async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3):
+async def predict_kronos(symbol: str, lookback: int = 180, horizon: int = 3):
     clean = normalize_symbol(symbol)
     try:
         return await kronos_service.predict(clean, lookback, horizon)
@@ -218,6 +252,30 @@ async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3):
 @app.get("/api/strategy/profile")
 async def get_strategy_profile():
     return await service.get_strategy_profile()
+
+
+@app.get("/api/predict-funnel")
+async def get_predict_funnel():
+    return predict_funnel_service.get_snapshot()
+
+
+@app.post("/api/predict-funnel/trigger")
+async def trigger_predict_funnel():
+    if predict_funnel_service.running:
+        raise HTTPException(status_code=409, detail="预测任务已在执行中")
+    asyncio.create_task(predict_funnel_service.run(trigger="manual"))
+    return {"success": True, "message": "预测任务已启动，请查看进度", "snapshot": predict_funnel_service.get_snapshot()}
+
+
+@app.get("/api/predict-funnel/config")
+async def get_predict_funnel_config():
+    return predict_funnel_service.get_config()
+
+
+@app.post("/api/predict-funnel/config")
+async def update_predict_funnel_config(payload: dict):
+    cfg = predict_funnel_service.update_config(payload or {})
+    return {"success": True, "config": cfg}
 
 
 @app.get("/api/notice/funnel")

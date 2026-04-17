@@ -53,7 +53,37 @@ class SQLiteStateStore:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
+
+    def get_kv(self, key: str) -> Any | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute("SELECT value_json FROM kv_store WHERE key = ?", (key,)).fetchone()
+            if row is None:
+                return None
+            return self._loads_json(row["value_json"], default=None)
+
+    def set_kv(self, key: str, value: Any) -> None:
+        from datetime import datetime
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO kv_store (key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+                """,
+                (key, self._dumps_json(value), datetime.now().isoformat()),
+            )
+            conn.commit()
 
     def load_state(self) -> dict[str, Any] | None:
         with self._connect() as conn:

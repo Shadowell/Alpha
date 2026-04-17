@@ -28,8 +28,8 @@ class KronosPredictService:
 
     # ── public ──
 
-    async def predict(self, symbol: str, lookback: int = 30, horizon: int = 3) -> dict:
-        lookback = max(10, min(lookback, 200))
+    async def predict(self, symbol: str, lookback: int = 180, horizon: int = 3) -> dict:
+        lookback = max(10, min(lookback, 240))
         horizon = max(1, min(horizon, 10))
 
         async with self._lock:

@@ -41,6 +41,13 @@ HORIZON = 3
 MIN_HISTORY_DAYS = LOOKBACK + HORIZON + 1
 
 
+def _set_window(lookback: int) -> None:
+    """运行时覆写 LOOKBACK / MIN_HISTORY_DAYS。"""
+    global LOOKBACK, MIN_HISTORY_DAYS
+    LOOKBACK = max(10, min(lookback, 240))
+    MIN_HISTORY_DAYS = LOOKBACK + HORIZON + 1
+
+
 def _load_predictor(device: str | None = None):
     from app.services.kronos_model import Kronos, KronosPredictor, KronosTokenizer
 
@@ -433,25 +440,50 @@ async def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="限制股票数（0 = 全部）")
     parser.add_argument("--anchors", type=int, default=3, help="每只股票锚点数")
     parser.add_argument("--concurrency", type=int, default=4, help="并发模型副本数")
+    parser.add_argument("--lookback", type=int, default=180, help="每次预测输入的历史天数")
+    parser.add_argument(
+        "--symbols-file",
+        type=str,
+        default="",
+        help="可选：JSON 数组或每行一只代码的文本文件，限定评估范围",
+    )
     parser.add_argument("--output", type=str, default="docs/kronos_accuracy_report.md")
     parser.add_argument("--json-output", type=str, default="docs/kronos_accuracy_raw.json")
     parser.add_argument("--progress-every", type=int, default=50, help="每 N 只股票打印一次进度")
     parser.add_argument("--partial-every", type=int, default=500, help="每 N 只股票保存一次中间结果")
     args = parser.parse_args()
 
+    _set_window(args.lookback)
+
     store = KlineSQLiteStore()
     all_symbols = store.get_all_symbols()
+
+    whitelist: set[str] | None = None
+    if args.symbols_file:
+        p = ROOT / args.symbols_file if not os.path.isabs(args.symbols_file) else Path(args.symbols_file)
+        raw = p.read_text(encoding="utf-8").strip()
+        try:
+            parsed = json.loads(raw)
+            if not isinstance(parsed, list):
+                raise ValueError("symbols-file JSON must be an array")
+            whitelist = {str(x).zfill(6) for x in parsed if x}
+        except json.JSONDecodeError:
+            whitelist = {ln.strip().zfill(6) for ln in raw.splitlines() if ln.strip()}
+        log.info("symbols-file loaded: %s (%d codes)", p, len(whitelist))
+
     symbols: list[str] = []
     for code in all_symbols:
         if not code or len(code) != 6:
             continue
         if code[:2] not in ("00", "30", "60", "68"):
             continue
+        if whitelist is not None and code not in whitelist:
+            continue
         symbols.append(code)
     symbols.sort()
     if args.limit > 0:
         symbols = symbols[: args.limit]
-    log.info("total symbols to evaluate: %d", len(symbols))
+    log.info("total symbols to evaluate: %d (lookback=%d)", len(symbols), LOOKBACK)
 
     pool = PredictorPool(args.concurrency)
     await pool.init()
@@ -541,7 +573,11 @@ async def main() -> int:
 
     print("\n" + "=" * 60)
     print(f"Kronos 评估完成：{len(rows)} 次预测，{elapsed/60:.1f} 分钟")
-    print(f"整体方向准确率：{agg['overall']['direction_acc']:.2f}%")
+    overall = agg.get("overall", {}) or {}
+    if overall.get("count", 0) > 0 and "direction_acc" in overall:
+        print(f"整体方向准确率：{overall['direction_acc']:.2f}%")
+    else:
+        print("无有效样本，请检查 lookback 是否超过 DB 可用历史天数")
     print(f"报告：{out_path}")
     print(f"原始：{json_path}")
     print("=" * 60)

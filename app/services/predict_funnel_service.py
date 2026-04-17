@@ -39,7 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "threshold_focus": 4.0,
     "threshold_buy": 8.0,
     "horizon": 3,
-    "lookback": 30,
+    "lookback": 180,
     "feishu_enabled": True,
     "auto_after_close": True,
 }
@@ -75,6 +75,10 @@ class PredictFunnelService:
             "config": dict(DEFAULT_CONFIG),
             "meta": {},
         }
+        # 配置向前迁移：旧版本保存的 lookback=30 强制升级到新默认 180
+        _cfg = self._snapshot.setdefault("config", dict(DEFAULT_CONFIG))
+        if int(_cfg.get("lookback", 0) or 0) < 60:
+            _cfg["lookback"] = DEFAULT_CONFIG["lookback"]
 
     def _load_state(self) -> dict[str, Any] | None:
         try:

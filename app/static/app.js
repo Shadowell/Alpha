@@ -23,6 +23,9 @@ const state = {
   monitorMessages: [],
   monitorKlineChart: null,
   paperUpdatedAt: null,
+  predictFunnel: null,
+  predictConfig: null,
+  predictRunning: false,
 };
 
 function fmtNum(v, digits = 2) {
@@ -76,6 +79,12 @@ function setMeta() {
   } else if (state.activeTab === 'paper') {
     const ts = state.paperUpdatedAt || '--';
     meta.textContent = `模拟账户 · 初始资金 ¥1,000,000 · 更新 ${ts}`;
+  } else if (state.activeTab === 'predict') {
+    const snap = state.predictFunnel;
+    if (!snap) { meta.textContent = '预测选股 · 加载中…'; return; }
+    const m = snap.meta || {};
+    const extra = m.stocks_scanned ? `扫描 ${m.stocks_scanned} · 命中 ${m.entries_count || 0} · 用时 ${m.elapsed_sec || 0}s` : '尚未执行';
+    meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
   }
 }
 
@@ -230,7 +239,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', agent: '智能监控 / 进化', paper: '模拟盘' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', predict: '预测选股', agent: '智能监控 / 进化', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -274,6 +283,12 @@ function switchTab(tab) {
     _startPaperPoll();
   } else {
     _stopPaperPoll();
+  }
+  if (tab === 'predict') {
+    loadPredictFunnel();
+    _startPredictPoll();
+  } else {
+    _stopPredictPoll();
   }
   setTimeout(() => {
     if (state.chart) state.chart.resize();
@@ -1112,7 +1127,7 @@ function _appendPredictSummary(el, pk, hk, rtMap) {
 async function _fetchAndRenderFunnelPredict(symbol, name) {
   const summaryEl = document.getElementById('stockSummary');
   try {
-    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
       const pk = pred.predicted_kline || [];
       const predDates = pk.map(x => x.date);
@@ -1149,7 +1164,7 @@ async function selectHotStock(item) {
 async function _fetchAndRenderMarketPredict(symbol, name) {
   const summaryEl = document.getElementById('marketStockSummary');
   try {
-    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
       const pk = pred.predicted_kline || [];
       const predDates = pk.map(x => x.date);
@@ -1336,7 +1351,7 @@ async function selectNoticeSymbol(symbol) {
 async function _fetchAndRenderNoticePredict(symbol, name) {
   const summaryEl = document.getElementById('stockSummary');
   try {
-    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
     if (pred.merged_kline && pred.merged_kline.length) {
       const pk = pred.predicted_kline || [];
       const predDates = pk.map(x => x.date);
@@ -1863,7 +1878,7 @@ async function _loadMonitorKline(symbol, name) {
     state.monitorKlineChart.setOption(_klineOption(kline), true);
 
     try {
-      const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+      const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
       if (pred.merged_kline && pred.merged_kline.length) {
         const pk = pred.predicted_kline || [];
         const predDates = pk.map(x => x.date);
@@ -1945,7 +1960,7 @@ function _showHoverKline(symbol, name, anchorEl) {
       _hoverKline.chart?.setOption(_klineOption(kline), true);
 
       try {
-        const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+        const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
         if (signal.aborted) return;
         if (pred.merged_kline && pred.merged_kline.length) {
           const pk = pred.predicted_kline || [];
@@ -2189,7 +2204,7 @@ async function openPredictModal(symbol, detail) {
   }
 
   try {
-    const pred = await request(`/api/predict/${symbol}/kronos?lookback=30&horizon=3`);
+    const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
     renderPredictChartFull(pred.merged_kline, pred.prediction_start_index);
     renderPredictSummary(pred);
     document.getElementById('predictStatus').innerHTML = '';
@@ -2776,15 +2791,186 @@ async function init() {
   if (state.activeTab === 'market') startMarketPolling();
   if (state.activeTab === 'data') startDcPolling();
   if (state.activeTab === 'paper') _startPaperPoll();
+  if (state.activeTab === 'predict') { loadPredictFunnel(); _startPredictPoll(); }
 
   document.addEventListener('visibilitychange', () => {
-    if (state.activeTab !== 'paper') return;
-    if (document.hidden) {
-      _stopPaperPoll();
-    } else {
-      _startPaperPoll();
+    if (state.activeTab === 'paper') {
+      if (document.hidden) _stopPaperPoll(); else _startPaperPoll();
+    }
+    if (state.activeTab === 'predict') {
+      if (document.hidden) _stopPredictPoll(); else _startPredictPoll();
     }
   });
+
+  _bindPredictActions();
+}
+
+/* ==================== 预测选股 ==================== */
+
+let _predictPollTimer = null;
+
+function _startPredictPoll() {
+  _stopPredictPoll();
+  const tick = async () => {
+    if (state.activeTab !== 'predict') { _stopPredictPoll(); return; }
+    try { await loadPredictFunnel(); } catch (_) {}
+    const interval = state.predictRunning ? 2500 : 15000;
+    _predictPollTimer = setTimeout(tick, interval);
+  };
+  _predictPollTimer = setTimeout(tick, 1000);
+}
+
+function _stopPredictPoll() {
+  if (_predictPollTimer) { clearTimeout(_predictPollTimer); _predictPollTimer = null; }
+}
+
+async function loadPredictFunnel() {
+  try {
+    const snap = await request('/api/predict-funnel');
+    state.predictFunnel = snap;
+    state.predictRunning = !!snap.running;
+    renderPredictFunnel();
+    if (state.activeTab === 'predict') setMeta();
+  } catch (err) {
+    const el = document.getElementById('predictMeta');
+    if (el) el.textContent = `加载失败: ${err.message}`;
+  }
+}
+
+function _predictPctCls(pct) {
+  if (pct >= 8) return 'up';
+  if (pct >= 4) return 'up';
+  if (pct >= 2) return 'up';
+  if (pct <= -2) return 'down';
+  return 'neutral';
+}
+
+function _predictCardHtml(e) {
+  const pct = Number(e.pred_max_high_pct || 0);
+  const cls = _predictPctCls(pct);
+  const boards = (e.boards || []).slice(0, 3)
+    .map(b => `<span class="predict-card-board-tag">${b.name}</span>`).join('');
+  const sign = pct >= 0 ? '+' : '';
+  return `
+    <div class="pool-card" data-symbol="${e.symbol}" onclick="openPredictDetail('${e.symbol}')">
+      <div class="card-head">
+        <div class="card-name">
+          <span class="stock-name">${e.name || e.symbol}</span>
+          <span class="stock-code">${e.symbol}</span>
+        </div>
+        <div class="card-score ${cls}">${sign}${pct.toFixed(1)}%</div>
+      </div>
+      <div class="predict-card-meta">
+        <span class="predict-card-metric">今收 <b>${fmtNum(e.today_close)}</b></span>
+        <span class="predict-card-metric">3日高 <b>${fmtNum(e.pred_max_high)}</b></span>
+        <span class="predict-card-metric">末日 ${(e.pred_last_close_pct >= 0 ? '+' : '')}${fmtNum(e.pred_last_close_pct, 1)}%</span>
+        <span class="predict-card-metric">均价 ${(e.pred_avg_close_pct >= 0 ? '+' : '')}${fmtNum(e.pred_avg_close_pct, 1)}%</span>
+      </div>
+      ${boards ? `<div class="predict-card-boards">${boards}</div>` : ''}
+    </div>`;
+}
+
+function renderPredictFunnel() {
+  const snap = state.predictFunnel;
+  const metaEl = document.getElementById('predictMeta');
+  const progEl = document.getElementById('predictProgress');
+  const btn = document.getElementById('btnPredictRun');
+  if (!snap) {
+    if (metaEl) metaEl.textContent = '无数据';
+    return;
+  }
+  const cfg = snap.config || {};
+  const thC = document.getElementById('predict-th-candidate');
+  const thF = document.getElementById('predict-th-focus');
+  const thB = document.getElementById('predict-th-buy');
+  if (thC) thC.textContent = `≥${cfg.threshold_candidate || 2}%`;
+  if (thF) thF.textContent = `≥${cfg.threshold_focus || 4}%`;
+  if (thB) thB.textContent = `≥${cfg.threshold_buy || 8}%`;
+
+  const tog = document.getElementById('predictFeishuToggle');
+  if (tog && typeof cfg.feishu_enabled === 'boolean') tog.checked = cfg.feishu_enabled;
+
+  const pools = snap.pools || { candidate: [], focus: [], buy: [] };
+  const renderPool = (id, list) => {
+    const el = document.getElementById(id);
+    const cnt = document.getElementById(`predict-count-${id.split('-').pop()}`);
+    if (cnt) cnt.textContent = (list || []).length;
+    if (!el) return;
+    if (!list || list.length === 0) {
+      el.innerHTML = `<div class="empty-pool">暂无</div>`;
+      return;
+    }
+    el.innerHTML = list.map(_predictCardHtml).join('');
+  };
+  renderPool('predict-pool-candidate', pools.candidate);
+  renderPool('predict-pool-focus', pools.focus);
+  renderPool('predict-pool-buy', pools.buy);
+
+  const prog = snap.progress || {};
+  const running = !!snap.running;
+  if (btn) {
+    btn.disabled = running;
+    btn.textContent = running ? '预测中…' : '立即预测';
+  }
+  if (progEl) {
+    if (running) {
+      progEl.textContent = `${prog.phase || '...'} ${prog.current || 0}/${prog.total || 0} ${prog.detail || ''}`;
+    } else if (prog.error) {
+      progEl.textContent = `失败：${prog.error}`;
+    } else if (snap.meta && snap.meta.elapsed_sec) {
+      progEl.textContent = `上次 ${snap.meta.trigger || '手动'} · ${snap.meta.elapsed_sec}s · 扫描${snap.meta.stocks_scanned || 0}股`;
+    } else {
+      progEl.textContent = '';
+    }
+  }
+  if (metaEl) {
+    const m = snap.meta || {};
+    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 命中 ${m.entries_count || 0} · 板块${m.boards_used || 0}`;
+  }
+}
+
+async function openPredictDetail(symbol) {
+  state.selectedSymbol = symbol;
+  try {
+    if (typeof showPredictModal === 'function') {
+      showPredictModal(symbol);
+      return;
+    }
+  } catch (_) {}
+  try { window.open(`/#${symbol}`, '_blank'); } catch (_) {}
+}
+
+function _bindPredictActions() {
+  const btn = document.getElementById('btnPredictRun');
+  if (btn) {
+    btn.onclick = async () => {
+      if (state.predictRunning) return;
+      try {
+        setStatus('预测任务已启动，预计 3-5 分钟完成…', 'info');
+        await request('/api/predict-funnel/trigger', { method: 'POST' });
+        state.predictRunning = true;
+        _startPredictPoll();
+      } catch (err) {
+        setStatus(`启动失败: ${err.message}`, 'error');
+      }
+    };
+  }
+  const tog = document.getElementById('predictFeishuToggle');
+  if (tog) {
+    tog.onchange = async () => {
+      try {
+        await request('/api/predict-funnel/config', {
+          method: 'POST',
+          body: JSON.stringify({ feishu_enabled: tog.checked }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        setStatus(`飞书推送已${tog.checked ? '开启' : '关闭'}`, 'success');
+      } catch (err) {
+        setStatus(`设置失败: ${err.message}`, 'error');
+        tog.checked = !tog.checked;
+      }
+    };
+  }
 }
 
 init().catch((err) => {
