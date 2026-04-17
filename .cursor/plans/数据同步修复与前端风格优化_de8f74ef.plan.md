@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: sync_lock_fix
     content: 修复 _syncing 死锁 — 改用 asyncio.Lock + 单个 symbol wait_for 超时
-    status: pending
+    status: in_progress
   - id: coverage_fix
     content: 修复覆盖率卡 97.55% — 引入 unfillable 集合 + success_trade_date 仅在真正完整时升级
     status: pending
