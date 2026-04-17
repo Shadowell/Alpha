@@ -157,14 +157,14 @@ async def get_hot_stocks() -> str:
 
 
 @mcp.tool()
-async def predict_kronos(symbol: str, lookback: int = 30, horizon: int = 3) -> str:
+async def predict_kronos(symbol: str, lookback: int = 180, horizon: int = 3) -> str:
     """调用 Kronos 时序模型预测个股未来 K 线走势。返回历史+预测合并 K 线、预测起始索引、预测明细。
 
     这是真实的 AI 模型推理结果，任何关于股价走势的预测必须通过本工具获取，禁止自行编造预测数据。
 
     Args:
         symbol: 股票代码，如 '603577'
-        lookback: 回看天数（默认30）
+        lookback: 回看天数（默认180）
         horizon: 预测天数（默认3）
     """
     try:

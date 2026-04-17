@@ -832,7 +832,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             pred_lines = []
             for sym, nm, pool in pool_symbols[:10]:
                 try:
-                    result = await kronos.predict(sym, lookback=30, horizon=3)
+                    result = await kronos.predict(sym, lookback=180, horizon=3)
                     pk = result.get("predicted_kline", [])
                     if pk:
                         parts = []

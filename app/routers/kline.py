@@ -37,9 +37,10 @@ async def run_kline_cache_sync(
     trade_date: str | None = None,
     force: bool = False,
     trigger_mode: str = "manual",
+    window_days: int | None = None,
 ):
     payload = await _kline_cache_service.sync_trade_date(
-        trade_date=trade_date, force=force, trigger_mode=trigger_mode,
+        trade_date=trade_date, force=force, trigger_mode=trigger_mode, window_days=window_days,
     )
     if not payload.get("success"):
         raise HTTPException(status_code=503, detail=payload.get("message", "同步失败"))

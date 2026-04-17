@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260417a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260417c" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -32,6 +32,10 @@
       <a class="sidebar-item" data-tab="notice" title="公告选股">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>
         <span>公告选股</span>
+      </a>
+      <a class="sidebar-item" data-tab="predict" title="预测选股">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-7 4 14 2-7h3"/><circle cx="19" cy="5" r="2"/></svg>
+        <span>预测选股</span>
       </a>
       <a class="sidebar-item" data-tab="agent" title="智能监控 / 进化">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M8 12c0-2.2 1.8-4 4-4s4 1.8 4 4-1.8 4-4 4"/><circle cx="12" cy="12" r="1.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -205,6 +209,41 @@
               <div class="pool-column highlight-buy">
                 <div class="pool-header">公告买入池 <span id="notice-count-buy" class="pool-count">0</span></div>
                 <div id="notice-pool-buy" class="pool-list"></div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- ========== 预测选股 ========== -->
+        <section id="tab-predict" class="tab-content">
+          <div id="predictSummary" class="page-summary"></div>
+          <div class="tab-toolbar">
+            <div class="filter-line">
+              <span class="predict-meta" id="predictMeta">加载中…</span>
+              <span id="predictProgress" class="filter-hint"></span>
+            </div>
+            <div class="predict-actions">
+              <label class="predict-toggle">
+                <input type="checkbox" id="predictFeishuToggle" checked />
+                <span>飞书推送</span>
+              </label>
+              <button id="btnPredictRun" class="btn-action">立即预测</button>
+            </div>
+          </div>
+
+          <section class="funnel-area">
+            <div class="funnel-grid">
+              <div class="pool-column">
+                <div class="pool-header">候选池 <span id="predict-count-candidate" class="pool-count">0</span><span class="pool-threshold" id="predict-th-candidate">≥2%</span></div>
+                <div id="predict-pool-candidate" class="pool-list"></div>
+              </div>
+              <div class="pool-column highlight-focus">
+                <div class="pool-header">重点关注池 <span id="predict-count-focus" class="pool-count">0</span><span class="pool-threshold" id="predict-th-focus">≥4%</span></div>
+                <div id="predict-pool-focus" class="pool-list"></div>
+              </div>
+              <div class="pool-column highlight-buy">
+                <div class="pool-header">买入候选池 <span id="predict-count-buy" class="pool-count">0</span><span class="pool-threshold" id="predict-th-buy">≥8%</span></div>
+                <div id="predict-pool-buy" class="pool-list"></div>
               </div>
             </div>
           </section>
@@ -421,6 +460,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260417b"></script>
+  <script src="/static/app.js?v=20260417e"></script>
 </body>
 </html>

@@ -240,21 +240,27 @@ class AkshareDataProvider:
     ) -> pd.DataFrame:
         return await self.get_realtime_snapshot(cache_ttl_seconds=cache_ttl_seconds)
 
-    async def get_trade_days(self) -> pd.DataFrame:
+    async def get_trade_days(self, min_days: int = 0) -> pd.DataFrame:
+        """返回交易日列表。
+        min_days>0 时，若 DB 返回的日期不足 min_days，则回退到远端完整日历；否则优先 DB。
+        """
+        db_dates: list[str] = []
         if self.kline_store is not None:
             try:
-                dates = self.kline_store.get_trade_dates_from_db()
-                if dates:
-                    return pd.DataFrame({"trade_date": dates})
+                db_dates = self.kline_store.get_trade_dates_from_db() or []
             except Exception:
-                pass
+                db_dates = []
+        if db_dates and (min_days <= 0 or len(db_dates) >= min_days):
+            return pd.DataFrame({"trade_date": db_dates})
         try:
             df = await asyncio.to_thread(ak.tool_trade_date_hist_sina)
             if df is None or df.empty:
-                return pd.DataFrame(columns=["trade_date"])
+                return pd.DataFrame({"trade_date": db_dates}) if db_dates else pd.DataFrame(columns=["trade_date"])
             return df.copy()
         except Exception as exc:
             print(f"[data_provider] get_trade_days failed: {exc}")
+            if db_dates:
+                return pd.DataFrame({"trade_date": db_dates})
             return pd.DataFrame(columns=["trade_date"])
 
     async def get_hist(self, symbol: str, start_date: str, end_date: str, adjust: str = "qfq", force_remote: bool = False) -> pd.DataFrame:
