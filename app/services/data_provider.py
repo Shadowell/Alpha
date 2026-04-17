@@ -363,9 +363,78 @@ class AkshareDataProvider:
     async def get_all_concepts_ths(self, max_items: int = 40, cache_seconds: int = 600) -> pd.DataFrame:
         return await self.get_all_concepts(cache_seconds=cache_seconds)
 
-    async def get_concept_constituents(self, concept_name: str) -> pd.DataFrame:
+    async def fetch_concept_board_names_em(
+        self,
+        retries: int = 5,
+        base_delay_sec: float = 1.5,
+    ) -> tuple[pd.DataFrame, str]:
+        """东方财富概念板块一览（含涨跌幅）；连接被远端断开时重试，仍失败则回退同花顺概念名称列表。
+
+        同花顺接口无板块涨跌幅，返回的 ``涨跌幅`` 置为 0，并按交易日种子打乱顺序，
+        以便在无法访问东财时仍能覆盖不同概念（非「涨幅榜 Top K」，仅作降级）。
+
+        Returns:
+            (dataframe, source) — ``source`` 为 ``em`` 或 ``ths_names``。
+        """
+        last_exc: Exception | None = None
+        for attempt in range(retries):
+            try:
+                df = await asyncio.to_thread(ak.stock_board_concept_name_em)
+                if df is not None and not df.empty:
+                    return df.copy(), "em"
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retries - 1:
+                    await asyncio.sleep(base_delay_sec * (attempt + 1))
+        print(f"[data_provider] stock_board_concept_name_em failed after {retries} tries: {last_exc}")
+        try:
+            ths = await asyncio.to_thread(ak.stock_board_concept_name_ths)
+        except Exception as exc2:
+            if last_exc is not None:
+                raise last_exc from exc2
+            raise
+        if ths is None or ths.empty or "name" not in ths.columns:
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("同花顺概念名称列表为空")
+        out = ths.rename(columns={"name": "板块名称"}).copy()
+        if "涨跌幅" not in out.columns:
+            out["涨跌幅"] = 0.0
+        seed = int(datetime.now().strftime("%Y%m%d"))
+        out = out.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+        print(f"[data_provider] concept board list fallback: stock_board_concept_name_ths ({len(out)} rows)")
+        return out, "ths_names"
+
+    async def get_concept_constituents(self, concept_name: str, fetch_if_missing: bool = False) -> pd.DataFrame:
         if concept_name in self.concept_constituents_cache:
             return self.concept_constituents_cache[concept_name].copy()
+        if not fetch_if_missing:
+            return pd.DataFrame()
+        df = pd.DataFrame()
+        em_attempts = 5
+        for attempt in range(em_attempts):
+            try:
+                df = await asyncio.to_thread(ak.stock_board_concept_cons_em, symbol=concept_name)
+                if df is not None and not df.empty:
+                    break
+            except Exception as exc:
+                if attempt == em_attempts - 1:
+                    print(f"[data_provider] concept cons em failed ({concept_name}): {exc}")
+                await asyncio.sleep(min(8.0, 1.0 * (2**attempt)))
+        if df is None or df.empty:
+            ind_attempts = 3
+            for attempt in range(ind_attempts):
+                try:
+                    df = await asyncio.to_thread(ak.stock_board_industry_cons_em, symbol=concept_name)
+                    if df is not None and not df.empty:
+                        break
+                except Exception as exc:
+                    if attempt == ind_attempts - 1:
+                        print(f"[data_provider] industry cons em failed ({concept_name}): {exc}")
+                    await asyncio.sleep(min(6.0, 1.0 * (2**attempt)))
+        if df is not None and not df.empty:
+            self.concept_constituents_cache[concept_name] = df.copy()
+            return df.copy()
         return pd.DataFrame()
 
     async def get_hot_stocks(
