@@ -672,22 +672,34 @@ class KlineCacheService:
         return selected.iloc[0].strftime("%Y%m%d"), selected.iloc[-1].strftime("%Y%m%d")
 
     async def _load_symbol_list(self) -> list[str]:
-        all_symbols = self.store.get_all_symbols()
-        symbols = [
-            s for s in all_symbols
-            if s.startswith(("00", "30", "60", "68"))
-        ]
-        if symbols:
-            return sorted(set(symbols))
+        """加载待同步 symbol 列表。
 
-        name_map = await self.provider.get_symbol_name_map()
-        for code, name in name_map.items():
-            n = str(name).upper()
-            if not code or "ST" in n:
+        权威源：全市场 symbol->name 映射（东财 spot，5300+）
+        兜底：DB 已有 symbol（冷启动、全市场接口故障时用）
+        过滤：主板/创业板/科创板（00/30/60/68 前缀）+ 剔除 ST/退市
+        """
+        symbols: set[str] = set()
+
+        try:
+            name_map = await self.provider.get_symbol_name_map()
+        except Exception as exc:
+            print(f"[kline_cache] get_symbol_name_map failed: {exc}")
+            name_map = {}
+
+        for code, name in (name_map or {}).items():
+            if not code or not code.startswith(("00", "30", "60", "68")):
                 continue
-            if code.startswith(("00", "30", "60", "68")):
-                symbols.append(code)
-        return sorted(set(symbols))
+            n = str(name or "").upper()
+            if "ST" in n or "退" in n:
+                continue
+            symbols.add(code)
+
+        # 合并 DB 已知 symbol（兜底 + 去除已退市）
+        for s in self.store.get_all_symbols():
+            if s and s.startswith(("00", "30", "60", "68")):
+                symbols.add(s)
+
+        return sorted(symbols)
 
     def _count_filled(
         self,
