@@ -401,6 +401,7 @@ Alpha/
 │       ├── hermes_memory.py           # Agent SQLite 持久化（任务/提案/监控/效果追踪）
 │       ├── hermes_memory_bridge.py    # 审批反馈 → ~/.hermes/memories/MEMORY.md
 │       ├── funnel_service.py          # 三池漏斗核心（状态管理·tick·迁池）
+│       ├── predict_funnel_service.py   # 预测选股（概念板块×Kronos；板块列表东财重试+同花顺降级）
 │       ├── strategy_engine.py         # 盘后形态筛选 + 盘中实时评分
 │       ├── concept_engine.py          # 概念热度评分 + 个股板块映射
 │       ├── notice_service.py          # 公告抓取 + 规则/LLM 双引擎打分
@@ -501,6 +502,10 @@ pip3 install -r requirements.txt
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/predict/{symbol}/kronos` | K 线预测（`lookback`=30, `horizon`=3） |
+| GET | `/api/predict-funnel` | 预测选股快照（概念板块→成分股→Kronos；东财接口带重试，仍失败时降级同花顺概念名，见 `meta.concept_board_source`：`em` / `ths_names`） |
+| POST | `/api/predict-funnel/trigger` | 手动触发预测选股任务 |
+| GET | `/api/predict-funnel/config` | 读取预测选股配置 |
+| POST | `/api/predict-funnel/config` | 更新预测选股配置 |
 
 ### K 线缓存
 
