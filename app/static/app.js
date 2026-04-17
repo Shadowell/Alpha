@@ -507,7 +507,7 @@ function renderHotStocks() {
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
       <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
-      <div class="hot-stock-side ${cls}"><span>¥${fmtNum(item.latest_price, 2)}</span><span>${sign}${fmtNum(item.change_pct, 2)}%</span></div>
+      <div class="hot-stock-side ${cls}"><span>${fmtNum(item.latest_price, 2)}</span><span>${sign}${fmtNum(item.change_pct, 2)}%</span></div>
     `;
     root.appendChild(card);
   });
@@ -2186,7 +2186,7 @@ async function openPredictModal(symbol, detail) {
   const pctCls = pct >= 0 ? 'up' : 'down';
   const sign = pct >= 0 ? '+' : '';
   document.getElementById('predictModalSubtitle').innerHTML = `
-    <span>现价: ¥${fmtNum(m.price, 2)}</span>
+    <span>现价: ${fmtNum(m.price, 2)}</span>
     <span class="${pctCls}">涨跌: ${sign}${fmtNum(pct, 2)}%</span>
     <span>放量比: ${fmtNum(m.volume_ratio, 2)}</span>
     <span>突破位: ${fmtNum(m.breakout_level, 2)}</span>
