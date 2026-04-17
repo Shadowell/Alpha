@@ -164,21 +164,39 @@ class FunnelService:
         return pd.DataFrame(), "none"
 
     async def _warmup_name_cache(self) -> None:
-        """从已有 entries 构建名称缓存，不再调用外部接口。"""
-        if self.provider.symbol_name_cache is None:
-            name_map: dict[str, str] = {}
-            for symbol, entry in self.entries.items():
-                n = entry.get("name", "")
-                if n and n != symbol:
-                    name_map[symbol] = n
-            if name_map:
-                from datetime import datetime
-                self.provider.symbol_name_cache = (datetime.now(), name_map)
+        """预热股票代码→名称映射：优先 provider 缓存；不足时从 entries 补齐。"""
+        try:
+            name_map = await self.provider.get_symbol_name_map(cache_ttl_seconds=3600)
+        except Exception:
+            name_map = {}
+
+        merged: dict[str, str] = dict(name_map or {})
+        for symbol, entry in self.entries.items():
+            n = entry.get("name", "")
+            if n and n != symbol and symbol not in merged:
+                merged[symbol] = n
+
+        if merged:
+            from datetime import datetime
+            self.provider.symbol_name_cache = (datetime.now(), merged)
 
     async def backfill_names(self) -> int:
-        """从已有 entries 构建名称缓存（不调用外部接口）。"""
+        """刷新名称缓存，并把缺名 entries 回填。返回被回填数量。"""
         await self._warmup_name_cache()
-        return 0
+        filled = 0
+        name_map: dict[str, str] = {}
+        if self.provider.symbol_name_cache is not None:
+            _, name_map = self.provider.symbol_name_cache
+        if not name_map:
+            return 0
+        for symbol, entry in self.entries.items():
+            current = entry.get("name", "")
+            if (not current or current == symbol) and symbol in name_map:
+                entry["name"] = name_map[symbol]
+                filled += 1
+        if filled > 0:
+            self._save_state()
+        return filled
 
     async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
         started = time.time()

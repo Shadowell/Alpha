@@ -80,15 +80,21 @@ async def _ticker_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    fixed = await service.backfill_names()
-    if fixed:
-        print(f"[startup] backfilled {fixed} stock names")
+    async def _startup_backfill() -> None:
+        try:
+            fixed = await service.backfill_names()
+            if fixed:
+                print(f"[startup] backfilled {fixed} stock names")
+        except Exception as exc:
+            print(f"[startup] backfill_names failed: {exc}")
+
+    app.state.backfill_task = asyncio.create_task(_startup_backfill())
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(kline_cache_loop(kline_cache_service))
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
     app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
     yield
-    for key in ["ticker_task", "kline_cache_task", "hermes_task", "monitor_task"]:
+    for key in ["backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task"]:
         task = getattr(app.state, key, None)
         if task:
             task.cancel()
@@ -441,11 +447,16 @@ async def paper_buy(req: dict):
         raise HTTPException(400, "缺少 symbol")
     if qty <= 0:
         qty = 100
-    price = await _get_realtime_price(symbol)
+    price, price_source = await _get_realtime_price(symbol)
     if price <= 0:
-        raise HTTPException(400, f"无法获取 {symbol} 实时价格")
+        raise HTTPException(400, f"无法获取 {symbol} 实时价格（source={price_source}）")
     pos = paper_trading.open_position(symbol, name, price, qty, note=req.get("note", ""))
-    return {"success": True, "position": pos, "realtime_price": price}
+    return {
+        "success": True,
+        "position": pos,
+        "realtime_price": price,
+        "price_source": price_source,
+    }
 
 
 @app.post("/api/paper/sell")
@@ -459,13 +470,18 @@ async def paper_sell(req: dict):
     target = next((p for p in opens if p["id"] == position_id), None)
     if not target:
         raise HTTPException(404, "持仓不存在或已平仓")
-    price = await _get_realtime_price(target["symbol"])
+    price, price_source = await _get_realtime_price(target["symbol"])
     if price <= 0:
-        raise HTTPException(400, f"无法获取 {target['symbol']} 实时价格")
+        raise HTTPException(400, f"无法获取 {target['symbol']} 实时价格（source={price_source}）")
     pos = paper_trading.close_position(position_id, price, note=req.get("note", ""))
     if not pos:
         raise HTTPException(404, "持仓不存在或已平仓")
-    return {"success": True, "position": pos, "realtime_price": price}
+    return {
+        "success": True,
+        "position": pos,
+        "realtime_price": price,
+        "price_source": price_source,
+    }
 
 
 def _is_a_market_open() -> bool:
@@ -477,31 +493,40 @@ def _is_a_market_open() -> bool:
     return (570 <= t < 690) or (780 <= t < 900)
 
 
-async def _get_realtime_price(symbol: str) -> float:
-    """从实时快照获取个股最新价，cache TTL 最短以保证时效。"""
-    df = await provider.get_realtime_snapshot(cache_ttl_seconds=5)
+async def _get_realtime_price(symbol: str) -> tuple[float, str]:
+    """从实时快照获取个股最新价（下单专用，强制走 live）。
+
+    返回 (price, source)，source ∈ em_live | db_fallback | stale_cache | none
+    """
+    df = await provider.get_realtime_snapshot(cache_ttl_seconds=5, prefer_live=True)
+    source = provider.realtime_snapshot_source or "none"
     if df.empty:
-        return 0.0
+        return 0.0, source
     match = df[df["代码"] == symbol]
     if match.empty:
-        return 0.0
+        return 0.0, source
     val = match.iloc[0].get("最新价", 0)
-    return float(val) if val else 0.0
+    return (float(val) if val else 0.0), source
 
 
 @app.get("/api/paper/positions")
 async def paper_positions():
     opens = paper_trading.get_open_positions()
     price_map = {}
+    source = "none"
     if opens:
-        ttl = 8 if _is_a_market_open() else 60
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=ttl)
+        open_market = _is_a_market_open()
+        ttl = 10 if open_market else 300
+        df = await provider.get_realtime_snapshot(
+            cache_ttl_seconds=ttl, prefer_live=open_market
+        )
+        source = provider.realtime_snapshot_source or "none"
         if not df.empty:
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
             paper_trading.update_prices(price_map)
             opens = paper_trading.get_open_positions()
-    return {"positions": opens}
+    return {"positions": opens, "price_source": source}
 
 
 @app.get("/api/paper/history")
@@ -512,15 +537,23 @@ async def paper_history(limit: int = 50):
 @app.get("/api/paper/summary")
 async def paper_summary():
     opens = paper_trading.get_open_positions()
+    summary = paper_trading.get_summary()
+    source = "none"
     if opens:
-        ttl = 8 if _is_a_market_open() else 60
-        df = await provider.get_realtime_snapshot(cache_ttl_seconds=ttl)
+        open_market = _is_a_market_open()
+        ttl = 10 if open_market else 300
+        df = await provider.get_realtime_snapshot(
+            cache_ttl_seconds=ttl, prefer_live=open_market
+        )
+        source = provider.realtime_snapshot_source or "none"
         if not df.empty:
             price_map = {}
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
             paper_trading.update_prices(price_map)
-    return paper_trading.get_summary()
+            summary = paper_trading.get_summary()
+    summary["price_source"] = source
+    return summary
 
 
 @app.get("/api/paper/trades")

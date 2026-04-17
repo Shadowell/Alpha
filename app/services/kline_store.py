@@ -104,6 +104,15 @@ class KlineSQLiteStore:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_check_reports_time ON kline_check_reports(check_time DESC)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS symbol_names (
+                symbol TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
     @staticmethod
@@ -523,6 +532,35 @@ class KlineSQLiteStore:
             }
             for r in rows
         ]
+
+    def upsert_symbol_names(self, name_map: dict[str, str], updated_at: str) -> int:
+        """批量写入股票代码到名称的映射（幂等）。返回写入条数。"""
+        if not name_map:
+            return 0
+        payload = [(str(code), str(name), updated_at) for code, name in name_map.items() if code and name]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO symbol_names(symbol, name, updated_at)
+                VALUES(?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    name = excluded.name,
+                    updated_at = excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def load_symbol_names(self) -> dict[str, str]:
+        """读取全部 symbol->name 映射。"""
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute("SELECT symbol, name FROM symbol_names").fetchall()
+        return {r["symbol"]: r["name"] for r in rows}
 
     def get_existing_pairs(self, trade_dates: list[str]) -> set[tuple[str, str]]:
         """Return set of (symbol, trade_date) that already exist in kline_daily."""
