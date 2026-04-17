@@ -1409,17 +1409,26 @@ async function refreshPaperPrices() {
 }
 
 function _paperPollInterval() {
-  return _isMarketOpen() ? 10000 : 60000;
+  return _isMarketOpen() ? 30000 : 600000;
 }
 
-function _startPaperPoll() {
+function _startPaperPoll({ immediate = true } = {}) {
   _stopPaperPoll();
   const tick = () => {
     if (state.activeTab !== 'paper') { _stopPaperPoll(); return; }
+    if (document.hidden) {
+      _paperPollTimer = setTimeout(tick, 5000);
+      return;
+    }
     refreshPaperPrices();
     _paperPollTimer = setTimeout(tick, _paperPollInterval());
   };
-  _paperPollTimer = setTimeout(tick, _paperPollInterval());
+  if (immediate && !document.hidden && state.activeTab === 'paper') {
+    refreshPaperPrices();
+    _paperPollTimer = setTimeout(tick, _paperPollInterval());
+  } else {
+    _paperPollTimer = setTimeout(tick, _paperPollInterval());
+  }
 }
 
 function _stopPaperPoll() {
@@ -1431,8 +1440,10 @@ function _updatePaperRefreshHint() {
   if (!hint) return;
   if (!_paperLastRefresh) { hint.textContent = ''; return; }
   const ago = Math.round((Date.now() - _paperLastRefresh) / 1000);
-  const freq = _isMarketOpen() ? '10s' : '60s';
-  hint.textContent = (ago < 5 ? '刚刚更新' : `${ago}s 前`) + ` · ${_isMarketOpen() ? '盘中' : '盘后'}${freq}`;
+  const open = _isMarketOpen();
+  const freq = open ? '30s' : '10min';
+  const stage = open ? '盘中' : '盘后';
+  hint.textContent = (ago < 5 ? '刚刚更新' : `${ago}s 前`) + ` · ${stage} ${freq}`;
 }
 
 function renderPaperSummary(s) {
@@ -2723,6 +2734,16 @@ async function init() {
   };
   if (state.activeTab === 'market') startMarketPolling();
   if (state.activeTab === 'data') startDcPolling();
+  if (state.activeTab === 'paper') _startPaperPoll();
+
+  document.addEventListener('visibilitychange', () => {
+    if (state.activeTab !== 'paper') return;
+    if (document.hidden) {
+      _stopPaperPoll();
+    } else {
+      _startPaperPoll();
+    }
+  });
 }
 
 init().catch((err) => {

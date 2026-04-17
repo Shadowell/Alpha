@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time as dtime
 import re
 from typing import Any
 
@@ -10,58 +10,161 @@ import akshare as ak
 import pandas as pd
 
 
+def _is_trading_hours(dt: datetime | None = None) -> bool:
+    """判断当前是否在 A 股连续竞价时段（±5 分钟缓冲）。"""
+    cur = dt or datetime.now()
+    if cur.weekday() >= 5:
+        return False
+    t = cur.time()
+    return (dtime(9, 25) <= t <= dtime(11, 35)) or (dtime(12, 55) <= t <= dtime(15, 5))
+
+
 @dataclass
 class AkshareDataProvider:
     concept_constituents_cache: dict[str, pd.DataFrame] = field(default_factory=dict)
     concept_snapshot_cache: tuple[datetime, pd.DataFrame] | None = None
     realtime_snapshot_cache: tuple[datetime, pd.DataFrame] | None = None
+    realtime_snapshot_source: str = "none"  # em_live / db_fallback / stale_cache / none
     hot_stocks_cache: tuple[datetime, pd.DataFrame] | None = None
     symbol_name_cache: tuple[datetime, dict[str, str]] | None = None
     kline_store: Any = None
+
+    def _snapshot_from_db(self) -> pd.DataFrame:
+        """从本地 K 线数据库构建类行情快照（仅用于盘后或实时接口不可用时）。"""
+        if self.kline_store is None:
+            return pd.DataFrame()
+        try:
+            rows = self.kline_store.get_latest_snapshot()
+            if not rows:
+                return pd.DataFrame()
+            name_map: dict[str, str] = {}
+            if self.symbol_name_cache is not None:
+                _, name_map = self.symbol_name_cache
+            items = []
+            for r in rows:
+                s = r["symbol"]
+                close = r["close"]
+                prev = r["prev_close"]
+                pct = ((close / max(prev, 0.01)) - 1) * 100
+                items.append({
+                    "代码": s,
+                    "名称": name_map.get(s, s),
+                    "最新价": close,
+                    "涨跌额": round(close - prev, 4),
+                    "涨跌幅": round(pct, 4),
+                    "昨收": prev,
+                    "今开": r["open"],
+                    "最高": r["high"],
+                    "最低": r["low"],
+                    "成交量": r["volume"],
+                    "成交额": r["amount"],
+                    "总市值": pd.NA,
+                })
+            return pd.DataFrame(items)
+        except Exception as exc:
+            print(f"[data_provider] snapshot_from_db failed: {exc}")
+            return pd.DataFrame()
+
+    async def _fetch_spot_em(self) -> pd.DataFrame:
+        """拉取东财全市场 spot 快照（真正的实时接口），失败自动降级到 sina。"""
+        try:
+            df = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+            payload = self._normalize_snapshot(df)
+            if not payload.empty:
+                await self._ensure_names_from_snapshot(payload)
+                return payload
+        except Exception as exc:
+            print(f"[data_provider] _fetch_spot_em failed: {exc}")
+        # 兜底：新浪 spot
+        try:
+            df = await asyncio.to_thread(ak.stock_zh_a_spot)
+            payload = self._normalize_snapshot(df)
+            if not payload.empty:
+                await self._ensure_names_from_snapshot(payload)
+            return payload
+        except Exception as exc:
+            print(f"[data_provider] _fetch_spot_sina failed: {exc}")
+            return pd.DataFrame()
+
+    async def _ensure_names_from_snapshot(self, snapshot: pd.DataFrame) -> None:
+        """从 spot snapshot 中自动提取 symbol->name 写入 cache + DB。"""
+        try:
+            if snapshot.empty or "代码" not in snapshot.columns or "名称" not in snapshot.columns:
+                return
+            name_map = {
+                str(r["代码"]): str(r["名称"])
+                for _, r in snapshot.iterrows()
+                if r.get("代码") and r.get("名称")
+            }
+            if not name_map:
+                return
+            self.symbol_name_cache = (datetime.now(), name_map)
+            if self.kline_store is not None:
+                try:
+                    await asyncio.to_thread(
+                        self.kline_store.upsert_symbol_names, name_map, datetime.now().isoformat()
+                    )
+                except Exception as exc:
+                    print(f"[data_provider] persist symbol_names failed: {exc}")
+        except Exception as exc:
+            print(f"[data_provider] ensure_names_from_snapshot failed: {exc}")
 
     async def get_realtime_snapshot(
         self,
         retries: int = 2,
         retry_wait_seconds: float = 1.0,
         cache_ttl_seconds: int = 300,
+        prefer_live: bool | None = None,
     ) -> pd.DataFrame:
-        if self.kline_store is not None:
-            try:
-                rows = self.kline_store.get_latest_snapshot()
-                if rows:
-                    name_map: dict[str, str] = {}
-                    if self.symbol_name_cache is not None:
-                        _, name_map = self.symbol_name_cache
-                    items = []
-                    for r in rows:
-                        s = r["symbol"]
-                        close = r["close"]
-                        prev = r["prev_close"]
-                        pct = ((close / max(prev, 0.01)) - 1) * 100
-                        items.append({
-                            "代码": s,
-                            "名称": name_map.get(s, s),
-                            "最新价": close,
-                            "涨跌额": round(close - prev, 4),
-                            "涨跌幅": round(pct, 4),
-                            "昨收": prev,
-                            "今开": r["open"],
-                            "最高": r["high"],
-                            "最低": r["low"],
-                            "成交量": r["volume"],
-                            "成交额": r["amount"],
-                            "总市值": pd.NA,
-                        })
-                    df = pd.DataFrame(items)
-                    if not df.empty:
-                        self.realtime_snapshot_cache = (datetime.now(), df)
-                        return df
-            except Exception as exc:
-                print(f"[data_provider] DB snapshot fallback failed: {exc}")
+        """全市场实时/准实时行情快照。
 
+        策略：
+        - 缓存命中（TTL 内） → 直接返回
+        - prefer_live=True（默认盘中自动判断） → 调东财 spot
+        - live 失败或盘后 → 从 DB 构建快照
+        - DB 也空 → 返回 stale cache / 空
+        """
+        if prefer_live is None:
+            prefer_live = _is_trading_hours()
+
+        # 1) 缓存命中优先
         if self.realtime_snapshot_cache is not None:
             ts, cached = self.realtime_snapshot_cache
-            return cached.copy()
+            age = (datetime.now() - ts).total_seconds()
+            if age <= max(1, cache_ttl_seconds) and not cached.empty:
+                return cached.copy()
+
+        # 2) 尝试实时源（带重试）
+        if prefer_live:
+            last_exc: Exception | None = None
+            for idx in range(retries + 1):
+                try:
+                    df = await self._fetch_spot_em()
+                    if not df.empty:
+                        self.realtime_snapshot_cache = (datetime.now(), df)
+                        self.realtime_snapshot_source = "em_live"
+                        return df.copy()
+                except Exception as exc:
+                    last_exc = exc
+                if idx < retries:
+                    await asyncio.sleep(retry_wait_seconds * (idx + 1))
+            if last_exc is not None:
+                print(f"[data_provider] realtime spot failed: {last_exc}")
+
+        # 3) DB fallback
+        db_df = self._snapshot_from_db()
+        if not db_df.empty:
+            self.realtime_snapshot_cache = (datetime.now(), db_df)
+            self.realtime_snapshot_source = "db_fallback"
+            return db_df.copy()
+
+        # 4) stale cache
+        if self.realtime_snapshot_cache is not None:
+            _, cached = self.realtime_snapshot_cache
+            if not cached.empty:
+                self.realtime_snapshot_source = "stale_cache"
+                return cached.copy()
+        self.realtime_snapshot_source = "none"
         return pd.DataFrame()
 
     def _normalize_snapshot(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -351,16 +454,61 @@ class AkshareDataProvider:
             return pd.DataFrame()
 
     async def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
+        """获取全市场 symbol -> name 映射（冷启动自动拉取）。
+
+        顺序：内存缓存 → DB 持久化表 → AkShare 实时 spot → 兜底空 dict
+        """
         now = datetime.now()
         if self.symbol_name_cache is not None:
             ts, payload = self.symbol_name_cache
             if (now - ts).total_seconds() <= cache_ttl_seconds:
                 return dict(payload)
 
+        # 从 DB 持久化表加载
+        if self.kline_store is not None:
+            try:
+                persisted = await asyncio.to_thread(self.kline_store.load_symbol_names)
+                if persisted:
+                    self.symbol_name_cache = (now, persisted)
+                    # DB 命中后仍尝试后台刷新，但不阻塞
+                    asyncio.create_task(self._refresh_names_from_live())
+                    return dict(persisted)
+            except Exception as exc:
+                print(f"[data_provider] load_symbol_names from DB failed: {exc}")
+
+        # 冷启动：统一走 _fetch_spot_em（含 sina 兜底），最多 3 次
+        for attempt in range(3):
+            payload = await self._fetch_spot_em()
+            if not payload.empty:
+                name_map = {
+                    str(r["代码"]): str(r["名称"])
+                    for _, r in payload.iterrows()
+                    if r.get("代码") and r.get("名称")
+                }
+                if name_map:
+                    # _ensure_names_from_snapshot 已经在 _fetch_spot_em 里落盘
+                    self.realtime_snapshot_cache = (now, payload)
+                    self.realtime_snapshot_source = "em_live"
+                    return name_map
+            await asyncio.sleep(1.5 * (attempt + 1))
+        print("[data_provider] get_symbol_name_map cold-start failed after retries, will retry in background")
+        asyncio.create_task(self._refresh_names_from_live())
+
         if self.symbol_name_cache is not None:
             _, payload = self.symbol_name_cache
             return dict(payload)
         return {}
+
+    async def _refresh_names_from_live(self) -> None:
+        """后台刷新 symbol 名称映射（DB 命中后异步兜底更新）。"""
+        try:
+            df = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+            payload = self._normalize_snapshot(df)
+            if payload.empty:
+                return
+            await self._ensure_names_from_snapshot(payload)
+        except Exception:
+            pass
 
 
 
