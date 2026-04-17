@@ -270,6 +270,7 @@ function switchTab(tab) {
     const chip = document.getElementById('activeConcept');
     if (chip) chip.textContent = state.selectedConcept || '全部';
     renderFunnel();
+    loadQuietBreakout();
   }
   if (tab === 'notice') {
     loadNoticeKeywords();
@@ -2803,6 +2804,8 @@ async function init() {
   });
 
   _bindPredictActions();
+  _bindQuietBreakoutActions();
+  loadQuietBreakout();
 }
 
 /* ==================== 预测选股 ==================== */
@@ -2971,6 +2974,105 @@ function _bindPredictActions() {
       }
     };
   }
+}
+
+/* ==================== 缩量启动 策略卡 ==================== */
+
+async function loadQuietBreakout() {
+  try {
+    const snap = await request('/api/strategy/quiet-breakout');
+    renderQuietBreakout(snap);
+  } catch (err) {
+    // 首次没有数据是正常的
+    renderQuietBreakout(null);
+  }
+}
+
+function renderQuietBreakout(snap) {
+  const meta = document.getElementById('qbMeta');
+  const list = document.getElementById('qbList');
+  if (!list || !meta) return;
+
+  if (!snap || !snap.generated_at) {
+    meta.textContent = '尚未扫描，点击"立即扫描"开始（覆盖全 A 股 ~5000 只，约 30 秒）';
+    list.innerHTML = '';
+    return;
+  }
+
+  const cfg = snap.config || {};
+  const hits = snap.hits || [];
+  meta.textContent = `扫描时间 ${(snap.generated_at || '').replace('T', ' ')} · 扫描 ${snap.total_scanned} 只 · 命中 ${snap.total_hits} 只 · 耗时 ${snap.elapsed_seconds}s · 参数: 横盘${cfg.lookback_days}天/振幅≤${(cfg.amp_threshold * 100).toFixed(0)}%/CV≤${cfg.vol_cv_threshold}/放量≥${cfg.vol_spike_ratio}倍${cfg.require_limit_up ? '/必须涨停' : ''}`;
+
+  if (!hits.length) {
+    list.innerHTML = '<div class="qb-empty">本次参数下没有命中的候选股</div>';
+    return;
+  }
+
+  list.innerHTML = hits.map((h) => {
+    const cls = Number(h.change_pct || 0) >= 0 ? 'up' : 'down';
+    const sign = Number(h.change_pct || 0) >= 0 ? '+' : '';
+    return `
+      <div class="qb-card" data-symbol="${h.symbol}" data-name="${esc(h.name || '')}">
+        <div class="qb-card-top">
+          <div class="qb-card-name">${esc(h.name || '--')}<small>${h.symbol}</small></div>
+          <div class="qb-card-pct ${cls}">${sign}${fmtNum(h.change_pct, 2)}%</div>
+        </div>
+        <div class="qb-card-meta">
+          <span class="qb-tag">收 ${fmtNum(h.close, 2)}</span>
+          <span class="qb-tag spike">放量 ${fmtNum(h.vol_spike, 1)}x</span>
+          <span class="qb-tag cv">CV ${fmtNum(h.vol_cv, 2)}</span>
+          <span class="qb-tag">振幅 ${fmtNum(h.amp_pct, 1)}%</span>
+          ${h.is_limit_up ? `<span class="qb-tag limit">涨停 ${fmtNum(h.limit_pct, 0)}cm</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.qb-card').forEach((el) => {
+    el.onclick = () => {
+      const sym = el.getAttribute('data-symbol');
+      const name = el.getAttribute('data-name');
+      if (typeof openPredictDetail === 'function') {
+        openPredictDetail(sym, name);
+      } else if (typeof selectHotStock === 'function') {
+        selectHotStock({ symbol: sym, name });
+      }
+    };
+  });
+}
+
+function _bindQuietBreakoutActions() {
+  const btn = document.getElementById('btnQbScan');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const lookback = Number(document.getElementById('qbLookback').value || 25);
+    const amp = Number(document.getElementById('qbAmp').value || 20) / 100;
+    const cv = Number(document.getElementById('qbCv').value || 0.4);
+    const spike = Number(document.getElementById('qbSpike').value || 3.0);
+    const limitUp = document.getElementById('qbLimitUp').checked;
+    const params = new URLSearchParams({
+      lookback_days: String(lookback),
+      amp_threshold: String(amp),
+      vol_cv_threshold: String(cv),
+      vol_spike_ratio: String(spike),
+      require_limit_up: String(limitUp),
+    });
+    btn.disabled = true;
+    btn.textContent = '扫描中…';
+    const meta = document.getElementById('qbMeta');
+    if (meta) meta.textContent = '扫描中，约 30 秒（全 A 股）…';
+    try {
+      const snap = await request(`/api/strategy/quiet-breakout/scan?${params}`, { method: 'POST' });
+      renderQuietBreakout(snap);
+      setStatus(`缩量启动扫描完成：命中 ${snap.total_hits} 只`, 'success');
+    } catch (err) {
+      setStatus(`扫描失败: ${err.message}`, 'error');
+      if (meta) meta.textContent = `扫描失败: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '立即扫描';
+    }
+  };
 }
 
 init().catch((err) => {

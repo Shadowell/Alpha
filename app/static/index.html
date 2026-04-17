@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260417c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260418b" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -176,6 +176,37 @@
                 <div id="pool-buy" class="pool-list"></div>
               </div>
             </div>
+          </section>
+
+          <!-- ===== 缩量启动 形态扫描 ===== -->
+          <section class="quiet-breakout-area">
+            <div class="qb-header">
+              <div class="qb-title">
+                <span class="qb-badge">形态</span>
+                <h3>缩量启动 · 首板放量涨停</h3>
+                <span class="qb-hint">前 N 天缩量横盘，最新一天放量涨停</span>
+              </div>
+              <div class="qb-actions">
+                <label class="qb-param">
+                  横盘 <input id="qbLookback" type="number" min="10" max="60" value="25" /> 天
+                </label>
+                <label class="qb-param">
+                  振幅≤ <input id="qbAmp" type="number" min="5" max="50" step="1" value="20" /> %
+                </label>
+                <label class="qb-param">
+                  量能CV≤ <input id="qbCv" type="number" min="0.1" max="1" step="0.05" value="0.40" />
+                </label>
+                <label class="qb-param">
+                  放量≥ <input id="qbSpike" type="number" min="1.5" max="20" step="0.1" value="3.0" /> 倍
+                </label>
+                <label class="qb-toggle">
+                  <input id="qbLimitUp" type="checkbox" checked /> 必须涨停
+                </label>
+                <button id="btnQbScan" class="btn-action">立即扫描</button>
+              </div>
+            </div>
+            <div id="qbMeta" class="qb-meta muted">尚未扫描</div>
+            <div id="qbList" class="qb-list"></div>
           </section>
         </section>
 
@@ -460,6 +491,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260418a"></script>
+  <script src="/static/app.js?v=20260418b"></script>
 </body>
 </html>

@@ -23,6 +23,7 @@ from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
 from app.services.predict_funnel_service import PredictFunnelService
+from app.services.quiet_breakout_scanner import QuietBreakoutConfig, QuietBreakoutScanner
 
 from app.routers.kline import init_kline_router, kline_cache_loop
 
@@ -48,6 +49,27 @@ predict_funnel_service = PredictFunnelService(
     provider=provider,
     kronos_service=kronos_service,
     state_store=service.state_store,
+)
+
+
+def _qb_name_lookup(symbol: str) -> str:
+    try:
+        if provider.symbol_name_cache is not None:
+            _, name_map = provider.symbol_name_cache
+            if name_map and symbol in name_map:
+                return name_map[symbol]
+    except Exception:
+        pass
+    try:
+        names = _kline_store.load_symbol_names()
+        return names.get(symbol, "")
+    except Exception:
+        return ""
+
+
+quiet_breakout_scanner = QuietBreakoutScanner(
+    kline_store=_kline_store,
+    name_lookup=_qb_name_lookup,
 )
 hermes_memory = HermesMemory()
 hermes_runtime = HermesRuntime(
@@ -276,6 +298,37 @@ async def get_predict_funnel_config():
 async def update_predict_funnel_config(payload: dict):
     cfg = predict_funnel_service.update_config(payload or {})
     return {"success": True, "config": cfg}
+
+
+@app.get("/api/strategy/quiet-breakout")
+async def get_quiet_breakout():
+    """返回上次扫描的"缩量启动"策略结果快照。"""
+    return quiet_breakout_scanner.get_snapshot()
+
+
+@app.post("/api/strategy/quiet-breakout/scan")
+async def scan_quiet_breakout(
+    lookback_days: int = 25,
+    amp_threshold: float = 0.20,
+    vol_cv_threshold: float = 0.40,
+    vol_spike_ratio: float = 3.0,
+    require_limit_up: bool = True,
+    limit: int | None = None,
+):
+    """扫描全库，返回缩量横盘 + 首板放量涨停形态的候选股。"""
+    if quiet_breakout_scanner.get_snapshot().get("running"):
+        raise HTTPException(status_code=409, detail="扫描正在进行中")
+    cfg = QuietBreakoutConfig(
+        lookback_days=max(5, min(lookback_days, 60)),
+        amp_threshold=max(0.05, min(amp_threshold, 0.5)),
+        vol_cv_threshold=max(0.1, min(vol_cv_threshold, 1.0)),
+        vol_spike_ratio=max(1.5, min(vol_spike_ratio, 20.0)),
+        require_limit_up=require_limit_up,
+    )
+    try:
+        return await quiet_breakout_scanner.scan(cfg, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"扫描失败: {exc}")
 
 
 @app.get("/api/notice/funnel")
