@@ -425,6 +425,14 @@ class HermesRuntime:
         strategy = obs.get("get_strategy_profile") or {}
         sync_status = obs.get("get_kline_sync_status") or {}
 
+        # 历史提案学习：注入最近 30 天 outcome 统计，避免重复无效提案
+        learner_insert = ""
+        try:
+            from app.main import proposal_learner as _pl
+            learner_insert = _pl.build_prompt_insert() or ""
+        except Exception:
+            pass
+
         user_prompt = f"""## 任务：盘后复盘
 
 ### 今日漏斗状态
@@ -440,6 +448,8 @@ class HermesRuntime:
 
 ### 热门概念 Top3
 {metrics.get('hot_concepts_top3', [])}
+
+{learner_insert}
 
 ### 请你完成：
 1. 评估今日策略表现（候选池质量、转化率、筛选效率）
