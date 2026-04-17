@@ -7,10 +7,11 @@
   --card-nested: #0d121f;
   --line: #1e293b;
   --line-strong: #334155;
-  --text: #e2e8f0;
-  --text-secondary: #cbd5e1;
-  --muted: #64748b;
-  --text-dim: #475569;
+  --text: #e6edf7;
+  --text-strong: #f3f6fc;
+  --text-secondary: #c9d3e2;
+  --muted: #94a3b8;
+  --text-dim: #64748b;
   --brand: #3b82f6;
   --brand-soft: rgba(59, 130, 246, 0.12);
   --brand-glow: rgba(59, 130, 246, 0.08);
@@ -31,25 +32,46 @@
   --sidebar-w: 240px;
   --radius: 12px;
   --radius-sm: 8px;
-  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
-  --font-sans: "Inter", -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "HarmonyOS Sans SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
 }
 
 * { box-sizing: border-box; }
+
+html {
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}
 
 body {
   margin: 0;
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.6;
-  text-rendering: optimizeLegibility;
+  font-size: var(--fs-md);
+  line-height: 1.55;
   background: var(--bg);
   display: flex;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern" 1, "liga" 0, "calt" 1;
+  font-variant-numeric: tabular-nums;
+}
+
+input, button, select, textarea {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+code, pre, .mono, [class*="mono"] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
 }
 
 /* ── Scrollbar ── */
@@ -1879,4 +1901,134 @@ h5.monitor-heading { font-size: 13px; color: var(--brand); }
   .paper-account-bar { gap: 8px; padding: 12px; }
   .paper-stat-card { min-width: 80px; padding: 6px 12px; }
   .paper-account-left { gap: 6px; }
+}
+
+/* ============================================================
+   Typography Clarity Layer — 2026-04-17
+   目的：1080p 及常规笔记本分辨率下中文字体防虚/防糊。
+   - 关闭 optimizeLegibility（Chrome 对中文反优化）
+   - 12px → 13px，11px → 12px 全局小字抬升
+   - 对比度：muted 调亮、强调文字新增 --text-strong
+   - 数字列强制 tabular-nums
+   ============================================================ */
+
+/* 1) 渲染引擎：关闭 optimizeLegibility，避免中文字符 hinting 抖动 */
+html, body, input, button, select, textarea, table, td, th, span, div, p, a, li {
+  text-rendering: optimizeSpeed;
+}
+
+/* 标题等大字使用 geometricPrecision，保持棱角 */
+h1, h2, h3, h4, h5, h6,
+.page-header h1,
+.sidebar-brand-text,
+.stock-name,
+.concept-name,
+.hot-stock-name {
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 2) 小字抬升：12→13, 11→12（只影响 font-size 本身，不动布局） */
+.sub, .pill, .chip,
+.meta, .meta-item,
+.badge, .tag, .label,
+.stock-code,
+.stock-meta,
+.card-meta,
+.card-actions button,
+.hot-stock-code,
+.hot-stock-price,
+.hot-concept-meta,
+.detail-label, .detail-value,
+.paper-stat-label,
+.paper-hist-time,
+.paper-trade-time,
+.paper-action-buy, .paper-action-sell,
+.empty-state-hint,
+.agent-top-meta,
+.muted,
+.text-xs,
+.sidebar-item span,
+.task-row td,
+.task-row th,
+.dc-missing-list li,
+.dc-tags .tag {
+  font-size: 13px !important;
+  line-height: 1.5;
+}
+
+/* 超小徽标 / 顶部 11px */
+.badge.tiny,
+.pill.tiny,
+.agent-top-label,
+.paper-hist-name code,
+.market-status .label {
+  font-size: 12px !important;
+}
+
+/* 3) 数字密集区统一等宽 + 清晰 */
+.hot-stock-price,
+.hot-stock-pct,
+.stock-price,
+.stock-pct,
+.stat-value,
+.dc-stat-value,
+.paper-stat-value,
+.paper-history-table,
+.task-row td,
+code, pre,
+[class*="num"],
+[class*="Num"],
+[class*="price"],
+[class*="Price"],
+[class*="pct"],
+[class*="Pct"] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 0;
+}
+
+/* 4) 提高正文整体对比度（不改变主题色） */
+body { color: var(--text); }
+.muted, .text-muted, small { color: var(--muted); }
+.sub, .meta, .card-meta,
+.stock-code, .hot-stock-code,
+.hot-concept-meta,
+.detail-label,
+.paper-stat-label,
+.paper-hist-time,
+.empty-state-hint {
+  color: #b4c0d0; /* 比原 --muted 更亮，保证小字可读 */
+}
+
+/* 5) 表格行高 / 对齐一致化（仅常见列表） */
+.task-row td,
+.paper-history-table td,
+.dc-table td,
+.kline-table td {
+  line-height: 1.45;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+/* 6) 关键 UI 文字轻微锐化：负载小，中文不晕 */
+.sidebar-item,
+.nav-tab,
+.btn, button,
+.page-header h1,
+.stock-name, .concept-name, .hot-stock-name,
+.paper-stat-value {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 7) 按钮文字更实（避免 500 字重在深色面板上发虚） */
+.btn, button, .sidebar-item, .nav-tab {
+  font-weight: 600;
+}
+
+/* 8) 去掉可能导致中文发虚的字体渐变（sidebar logo 文字） */
+.sidebar-brand-text {
+  background: none;
+  -webkit-text-fill-color: var(--text-strong);
+  color: var(--text-strong);
 }
