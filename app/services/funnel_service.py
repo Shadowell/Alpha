@@ -543,7 +543,7 @@ class FunnelService:
 
         trade_days = await self.provider.get_trade_days()
         try:
-            days = max(10, min(kline_days, 180))
+            days = max(10, min(kline_days, 365))
             start_date, end_date = get_last_n_trade_window(trade_days, current_trade_date, days)
             hist = await self.provider.get_hist(symbol, start_date, end_date)
         except ValueError:

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260418b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260418c" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -299,6 +299,7 @@
             <div class="agent-inner-tabs">
               <button class="agent-inner-tab active" data-subtab="monitor">智能监控 <span id="monitorMsgCount" class="tab-count">0</span></button>
               <button class="agent-inner-tab" data-subtab="proposal">提案管理 <span id="agentPendingCount" class="tab-count">0</span></button>
+              <button class="agent-inner-tab" data-subtab="ai">AI 能力</button>
             </div>
 
             <!-- ── 子Tab: 智能监控 ── -->
@@ -361,6 +362,123 @@
                     <h3>运行记录</h3>
                     <div id="agentTasks" class="agent-tasks"></div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── 子Tab: AI 能力 ── -->
+            <div id="agentSubAI" class="agent-subtab-content">
+              <div class="ai-grid">
+                <!-- [B] 风险守门人 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag risk">B</span>
+                    <h4>风险守门人</h4>
+                    <span class="ai-hint">盘中每 30 秒监控持仓，触发止盈/止损/冲高回落告警</span>
+                  </div>
+                  <div class="ai-controls">
+                    <label><input type="checkbox" id="riskEnabled" checked /> 启用</label>
+                    <label><input type="checkbox" id="riskAutoClose" /> 自动平仓</label>
+                    <label>止盈<input type="number" id="riskTp" value="8" step="0.5" /> %</label>
+                    <label>止损<input type="number" id="riskSl" value="-5" step="0.5" /> %</label>
+                    <button id="btnRiskSave" class="btn-secondary btn-sm">保存</button>
+                    <button id="btnRiskTick" class="btn-primary btn-sm">立即扫描</button>
+                  </div>
+                  <div id="riskAlerts" class="ai-alerts">
+                    <div class="ai-empty">暂无告警</div>
+                  </div>
+                </div>
+
+                <!-- [A] 自动交易闭环 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag auto">A</span>
+                    <h4>自动交易闭环</h4>
+                    <span class="ai-hint">buy池分数≥70自动下模拟单，到达tp/sl自动平仓</span>
+                  </div>
+                  <div class="ai-controls">
+                    <label><input type="checkbox" id="autoEnabled" /> 启用</label>
+                    <label><input type="checkbox" id="autoDry" checked /> Dry Run</label>
+                    <label>最多持仓<input type="number" id="autoMaxPos" value="5" min="1" max="20" /></label>
+                    <label>每笔股数<input type="number" id="autoSize" value="1000" step="100" /></label>
+                    <button id="btnAutoSave" class="btn-secondary btn-sm">保存</button>
+                    <button id="btnAutoTick" class="btn-primary btn-sm">立即执行</button>
+                  </div>
+                  <div id="autoActions" class="ai-alerts">
+                    <div class="ai-empty">暂无动作</div>
+                  </div>
+                </div>
+
+                <!-- [C] 策略回测 -->
+                <div class="ai-card ai-card-wide">
+                  <div class="ai-card-head">
+                    <span class="ai-tag backtest">C</span>
+                    <h4>策略回测实验室（缩量启动）</h4>
+                    <span class="ai-hint">在 180 天历史 + 全 A 股上回测"缩量启动"策略，输出胜率/收益/回撤</span>
+                  </div>
+                  <div class="ai-controls">
+                    <label>持仓<input type="number" id="btHold" value="3" min="1" max="10" /> 天</label>
+                    <label>止盈<input type="number" id="btTp" value="8" step="0.5" /> %</label>
+                    <label>止损<input type="number" id="btSl" value="-5" step="0.5" /> %</label>
+                    <label><input type="checkbox" id="btLimitUp" checked /> 必须涨停</label>
+                    <button id="btnBacktestRun" class="btn-primary btn-sm">开始回测（~90秒）</button>
+                  </div>
+                  <div id="backtestStats" class="bt-stats"></div>
+                  <div id="backtestSamples" class="bt-samples"></div>
+                </div>
+
+                <!-- [F] 消息驱动分析 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag news">F</span>
+                    <h4>消息驱动分析</h4>
+                    <span class="ai-hint">LLM 综合"公告+龙虎榜+概念"输出"消息→标的→操作"链路</span>
+                  </div>
+                  <div class="ai-controls">
+                    <button id="btnNewsRun" class="btn-primary btn-sm">生成分析</button>
+                  </div>
+                  <div id="newsInsightBox" class="ai-text-box">点击"生成分析"</div>
+                </div>
+
+                <!-- [D] 深度研报 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag research">D</span>
+                    <h4>深度个股研报</h4>
+                    <span class="ai-hint">对任一 A 股生成聚合研报（K线+Kronos+概念+公告）</span>
+                  </div>
+                  <div class="ai-controls">
+                    <input id="researchSym" class="ai-input" placeholder="股票代码 如 002875" />
+                    <input id="researchName" class="ai-input" placeholder="名称（可选）" />
+                    <button id="btnResearchRun" class="btn-primary btn-sm">生成研报</button>
+                  </div>
+                  <div id="researchCardBox" class="ai-text-box">输入代码后生成</div>
+                </div>
+
+                <!-- [E] 提案学习 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag learn">E</span>
+                    <h4>提案学习闭环</h4>
+                    <span class="ai-hint">历史 outcome 注入 prompt，让 Agent 下次复盘主动规避失败场景</span>
+                  </div>
+                  <div class="ai-controls">
+                    <button id="btnLearnerReload" class="btn-primary btn-sm">查看统计</button>
+                  </div>
+                  <div id="learnerStats" class="ai-text-box">点击按钮查看</div>
+                </div>
+
+                <!-- [G] 周报 -->
+                <div class="ai-card">
+                  <div class="ai-card-head">
+                    <span class="ai-tag weekly">G</span>
+                    <h4>周报生成</h4>
+                    <span class="ai-hint">周五 15:30 自动生成 + 推飞书；可手动触发</span>
+                  </div>
+                  <div class="ai-controls">
+                    <button id="btnWeeklyRun" class="btn-primary btn-sm">立即生成并推送</button>
+                  </div>
+                  <div id="weeklyReportBox" class="ai-text-box">尚未生成</div>
                 </div>
               </div>
             </div>
@@ -491,6 +609,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260418b"></script>
+  <script src="/static/app.js?v=20260418c"></script>
 </body>
 </html>
