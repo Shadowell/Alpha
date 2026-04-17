@@ -940,8 +940,31 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
       {
         name: '日K', type: 'candlestick', data: candles,
         itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
-        markArea: predBoundary ? { silent: true, data: [[ { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.03)' } }, { xAxis: lastDate } ]] } : undefined,
-        markLine: predBoundary ? { silent: true, symbol: 'none', data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.25)', width: 1 }, label: { show: true, formatter: '预 测', color: 'rgba(250, 204, 21, 0.6)', fontSize: 13, fontWeight: 'bold', position: 'insideStartTop', rotate: 0, padding: [2, 6], distance: [8, 0] } }] } : undefined,
+        markArea: predBoundary ? {
+          silent: true,
+          itemStyle: { color: 'rgba(250, 204, 21, 0.06)', borderColor: 'rgba(250, 204, 21, 0.35)', borderWidth: 1, borderType: 'dashed' },
+          label: {
+            show: true,
+            position: 'insideTop',
+            distance: 6,
+            formatter: '▼ 预测区',
+            color: '#0b0f19',
+            fontSize: 11,
+            fontWeight: 700,
+            backgroundColor: 'rgba(250, 204, 21, 0.92)',
+            borderRadius: 4,
+            padding: [3, 8, 3, 8],
+          },
+          data: [[{ xAxis: predBoundary }, { xAxis: lastDate }]],
+        } : undefined,
+        markLine: predBoundary ? {
+          silent: true, symbol: 'none',
+          data: [{
+            xAxis: predBoundary,
+            lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.55)', width: 1.2 },
+            label: { show: false },
+          }],
+        } : undefined,
       },
       {
         name: '实际', type: 'candlestick', data: realCandles,
@@ -2262,14 +2285,28 @@ function renderPredictChartFull(merged, predStartIdx) {
         itemStyle: { color: '#ef4444', color0: '#16a34a', borderColor: '#ef4444', borderColor0: '#16a34a' },
         markArea: predBoundary ? {
           silent: true,
-          data: [[
-            { xAxis: predBoundary, itemStyle: { color: 'rgba(250, 204, 21, 0.12)' } },
-            { xAxis: lastDate }
-          ]]
+          itemStyle: { color: 'rgba(250, 204, 21, 0.08)', borderColor: 'rgba(250, 204, 21, 0.4)', borderWidth: 1, borderType: 'dashed' },
+          label: {
+            show: true,
+            position: 'insideTop',
+            distance: 6,
+            formatter: '▼ 预测区',
+            color: '#0b0f19',
+            fontSize: 12,
+            fontWeight: 700,
+            backgroundColor: 'rgba(250, 204, 21, 0.92)',
+            borderRadius: 4,
+            padding: [3, 8, 3, 8],
+          },
+          data: [[{ xAxis: predBoundary }, { xAxis: lastDate }]],
         } : undefined,
         markLine: predBoundary ? {
           silent: true, symbol: 'none',
-          data: [{ xAxis: predBoundary, lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.6)', width: 1 }, label: { show: true, formatter: '预 测', color: '#facc15', fontSize: 14, fontWeight: 'bold', position: 'insideStartTop', rotate: 0, padding: [2, 6], distance: [8, 0] } }]
+          data: [{
+            xAxis: predBoundary,
+            lineStyle: { type: 'dashed', color: 'rgba(250, 204, 21, 0.6)', width: 1.2 },
+            label: { show: false },
+          }],
         } : undefined,
       },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => (p.data[2] > 0 ? '#ef4444' : '#16a34a') } },
