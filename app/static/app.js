@@ -849,7 +849,22 @@ function _klineOption(rows) {
   };
 }
 
+/**
+ * 将 Kronos 返回的 merged_kline (默认 180 历史 + N 预测) 截取为"最近 30 根历史 + 全部预测"，
+ * 以统一前端 K 线展示窗口为 30 天。
+ * 返回 [slicedMerged, newPredStartIdx]
+ */
+function _sliceMergedForDisplay(merged, predStartIdx, historyDays = 30) {
+  if (!Array.isArray(merged) || merged.length === 0) return [merged, predStartIdx];
+  const total = merged.length;
+  const predIdx = Number.isFinite(predStartIdx) ? predStartIdx : total;
+  const histStart = Math.max(0, predIdx - historyDays);
+  if (histStart === 0) return [merged, predIdx];
+  return [merged.slice(histStart), predIdx - histStart];
+}
+
 function _klinePredictOption(merged, predStartIdx, realtimeMap) {
+  [merged, predStartIdx] = _sliceMergedForDisplay(merged, predStartIdx);
   realtimeMap = realtimeMap || {};
   const dates = merged.map(x => x.date);
 
@@ -1085,7 +1100,7 @@ async function selectSymbol(symbol) {
   renderStockSummary(null);
   renderChartPlaceholder('加载中...');
   try {
-    const detail = await request(`/api/stock/${symbol}/detail?kline_days=180`);
+    const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
     renderStockSummary(detail);
     renderKlineChart(detail.kline || []);
     _scrollToRightPanel();
@@ -1148,10 +1163,10 @@ async function selectHotStock(item) {
   if (klineSection) klineSection.style.display = '';
   renderMarketChartPlaceholder('加载中...');
   try {
-    let payload = await request(`/api/kline/${item.symbol}?days=180`);
+    let payload = await request(`/api/kline/${item.symbol}?days=30`);
     if (!payload?.items?.length) {
       try {
-        const detail = await request(`/api/stock/${item.symbol}/detail?kline_days=180`);
+        const detail = await request(`/api/stock/${item.symbol}/detail?kline_days=30`);
         payload = { items: detail?.kline || [], count: Number(detail?.kline?.length || 0) };
       } catch (_) {}
     }
@@ -1317,7 +1332,7 @@ async function selectNoticeSymbol(symbol) {
   document.getElementById('noticeSummary').textContent = '加载中...';
   document.getElementById('noticeDetail').textContent = '加载中...';
   try {
-    const detail = await request(`/api/notice/${symbol}/detail?days=180`);
+    const detail = await request(`/api/notice/${symbol}/detail?days=30`);
     const kline = detail.kline || [];
     document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
     const first = (detail.notices || [])[0] || {};
@@ -2058,12 +2073,12 @@ async function _loadMonitorKline(symbol, name) {
   try {
     let kline = [];
     try {
-      const payload = await request(`/api/kline/${symbol}?days=180`);
+      const payload = await request(`/api/kline/${symbol}?days=30`);
       kline = payload?.items || [];
     } catch {}
     if (!kline.length) {
       try {
-        const detail = await request(`/api/stock/${symbol}/detail?kline_days=180`);
+        const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
         kline = detail?.kline || [];
       } catch {}
     }
@@ -2141,12 +2156,12 @@ function _showHoverKline(symbol, name, anchorEl) {
     try {
       let kline = [];
       try {
-        const payload = await request(`/api/kline/${symbol}?days=60`);
+        const payload = await request(`/api/kline/${symbol}?days=30`);
         kline = payload?.items || [];
       } catch {}
       if (!kline.length) {
         try {
-          const detail = await request(`/api/stock/${symbol}/detail?kline_days=60`);
+          const detail = await request(`/api/stock/${symbol}/detail?kline_days=30`);
           kline = detail?.kline || [];
         } catch {}
       }
@@ -2450,6 +2465,8 @@ function renderPredictChartHistory(rows) {
 function renderPredictChartFull(merged, predStartIdx) {
   const chart = ensurePredictChart();
   if (!chart || !merged.length) return;
+
+  [merged, predStartIdx] = _sliceMergedForDisplay(merged, predStartIdx);
 
   const dates = merged.map(x => x.date);
   const candles = merged.map((x, i) => {
@@ -3137,7 +3154,7 @@ async function openPredictDetail(symbol, name) {
   state.selectedSymbol = symbol;
   let detail = { name: name || symbol, kline: [], metrics: {} };
   try {
-    const d = await request(`/api/stock/${symbol}/detail?kline_days=180`);
+    const d = await request(`/api/stock/${symbol}/detail?kline_days=30`);
     detail = {
       name: d?.name || name || symbol,
       kline: d?.kline || [],
