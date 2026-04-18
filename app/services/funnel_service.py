@@ -536,9 +536,28 @@ class FunnelService:
         async with self.lock:
             await self.ensure_trade_date(trade_date)
             entry = self.entries.get(symbol)
-            if not entry:
-                raise KeyError(symbol)
-            entry_copy = dict(entry)
+            if entry:
+                entry_copy = dict(entry)
+            else:
+                # 股票不在漏斗池内：退化为基础详情（供缩量启动/热门个股等场景使用）
+                name = ""
+                try:
+                    name_map = await self.provider.get_symbol_name_map()
+                    name = name_map.get(symbol, "")
+                except Exception:
+                    pass
+                entry_copy = {
+                    "symbol": symbol,
+                    "name": name or symbol,
+                    "pool": "candidate",  # 非漏斗内：用 candidate 占位
+                    "score": 0.0,
+                    "recommended_pool": None,
+                    "score_breakdown": {},
+                    "metrics": {"external": True},
+                    "concept_tags": [],
+                    "concept_candidates": [],
+                    "trigger_log": [],
+                }
             current_trade_date = self.trade_date
 
         trade_days = await self.provider.get_trade_days()

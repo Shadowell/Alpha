@@ -3132,15 +3132,25 @@ function renderPredictFunnel() {
   }
 }
 
-async function openPredictDetail(symbol) {
+async function openPredictDetail(symbol, name) {
+  if (!symbol) return;
   state.selectedSymbol = symbol;
+  let detail = { name: name || symbol, kline: [], metrics: {} };
   try {
-    if (typeof showPredictModal === 'function') {
-      showPredictModal(symbol);
-      return;
+    const d = await request(`/api/stock/${symbol}/detail?kline_days=180`);
+    detail = {
+      name: d?.name || name || symbol,
+      kline: d?.kline || [],
+      metrics: d?.metrics || {},
+    };
+  } catch (_) { /* fallback 到基础信息 */ }
+  try {
+    if (typeof openPredictModal === 'function') {
+      await openPredictModal(symbol, detail);
     }
-  } catch (_) {}
-  try { window.open(`/#${symbol}`, '_blank'); } catch (_) {}
+  } catch (err) {
+    setStatus(`预测加载失败: ${err?.message || err}`, 'error');
+  }
 }
 
 function _bindPredictActions() {
@@ -3229,14 +3239,13 @@ function renderQuietBreakout(snap) {
   }).join('');
 
   list.querySelectorAll('.qb-card').forEach((el) => {
-    el.onclick = () => {
+    el.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
       const sym = el.getAttribute('data-symbol');
       const name = el.getAttribute('data-name');
-      if (typeof openPredictDetail === 'function') {
-        openPredictDetail(sym, name);
-      } else if (typeof selectHotStock === 'function') {
-        selectHotStock({ symbol: sym, name });
-      }
+      openPredictDetail(sym, name);
+      return false;
     };
   });
 }
