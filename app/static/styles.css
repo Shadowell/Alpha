@@ -363,7 +363,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
-  height: calc(100vh - 240px);
+  height: clamp(420px, calc(100vh - 320px), 640px);
 }
 
 .pool-column {
@@ -2220,61 +2220,81 @@ body { color: var(--text); }
   color: #34d399; font-size: 10px; font-weight: 600;
 }
 
-/* ===== 缩量启动 · 策略卡 ===== */
+/* ===== 缩量启动 · 策略卡（独立放大区块）===== */
 .quiet-breakout-area {
-  margin-top: 18px; padding: 14px;
-  background: rgba(15, 23, 42, 0.45);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
+  margin-top: 22px; padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.06) 0%, rgba(15, 23, 42, 0.55) 40%);
+  border: 1px solid rgba(249, 115, 22, 0.25);
+  border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
-.qb-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.qb-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.qb-title h3 { margin: 0; font-size: 15px; color: #f1f5f9; }
-.qb-hint { font-size: 11px; color: #94a3b8; }
+.qb-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.18);
+}
+.qb-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.qb-title h3 { margin: 0; font-size: 17px; color: #f1f5f9; font-weight: 700; }
+.qb-hint { font-size: 12px; color: #94a3b8; }
 .qb-badge {
-  padding: 2px 8px; border-radius: 10px;
+  padding: 3px 10px; border-radius: 10px;
   background: linear-gradient(90deg,#f97316,#ef4444); color: #fff;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.35);
 }
-.qb-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.qb-param { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #cbd5e1; }
+.qb-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.qb-param { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #cbd5e1; }
 .qb-param input {
-  width: 56px; padding: 3px 6px; border-radius: 6px;
-  background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(148, 163, 184, 0.2);
-  color: #e2e8f0; font-size: 12px;
+  width: 62px; padding: 5px 8px; border-radius: 8px;
+  background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0; font-size: 13px; font-variant-numeric: tabular-nums;
 }
-.qb-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #cbd5e1; cursor: pointer; }
-.qb-meta { font-size: 12px; margin-bottom: 8px; }
+.qb-param input:focus { border-color: rgba(249, 115, 22, 0.55); outline: none; }
+.qb-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #cbd5e1; cursor: pointer; }
+.qb-meta { font-size: 12.5px; margin-bottom: 14px; color: #94a3b8; line-height: 1.6; }
 .qb-list {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
 }
 .qb-card {
-  padding: 10px; border-radius: 10px; cursor: pointer;
-  background: rgba(30, 41, 59, 0.55);
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  transition: all 0.15s;
+  padding: 14px 14px 12px; border-radius: 12px; cursor: pointer;
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  transition: all 0.18s;
+  user-select: none;
 }
 .qb-card:hover {
-  border-color: rgba(249, 115, 22, 0.45);
-  background: rgba(30, 41, 59, 0.75);
-  transform: translateY(-1px);
+  border-color: rgba(249, 115, 22, 0.55);
+  background: rgba(30, 41, 59, 0.85);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(249, 115, 22, 0.15);
 }
-.qb-card-top { display: flex; justify-content: space-between; align-items: baseline; }
-.qb-card-name { font-size: 13px; font-weight: 700; color: #f1f5f9; }
-.qb-card-name small { color: #64748b; font-weight: 500; margin-left: 4px; }
-.qb-card-pct { font-size: 14px; font-weight: 700; }
+.qb-card-top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+}
+.qb-card-name { font-size: 14.5px; font-weight: 700; color: #f1f5f9; }
+.qb-card-name small {
+  color: #64748b; font-weight: 500; margin-left: 6px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.qb-card-pct { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .qb-card-pct.up { color: var(--up, #ef4444); }
 .qb-card-pct.down { color: var(--down, #10b981); }
-.qb-card-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.qb-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
 .qb-tag {
-  padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 600;
-  background: rgba(100, 116, 139, 0.2); color: #cbd5e1;
+  padding: 3px 8px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  background: rgba(100, 116, 139, 0.22); color: #cbd5e1;
 }
-.qb-tag.spike { background: rgba(249, 115, 22, 0.16); color: #fb923c; }
-.qb-tag.limit { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
-.qb-tag.cv { background: rgba(52, 211, 153, 0.12); color: #6ee7b7; }
-.qb-empty { color: #94a3b8; font-size: 12px; padding: 20px 0; text-align: center; }
+.qb-tag.spike { background: rgba(249, 115, 22, 0.18); color: #fb923c; }
+.qb-tag.limit { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.qb-tag.cv { background: rgba(52, 211, 153, 0.14); color: #6ee7b7; }
+.qb-empty {
+  color: #94a3b8; font-size: 13px; padding: 40px 0; text-align: center;
+  background: rgba(15, 23, 42, 0.5); border-radius: 10px;
+  border: 1px dashed rgba(148, 163, 184, 0.18);
+}
 
 /* ===== Hermes AI 能力面板 ===== */
 .ai-grid {
