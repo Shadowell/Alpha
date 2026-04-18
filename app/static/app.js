@@ -726,10 +726,12 @@ function renderDcTaskList(logs) {
     const time = (t.started_at || '').slice(11, 16);
     const dotCls = t.status === 'success' ? 'success' : (t.status === 'running' ? 'warning' : (t.status === 'failed' ? 'error' : 'progress'));
     const failRow = t.status === 'failed' && t.message ? `<div class="dc-task-error">${esc(t.message)}</div>` : '';
+    const rawMode = t.trigger_mode || '';
+    const shortMode = rawMode.split('_')[0] || rawMode;
     return `<div class="dc-task-item">
         <span class="dc-td dc-th-status"><span class="status-dot status-dot--${dotCls}"></span></span>
         <span class="dc-td dc-th-date">${t.trade_date}</span>
-        <span class="dc-td dc-th-mode">${t.trigger_mode}</span>
+        <span class="dc-td dc-th-mode" title="${esc(rawMode)}">${esc(shortMode)}</span>
         <span class="dc-td dc-th-ok success">${t.success_symbols || 0}</span>
         <span class="dc-td dc-th-fail ${(t.failed_symbols || 0) > 0 ? 'error' : ''}">${t.failed_symbols || 0}</span>
         <span class="dc-td dc-th-total">${t.total_symbols || 0}</span>

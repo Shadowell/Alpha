@@ -1115,8 +1115,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .dc-task-header, .dc-task-item {
   display: grid;
-  grid-template-columns: 18px 86px 50px 40px 40px 40px 42px;
-  gap: 4px; align-items: center; padding: 7px 10px; font-size: 12px;
+  grid-template-columns: 18px 92px minmax(0, 1fr) 52px 52px 58px 50px;
+  gap: 10px; align-items: center; padding: 7px 10px; font-size: 12px;
 }
 .dc-task-header {
   font-weight: 600; color: var(--muted); font-size: 11px;
@@ -1130,13 +1130,19 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .dc-task-item:hover { background: var(--card-nested); }
 .dc-task-item:last-child { border-bottom: none; }
 
+.dc-th, .dc-td {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dc-td { color: var(--text-secondary); font-family: var(--font-mono); }
 .dc-td.success { color: #22c55e; font-weight: 600; }
 .dc-td.error { color: #ef4444; font-weight: 600; }
 .dc-th-date { font-weight: 600; color: var(--text); }
 .dc-th-mode { color: var(--muted); }
-.dc-th-ok, .dc-th-fail, .dc-th-total { text-align: center; }
-.dc-th-time { text-align: right; }
+.dc-th-ok, .dc-th-fail, .dc-th-total { text-align: center; font-variant-numeric: tabular-nums; }
+.dc-th-time { text-align: right; font-variant-numeric: tabular-nums; }
 
 .dc-task-error {
   grid-column: 1 / -1; font-size: 11px; color: var(--status-error);
