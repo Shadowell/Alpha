@@ -6,6 +6,16 @@ PID_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="$PID_DIR/funnel.pid"
 LOG_FILE="$LOG_DIR/server.log"
+
+# 自动加载 .env（类 dotenv：行内注释用 # 开头；KEY=VALUE；支持引号；跳过空行）
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -o allexport
+  # shellcheck disable=SC1090
+  source <(grep -Ev '^\s*(#|$)' "$ROOT_DIR/.env")
+  set +o allexport
+  echo "已加载 .env"
+fi
+
 PORT="${PORT:-18888}"
 HOST="${HOST:-0.0.0.0}"
 RELOAD="${RELOAD:-0}"
