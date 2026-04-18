@@ -62,6 +62,20 @@ class SQLiteStateStore:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS custom_strategies (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                rules_json TEXT NOT NULL,
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
     def get_kv(self, key: str) -> Any | None:
@@ -196,6 +210,150 @@ class SQLiteStateStore:
                 ),
             )
             conn.commit()
+
+    # ─── 自定义策略 CRUD ───
+
+    def list_custom_strategies(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies ORDER BY is_builtin DESC, name ASC"
+            ).fetchall()
+            return [self._strategy_row_to_dict(r) for r in rows]
+
+    def get_custom_strategy(self, strategy_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute(
+                "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies WHERE id = ?",
+                (strategy_id,),
+            ).fetchone()
+            return self._strategy_row_to_dict(row) if row else None
+
+    def get_default_custom_strategy(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute(
+                "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies WHERE is_default = 1 ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+            return self._strategy_row_to_dict(row) if row else None
+
+    def upsert_custom_strategy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from datetime import datetime
+        sid = str(payload.get("id") or "").strip()
+        if not sid:
+            import uuid
+            sid = uuid.uuid4().hex
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            self._init_schema(conn)
+            existing = conn.execute("SELECT id, created_at, is_builtin FROM custom_strategies WHERE id = ?", (sid,)).fetchone()
+            created_at = existing["created_at"] if existing else now
+            is_builtin = bool(payload.get("is_builtin", False))
+            if existing:
+                is_builtin = bool(existing["is_builtin"])  # builtin 不可改成 false
+            conn.execute(
+                """
+                INSERT INTO custom_strategies (id, name, description, rules_json, is_builtin, is_default, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,
+                    description=excluded.description,
+                    rules_json=excluded.rules_json,
+                    is_default=excluded.is_default,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    sid,
+                    str(payload.get("name", "未命名策略")),
+                    str(payload.get("description", "")),
+                    self._dumps_json(payload.get("rules", [])),
+                    1 if is_builtin else 0,
+                    1 if payload.get("is_default") else 0,
+                    created_at,
+                    now,
+                ),
+            )
+            conn.commit()
+        out = self.get_custom_strategy(sid)
+        return out or {}
+
+    def delete_custom_strategy(self, strategy_id: str) -> bool:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            row = conn.execute("SELECT is_builtin FROM custom_strategies WHERE id = ?", (strategy_id,)).fetchone()
+            if not row:
+                return False
+            if int(row["is_builtin"]) == 1:
+                raise ValueError("内置策略不可删除")
+            conn.execute("DELETE FROM custom_strategies WHERE id = ?", (strategy_id,))
+            conn.commit()
+            return True
+
+    def set_default_custom_strategy(self, strategy_id: str) -> bool:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            exists = conn.execute("SELECT 1 FROM custom_strategies WHERE id = ?", (strategy_id,)).fetchone()
+            if not exists:
+                return False
+            conn.execute("UPDATE custom_strategies SET is_default = 0 WHERE is_default = 1")
+            conn.execute("UPDATE custom_strategies SET is_default = 1 WHERE id = ?", (strategy_id,))
+            conn.commit()
+            return True
+
+    def ensure_builtin_custom_strategies(self, defaults: list[dict[str, Any]]) -> int:
+        """幂等写入内置策略：仅当 id 不存在时插入（保留用户修改）。返回新插入条数。"""
+        from datetime import datetime
+        inserted = 0
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            self._init_schema(conn)
+            for s in defaults:
+                sid = str(s.get("id") or "").strip()
+                if not sid:
+                    continue
+                exists = conn.execute("SELECT 1 FROM custom_strategies WHERE id = ?", (sid,)).fetchone()
+                if exists:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO custom_strategies (id, name, description, rules_json, is_builtin, is_default, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        sid,
+                        str(s.get("name", "内置策略")),
+                        str(s.get("description", "")),
+                        self._dumps_json(s.get("rules", [])),
+                        1 if s.get("is_default") else 0,
+                        str(s.get("created_at") or now),
+                        str(s.get("updated_at") or now),
+                    ),
+                )
+                inserted += 1
+            # 若没有任何 is_default=1 的策略，把 defaults 里第一个 is_default 的设为默认
+            any_default = conn.execute("SELECT 1 FROM custom_strategies WHERE is_default = 1 LIMIT 1").fetchone()
+            if not any_default:
+                for s in defaults:
+                    if s.get("is_default"):
+                        conn.execute("UPDATE custom_strategies SET is_default = 1 WHERE id = ?", (str(s["id"]),))
+                        break
+            conn.commit()
+        return inserted
+
+    def _strategy_row_to_dict(self, row) -> dict[str, Any]:
+        if row is None:
+            return {}
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "rules": self._loads_json(row["rules_json"], default=[]),
+            "is_builtin": bool(row["is_builtin"]),
+            "is_default": bool(row["is_default"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
 
     @staticmethod
     def _dumps_json(value: Any) -> str:

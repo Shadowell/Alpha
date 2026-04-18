@@ -24,6 +24,13 @@ from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
 from app.services.predict_funnel_service import PredictFunnelService
 from app.services.quiet_breakout_scanner import QuietBreakoutConfig, QuietBreakoutScanner
+from app.services.custom_strategy import (
+    BUILTIN_STRATEGIES,
+    CustomStrategy,
+    CustomStrategyScanner,
+    StrategyRuleRef,
+)
+from app.services.strategy_rules import RULE_REGISTRY, list_rules as list_strategy_rules
 from app.services.hermes_ai_extensions import (
     AutoTradeLoop,
     BacktestLab,
@@ -80,6 +87,25 @@ quiet_breakout_scanner = QuietBreakoutScanner(
     kline_store=_kline_store,
     name_lookup=_qb_name_lookup,
 )
+
+custom_strategy_scanner = CustomStrategyScanner(
+    kline_store=_kline_store,
+    name_lookup=_qb_name_lookup,
+)
+
+try:
+    _ins = service.state_store.ensure_builtin_custom_strategies([s.to_dict() for s in BUILTIN_STRATEGIES])
+    if _ins:
+        print(f"[startup] inserted {_ins} builtin custom strategies")
+except Exception as _exc:
+    print(f"[startup] ensure builtin strategies failed: {_exc}")
+
+
+def _load_custom_strategy(strategy_id: str) -> CustomStrategy:
+    data = service.state_store.get_custom_strategy(strategy_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    return CustomStrategy.from_dict(data)
 
 hermes_memory = HermesMemory()
 hermes_runtime = HermesRuntime(
@@ -393,7 +419,7 @@ async def update_predict_funnel_config(payload: dict):
 
 @app.get("/api/strategy/quiet-breakout")
 async def get_quiet_breakout():
-    """返回上次扫描的"缩量启动"策略结果快照。"""
+    """返回上次扫描的"缩量启动"策略结果快照（兼容接口）。"""
     return quiet_breakout_scanner.get_snapshot()
 
 
@@ -406,7 +432,7 @@ async def scan_quiet_breakout(
     require_limit_up: bool = True,
     limit: int | None = None,
 ):
-    """扫描全库，返回缩量横盘 + 首板放量涨停形态的候选股。"""
+    """扫描全库，返回缩量横盘 + 首板放量涨停形态的候选股（兼容接口）。"""
     if quiet_breakout_scanner.get_snapshot().get("running"):
         raise HTTPException(status_code=409, detail="扫描正在进行中")
     cfg = QuietBreakoutConfig(
@@ -420,6 +446,130 @@ async def scan_quiet_breakout(
         return await quiet_breakout_scanner.scan(cfg, limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"扫描失败: {exc}")
+
+
+# ============ 自定义策略中心 ============
+
+@app.get("/api/strategy/rules")
+async def get_strategy_rules():
+    """规则目录 — 供前端动态渲染参数表单。"""
+    return {"rules": list_strategy_rules()}
+
+
+@app.get("/api/strategy/custom")
+async def list_custom_strategies():
+    items = service.state_store.list_custom_strategies()
+    default_item = next((x for x in items if x.get("is_default")), None)
+    return {
+        "items": items,
+        "default_id": default_item.get("id") if default_item else (items[0]["id"] if items else None),
+    }
+
+
+@app.get("/api/strategy/custom/{strategy_id}")
+async def get_custom_strategy_detail(strategy_id: str):
+    data = service.state_store.get_custom_strategy(strategy_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    return data
+
+
+@app.post("/api/strategy/custom")
+async def upsert_custom_strategy(payload: dict):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid payload")
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    rules = payload.get("rules") or []
+    if not isinstance(rules, list):
+        raise HTTPException(status_code=400, detail="rules must be list")
+    # 校验规则 code
+    clean_rules = []
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        code = str(r.get("rule_code", "")).strip()
+        if code not in RULE_REGISTRY:
+            continue
+        clean_rules.append({
+            "rule_code": code,
+            "enabled": bool(r.get("enabled", True)),
+            "params": dict(r.get("params", {}) or {}),
+        })
+    if not clean_rules:
+        raise HTTPException(status_code=400, detail="至少需要一条有效规则")
+    data = {
+        "id": payload.get("id"),
+        "name": name,
+        "description": str(payload.get("description", "")),
+        "rules": clean_rules,
+        "is_default": bool(payload.get("is_default", False)),
+    }
+    saved = service.state_store.upsert_custom_strategy(data)
+    return {"success": True, "strategy": saved}
+
+
+@app.delete("/api/strategy/custom/{strategy_id}")
+async def delete_custom_strategy(strategy_id: str):
+    try:
+        ok = service.state_store.delete_custom_strategy(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    return {"success": True}
+
+
+@app.post("/api/strategy/custom/{strategy_id}/default")
+async def set_default_custom_strategy(strategy_id: str):
+    if not service.state_store.set_default_custom_strategy(strategy_id):
+        raise HTTPException(status_code=404, detail="strategy not found")
+    return {"success": True}
+
+
+@app.get("/api/strategy/custom/{strategy_id}/scan")
+async def get_custom_strategy_scan(strategy_id: str):
+    snap = custom_strategy_scanner.get_last_snapshot(strategy_id)
+    if snap is None:
+        return {"strategy_id": strategy_id, "generated_at": None, "hits": [], "total_hits": 0, "total_scanned": 0}
+    return snap
+
+
+@app.post("/api/strategy/custom/{strategy_id}/scan")
+async def scan_custom_strategy(strategy_id: str, limit: int | None = None):
+    if custom_strategy_scanner.is_running(strategy_id):
+        raise HTTPException(status_code=409, detail="该策略扫描正在进行中")
+    strategy = _load_custom_strategy(strategy_id)
+    try:
+        return await custom_strategy_scanner.scan(strategy, limit=limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"扫描失败: {exc}")
+
+
+@app.post("/api/strategy/custom/{strategy_id}/backtest")
+async def backtest_custom_strategy(
+    strategy_id: str,
+    hold_days: int = 3,
+    tp_pct: float = 8.0,
+    sl_pct: float = -5.0,
+    history_days: int = 180,
+    limit: int | None = None,
+):
+    strategy = _load_custom_strategy(strategy_id)
+    try:
+        return await backtest_lab.run_custom_strategy(
+            strategy,
+            hold_days=max(1, min(hold_days, 20)),
+            tp_pct=max(1.0, min(tp_pct, 50.0)),
+            sl_pct=min(-0.5, max(sl_pct, -30.0)),
+            history_days=max(30, min(history_days, 365)),
+            limit=limit,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"回测失败: {exc}")
 
 
 # ============ Hermes AI 扩展能力 ============

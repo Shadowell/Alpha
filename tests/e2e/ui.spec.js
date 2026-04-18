@@ -62,67 +62,69 @@ test.describe('页面整体加载与切换', () => {
   }
 });
 
-test.describe('策略选股 tab - 缩量启动区块', () => {
-  test('缩量启动区块可见，且视觉尺寸达标', async ({ page }) => {
+test.describe('策略选股 tab - 自定义策略中心', () => {
+  test('策略中心区块可见，且视觉尺寸达标', async ({ page }) => {
     await page.goto('/');
     await page.click('.sidebar-item[data-tab="funnel"]');
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(800);
 
-    const qbArea = page.locator('.quiet-breakout-area');
-    await expect(qbArea).toBeVisible();
-    await qbArea.scrollIntoViewIfNeeded();
+    const scArea = page.locator('#strategyCenterArea');
+    await expect(scArea).toBeVisible();
+    await scArea.scrollIntoViewIfNeeded();
 
-    // 标题存在
-    await expect(qbArea.locator('h3')).toContainText('缩量启动');
+    // 标题为"自定义策略中心"
+    await expect(scArea.locator('h3')).toContainText('自定义策略中心');
 
-    // 放大后容器宽度 ≥ 600，高度 ≥ 160（空态也有合理高度）
-    const box = await qbArea.boundingBox();
+    // 策略下拉 & 核心按钮存在
+    await expect(page.locator('#scStrategySelect')).toBeVisible();
+    await expect(page.locator('#btnScScan')).toBeVisible();
+    await expect(page.locator('#btnScBacktest')).toBeVisible();
+
+    // 规则卡片至少渲染 1 张
+    const ruleCards = page.locator('.sc-rule-card');
+    await expect(ruleCards.first()).toBeVisible();
+    const ruleCount = await ruleCards.count();
+    expect(ruleCount).toBeGreaterThanOrEqual(3);
+
+    // 容器视觉尺寸（内容较多，最小高度远超缩量启动旧版）
+    const box = await scArea.boundingBox();
     expect(box.width).toBeGreaterThan(600);
-    expect(box.height).toBeGreaterThan(140);
+    expect(box.height).toBeGreaterThan(200);
   });
 
-  test('点击缩量启动卡片不刷新页面 (核心 bug 回归)', async ({ page }) => {
+  test('策略命中卡片点击不刷新页面 (核心 bug 回归)', async ({ page }) => {
     await page.goto('/');
     const originalUrl = page.url();
 
     await page.click('.sidebar-item[data-tab="funnel"]');
     await page.waitForTimeout(800);
-    await page.locator('.quiet-breakout-area').scrollIntoViewIfNeeded();
+    await page.locator('#strategyCenterArea').scrollIntoViewIfNeeded();
 
-    // 尝试找已有卡片；若没有，直接触发一次扫描（30 秒成本高，跳过）
-    const cards = page.locator('.qb-card');
+    // 尝试找已有命中卡片；若没有，只确认空态提示存在
+    const cards = page.locator('.sc-hit-card');
     const count = await cards.count();
 
-    // 监控页面是否被导航（刷新/跳转）
     let navigated = false;
     page.on('framenavigated', () => { navigated = true; });
 
     if (count > 0) {
-      // 拦截 window.open 防止新标签（若浏览器阻止会退化为当前页跳转）
       await page.evaluate(() => {
         window.__opened = [];
-        const orig = window.open;
         window.open = (...args) => { window.__opened.push(args); return null; };
       });
 
       await cards.first().click();
       await page.waitForTimeout(800);
 
-      // 必须没有跳转
-      expect(navigated, '点击缩量启动卡片后触发了页面跳转/刷新！').toBeFalsy();
-      // URL hash 不应变成 #SYMBOL（旧 bug 的 fallback 行为）
+      expect(navigated, '点击策略命中卡片后触发了页面跳转/刷新！').toBeFalsy();
       expect(page.url()).toBe(originalUrl);
-      // 不应调用 window.open
       const opened = await page.evaluate(() => window.__opened || []);
       expect(opened.length, `不应触发 window.open，但触发了 ${JSON.stringify(opened)}`).toBe(0);
 
-      // 应弹出预测 modal
       const modal = page.locator('#predictModal');
-      // 等 modal 展示或确认它存在（加载时可能还没 title）
       await expect(modal).toBeVisible({ timeout: 5000 });
     } else {
-      // 无命中时不作为硬失败，只确认空态提示存在
-      const meta = page.locator('#qbMeta');
+      const meta = page.locator('#scScanMeta');
       await expect(meta).toBeVisible();
     }
   });

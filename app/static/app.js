@@ -270,7 +270,7 @@ function switchTab(tab) {
     const chip = document.getElementById('activeConcept');
     if (chip) chip.textContent = state.selectedConcept || '全部';
     renderFunnel();
-    loadQuietBreakout();
+    loadStrategyCenter();
   }
   if (tab === 'notice') {
     loadNoticeKeywords();
@@ -3021,8 +3021,7 @@ async function init() {
   });
 
   _bindPredictActions();
-  _bindQuietBreakoutActions();
-  loadQuietBreakout();
+  _bindStrategyCenterActions();
 }
 
 /* ==================== 预测选股 ==================== */
@@ -3203,59 +3202,414 @@ function _bindPredictActions() {
   }
 }
 
-/* ==================== 缩量启动 策略卡 ==================== */
+/* ==================== 自定义策略中心 ==================== */
 
-async function loadQuietBreakout() {
+const strategyCenterState = {
+  rules: [],          // [{code,title,category,description,params:[...]}]
+  strategies: [],     // [{id,name,...,rules:[{rule_code,enabled,params}]}]
+  currentId: null,
+  editing: null,      // 当前正在编辑的策略（本地 draft）
+  scActionsBound: false,
+};
+
+async function loadStrategyCenter() {
   try {
-    const snap = await request('/api/strategy/quiet-breakout');
-    renderQuietBreakout(snap);
+    if (!strategyCenterState.rules.length) {
+      const r = await request('/api/strategy/rules');
+      strategyCenterState.rules = r.rules || [];
+    }
+    const lst = await request('/api/strategy/custom');
+    strategyCenterState.strategies = lst.items || [];
+    if (!strategyCenterState.currentId) {
+      strategyCenterState.currentId = lst.default_id
+        || (strategyCenterState.strategies[0] && strategyCenterState.strategies[0].id)
+        || null;
+    }
+    _renderStrategySelect();
+    _loadEditingStrategy();
+    _renderRulesList();
+    _renderStrategyMeta();
+    await _loadScanSnapshot();
   } catch (err) {
-    // 首次没有数据是正常的
-    renderQuietBreakout(null);
+    setStatus(`策略中心加载失败: ${err.message}`, 'error');
   }
 }
 
-function renderQuietBreakout(snap) {
-  const meta = document.getElementById('qbMeta');
-  const list = document.getElementById('qbList');
-  if (!list || !meta) return;
+function _bindStrategyCenterActions() {
+  if (strategyCenterState.scActionsBound) return;
+  strategyCenterState.scActionsBound = true;
 
+  const $ = (id) => document.getElementById(id);
+
+  $('scStrategySelect').onchange = async (ev) => {
+    strategyCenterState.currentId = ev.target.value;
+    _loadEditingStrategy();
+    _renderRulesList();
+    _renderStrategyMeta();
+    await _loadScanSnapshot();
+  };
+
+  $('btnScNew').onclick = () => {
+    strategyCenterState.currentId = null;
+    strategyCenterState.editing = {
+      id: null,
+      name: '新策略',
+      description: '',
+      is_builtin: false,
+      is_default: false,
+      rules: strategyCenterState.rules.slice(0, 3).map((r) => ({
+        rule_code: r.code,
+        enabled: false,
+        params: _defaultParams(r),
+      })),
+    };
+    _renderStrategySelect();
+    _renderRulesList();
+    _renderStrategyMeta();
+  };
+
+  $('btnScClone').onclick = () => {
+    const src = strategyCenterState.editing;
+    if (!src) return;
+    strategyCenterState.currentId = null;
+    strategyCenterState.editing = JSON.parse(JSON.stringify({
+      ...src,
+      id: null,
+      name: `${src.name} · 副本`,
+      is_builtin: false,
+      is_default: false,
+    }));
+    _renderStrategySelect();
+    _renderRulesList();
+    _renderStrategyMeta();
+    setStatus('已克隆策略，可继续编辑后保存', 'success');
+  };
+
+  $('btnScSave').onclick = async () => {
+    const draft = strategyCenterState.editing;
+    if (!draft) return;
+    draft.name = $('scStrategyName').value.trim() || draft.name;
+    draft.description = $('scStrategyDesc').value.trim();
+    if (!draft.name) { setStatus('请填写策略名称', 'error'); return; }
+    const body = {
+      id: draft.id || undefined,
+      name: draft.name,
+      description: draft.description,
+      rules: draft.rules.filter((r) => r.rule_code),
+    };
+    try {
+      const r = await request('/api/strategy/custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      setStatus('策略已保存', 'success');
+      strategyCenterState.currentId = r.strategy.id;
+      await loadStrategyCenter();
+    } catch (err) {
+      setStatus(`保存失败: ${err.message}`, 'error');
+    }
+  };
+
+  $('btnScDelete').onclick = async () => {
+    const draft = strategyCenterState.editing;
+    if (!draft || !draft.id) { setStatus('未保存的新策略，无需删除', 'error'); return; }
+    if (draft.is_builtin) { setStatus('内置策略不可删除', 'error'); return; }
+    if (!confirm(`确定删除策略「${draft.name}」？`)) return;
+    try {
+      await request(`/api/strategy/custom/${draft.id}`, { method: 'DELETE' });
+      strategyCenterState.currentId = null;
+      setStatus('已删除', 'success');
+      await loadStrategyCenter();
+    } catch (err) {
+      setStatus(`删除失败: ${err.message}`, 'error');
+    }
+  };
+
+  $('btnScSetDefault').onclick = async () => {
+    const draft = strategyCenterState.editing;
+    if (!draft || !draft.id) { setStatus('请先保存策略', 'error'); return; }
+    try {
+      await request(`/api/strategy/custom/${draft.id}/default`, { method: 'POST' });
+      setStatus(`已设为默认策略`, 'success');
+      await loadStrategyCenter();
+    } catch (err) {
+      setStatus(`设置失败: ${err.message}`, 'error');
+    }
+  };
+
+  $('btnScScan').onclick = async () => {
+    const draft = strategyCenterState.editing;
+    if (!draft || !draft.id) { setStatus('请先保存策略后再扫描', 'error'); return; }
+    const btn = $('btnScScan');
+    const meta = $('scScanMeta');
+    btn.disabled = true;
+    btn.textContent = '扫描中…';
+    if (meta) meta.textContent = '扫描中，约 30~60 秒（全 A 股）…';
+    try {
+      const snap = await request(`/api/strategy/custom/${draft.id}/scan`, { method: 'POST' });
+      _renderScanSnapshot(snap);
+      setStatus(`扫描完成：命中 ${snap.total_hits} 只`, 'success');
+    } catch (err) {
+      setStatus(`扫描失败: ${err.message}`, 'error');
+      if (meta) meta.textContent = `扫描失败: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '立即扫描';
+    }
+  };
+
+  $('btnScBacktest').onclick = async () => {
+    const draft = strategyCenterState.editing;
+    if (!draft || !draft.id) { setStatus('请先保存策略后再回测', 'error'); return; }
+    const btn = $('btnScBacktest');
+    btn.disabled = true;
+    btn.textContent = '回测中…';
+    try {
+      const r = await request(`/api/strategy/custom/${draft.id}/backtest?history_days=180&hold_days=3&tp_pct=8&sl_pct=-5`, { method: 'POST' });
+      _renderBacktestResult(r);
+      setStatus(`回测完成：信号 ${r.total_signals} · 胜率 ${r.hit_rate}%`, 'success');
+    } catch (err) {
+      setStatus(`回测失败: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '回测 180 天';
+    }
+  };
+}
+
+function _defaultParams(ruleSpec) {
+  const out = {};
+  (ruleSpec.params || []).forEach((p) => { out[p.key] = p.default; });
+  return out;
+}
+
+function _renderStrategySelect() {
+  const sel = document.getElementById('scStrategySelect');
+  if (!sel) return;
+  const items = strategyCenterState.strategies;
+  const cur = strategyCenterState.currentId;
+  sel.innerHTML = '';
+  items.forEach((s) => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    const badges = [];
+    if (s.is_builtin) badges.push('内置');
+    if (s.is_default) badges.push('默认');
+    opt.textContent = badges.length ? `${s.name} · ${badges.join('/')}` : s.name;
+    if (s.id === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (!cur) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '-- 未保存的新策略 --';
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+function _loadEditingStrategy() {
+  const cur = strategyCenterState.currentId;
+  if (!cur) {
+    if (!strategyCenterState.editing) return;
+    return;
+  }
+  const src = strategyCenterState.strategies.find((x) => x.id === cur);
+  if (!src) return;
+  strategyCenterState.editing = JSON.parse(JSON.stringify(src));
+  const existingCodes = new Set((strategyCenterState.editing.rules || []).map((r) => r.rule_code));
+  strategyCenterState.rules.forEach((spec) => {
+    if (!existingCodes.has(spec.code)) {
+      strategyCenterState.editing.rules.push({
+        rule_code: spec.code,
+        enabled: false,
+        params: _defaultParams(spec),
+      });
+    }
+  });
+}
+
+function _renderStrategyMeta() {
+  const draft = strategyCenterState.editing;
+  const $ = (id) => document.getElementById(id);
+  const badges = $('scStrategyBadges');
+  const nameInput = $('scStrategyName');
+  const descInput = $('scStrategyDesc');
+  const btnDelete = $('btnScDelete');
+  const btnSetDefault = $('btnScSetDefault');
+  if (!badges || !nameInput) return;
+  if (!draft) {
+    nameInput.value = '';
+    descInput.value = '';
+    badges.innerHTML = '';
+    return;
+  }
+  nameInput.value = draft.name || '';
+  descInput.value = draft.description || '';
+  const parts = [];
+  if (draft.is_builtin) parts.push('<span class="sc-chip builtin">内置</span>');
+  if (draft.is_default) parts.push('<span class="sc-chip default">默认</span>');
+  if (!draft.id) parts.push('<span class="sc-chip new">未保存</span>');
+  badges.innerHTML = parts.join('');
+  if (btnDelete) btnDelete.disabled = !!(draft.is_builtin || !draft.id);
+  if (btnSetDefault) btnSetDefault.disabled = !draft.id || draft.is_default;
+}
+
+function _renderRulesList() {
+  const root = document.getElementById('scRulesList');
+  if (!root) return;
+  const draft = strategyCenterState.editing;
+  if (!draft) { root.innerHTML = '<div class="sc-empty">请先选择或新建策略</div>'; return; }
+  const specsMap = {};
+  strategyCenterState.rules.forEach((s) => { specsMap[s.code] = s; });
+
+  const byCat = {};
+  strategyCenterState.rules.forEach((spec) => {
+    if (!byCat[spec.category]) byCat[spec.category] = [];
+    byCat[spec.category].push(spec);
+  });
+
+  const catOrder = ['filter', 'price', 'volume', 'pattern', 'trend'];
+  const catTitles = { filter: '过滤条件', price: '价格', volume: '量能', pattern: '形态', trend: '趋势' };
+
+  const html = catOrder.filter((c) => byCat[c]).map((cat) => {
+    const cards = byCat[cat].map((spec) => {
+      const ref = draft.rules.find((r) => r.rule_code === spec.code) || {
+        rule_code: spec.code, enabled: false, params: _defaultParams(spec),
+      };
+      const paramsHtml = (spec.params || []).map((p) => {
+        const val = ref.params[p.key] ?? p.default;
+        if (p.type === 'bool') {
+          return `<label class="sc-param sc-param-bool">
+            <input type="checkbox" data-code="${spec.code}" data-key="${p.key}" data-type="bool" ${val ? 'checked' : ''} />
+            ${esc(p.label)}
+          </label>`;
+        }
+        if (p.type === 'text') {
+          return `<label class="sc-param">
+            <span class="sc-param-label">${esc(p.label)}</span>
+            <input type="text" class="sc-input sc-param-input" data-code="${spec.code}" data-key="${p.key}" data-type="text" value="${esc(String(val))}" />
+          </label>`;
+        }
+        return `<label class="sc-param">
+          <span class="sc-param-label">${esc(p.label)}</span>
+          <input type="number" class="sc-input sc-param-input" data-code="${spec.code}" data-key="${p.key}" data-type="${p.type}"
+            ${p.min !== null && p.min !== undefined ? `min="${p.min}"` : ''}
+            ${p.max !== null && p.max !== undefined ? `max="${p.max}"` : ''}
+            ${p.step ? `step="${p.step}"` : 'step="any"'}
+            value="${Number(val)}" />
+        </label>`;
+      }).join('');
+      return `
+        <div class="sc-rule-card ${ref.enabled ? 'enabled' : ''}" data-code="${spec.code}">
+          <div class="sc-rule-head">
+            <label class="sc-rule-toggle">
+              <input type="checkbox" class="sc-rule-enabled" data-code="${spec.code}" ${ref.enabled ? 'checked' : ''} />
+              <span class="sc-rule-title">${esc(spec.title)}</span>
+            </label>
+            <span class="sc-rule-cat">${esc(catTitles[cat] || cat)}</span>
+          </div>
+          <div class="sc-rule-desc">${esc(spec.description || '')}</div>
+          <div class="sc-rule-params">${paramsHtml || '<span class="muted">此规则无参数</span>'}</div>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div class="sc-rule-group">
+        <div class="sc-rule-group-title">${esc(catTitles[cat] || cat)}</div>
+        <div class="sc-rule-group-body">${cards}</div>
+      </div>`;
+  }).join('');
+
+  root.innerHTML = html;
+
+  root.querySelectorAll('.sc-rule-enabled').forEach((cb) => {
+    cb.onchange = () => {
+      const code = cb.getAttribute('data-code');
+      const ref = _ensureRuleRef(code);
+      if (!ref) return;
+      ref.enabled = cb.checked;
+      const card = root.querySelector(`.sc-rule-card[data-code="${code}"]`);
+      if (card) card.classList.toggle('enabled', cb.checked);
+    };
+  });
+  root.querySelectorAll('.sc-param-input, .sc-param-bool input').forEach((el) => {
+    el.onchange = () => {
+      const code = el.getAttribute('data-code');
+      const key = el.getAttribute('data-key');
+      const type = el.getAttribute('data-type');
+      const ref = _ensureRuleRef(code);
+      if (!ref) return;
+      let val = el.value;
+      if (type === 'bool') val = el.checked;
+      else if (type === 'int') val = parseInt(el.value, 10) || 0;
+      else if (type === 'float' || type === 'pct') val = parseFloat(el.value) || 0;
+      ref.params[key] = val;
+    };
+  });
+}
+
+function _ensureRuleRef(code) {
+  const draft = strategyCenterState.editing;
+  if (!draft) return null;
+  let ref = draft.rules.find((r) => r.rule_code === code);
+  if (!ref) {
+    const spec = strategyCenterState.rules.find((s) => s.code === code);
+    if (!spec) return null;
+    ref = { rule_code: code, enabled: false, params: _defaultParams(spec) };
+    draft.rules.push(ref);
+  }
+  return ref;
+}
+
+async function _loadScanSnapshot() {
+  const draft = strategyCenterState.editing;
+  if (!draft || !draft.id) { _renderScanSnapshot(null); return; }
+  try {
+    const snap = await request(`/api/strategy/custom/${draft.id}/scan`);
+    _renderScanSnapshot(snap);
+  } catch {
+    _renderScanSnapshot(null);
+  }
+}
+
+function _renderScanSnapshot(snap) {
+  const meta = document.getElementById('scScanMeta');
+  const list = document.getElementById('scHitsList');
+  if (!meta || !list) return;
   if (!snap || !snap.generated_at) {
-    meta.textContent = '尚未扫描，点击"立即扫描"开始（覆盖全 A 股 ~5000 只，约 30 秒）';
+    meta.textContent = '尚未扫描，点击"立即扫描"开始（覆盖全 A 股，约 30~60 秒）';
     list.innerHTML = '';
     return;
   }
-
-  const cfg = snap.config || {};
   const hits = snap.hits || [];
-  meta.textContent = `扫描时间 ${(snap.generated_at || '').replace('T', ' ')} · 扫描 ${snap.total_scanned} 只 · 命中 ${snap.total_hits} 只 · 耗时 ${snap.elapsed_seconds}s · 参数: 横盘${cfg.lookback_days}天/振幅≤${(cfg.amp_threshold * 100).toFixed(0)}%/CV≤${cfg.vol_cv_threshold}/放量≥${cfg.vol_spike_ratio}倍${cfg.require_limit_up ? '/必须涨停' : ''}`;
-
+  meta.textContent = `扫描时间 ${(snap.generated_at || '').replace('T', ' ')} · 扫描 ${snap.total_scanned} 只 · 命中 ${snap.total_hits} 只 · 耗时 ${snap.elapsed_seconds}s · 启用规则 ${snap.rules_count}`;
   if (!hits.length) {
-    list.innerHTML = '<div class="qb-empty">本次参数下没有命中的候选股</div>';
+    list.innerHTML = '<div class="qb-empty sc-empty">本次规则组合下没有命中的候选股，可放宽条件后再试</div>';
     return;
   }
-
-  list.innerHTML = hits.map((h) => {
+  list.innerHTML = hits.slice(0, 200).map((h) => {
     const cls = Number(h.change_pct || 0) >= 0 ? 'up' : 'down';
     const sign = Number(h.change_pct || 0) >= 0 ? '+' : '';
+    const badges = (h.rule_hits || []).slice(0, 6).map((rh) => {
+      return `<span class="sc-hit-tag">${esc(rh.title)}: ${esc(String(rh.label || '✓'))}</span>`;
+    }).join('');
     return `
-      <div class="qb-card" data-symbol="${h.symbol}" data-name="${esc(h.name || '')}">
+      <div class="qb-card sc-hit-card" data-symbol="${h.symbol}" data-name="${esc(h.name || '')}">
         <div class="qb-card-top">
           <div class="qb-card-name">${esc(h.name || '--')}<small>${h.symbol}</small></div>
           <div class="qb-card-pct ${cls}">${sign}${fmtNum(h.change_pct, 2)}%</div>
         </div>
         <div class="qb-card-meta">
           <span class="qb-tag">收 ${fmtNum(h.close, 2)}</span>
-          <span class="qb-tag spike">放量 ${fmtNum(h.vol_spike, 1)}x</span>
-          <span class="qb-tag cv">CV ${fmtNum(h.vol_cv, 2)}</span>
-          <span class="qb-tag">振幅 ${fmtNum(h.amp_pct, 1)}%</span>
-          ${h.is_limit_up ? `<span class="qb-tag limit">涨停 ${fmtNum(h.limit_pct, 0)}cm</span>` : ''}
+          <span class="qb-tag spike">综合分 ${fmtNum(h.composite_score, 1)}</span>
         </div>
+        <div class="sc-hit-tags">${badges}</div>
       </div>
     `;
   }).join('');
-
-  list.querySelectorAll('.qb-card').forEach((el) => {
+  list.querySelectorAll('.sc-hit-card').forEach((el) => {
     el.onclick = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -3267,38 +3621,41 @@ function renderQuietBreakout(snap) {
   });
 }
 
-function _bindQuietBreakoutActions() {
-  const btn = document.getElementById('btnQbScan');
-  if (!btn) return;
-  btn.onclick = async () => {
-    const lookback = Number(document.getElementById('qbLookback').value || 25);
-    const amp = Number(document.getElementById('qbAmp').value || 20) / 100;
-    const cv = Number(document.getElementById('qbCv').value || 0.4);
-    const spike = Number(document.getElementById('qbSpike').value || 3.0);
-    const limitUp = document.getElementById('qbLimitUp').checked;
-    const params = new URLSearchParams({
-      lookback_days: String(lookback),
-      amp_threshold: String(amp),
-      vol_cv_threshold: String(cv),
-      vol_spike_ratio: String(spike),
-      require_limit_up: String(limitUp),
-    });
-    btn.disabled = true;
-    btn.textContent = '扫描中…';
-    const meta = document.getElementById('qbMeta');
-    if (meta) meta.textContent = '扫描中，约 30 秒（全 A 股）…';
-    try {
-      const snap = await request(`/api/strategy/quiet-breakout/scan?${params}`, { method: 'POST' });
-      renderQuietBreakout(snap);
-      setStatus(`缩量启动扫描完成：命中 ${snap.total_hits} 只`, 'success');
-    } catch (err) {
-      setStatus(`扫描失败: ${err.message}`, 'error');
-      if (meta) meta.textContent = `扫描失败: ${err.message}`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '立即扫描';
-    }
-  };
+function _renderBacktestResult(r) {
+  const root = document.getElementById('scBacktestCard');
+  if (!root) return;
+  if (!r || r.total_signals === undefined) {
+    root.style.display = 'none';
+    return;
+  }
+  root.style.display = 'block';
+  const pnlCls = Number(r.total_pnl_pct || 0) >= 0 ? 'up' : 'down';
+  const mddCls = Number(r.max_drawdown_pct || 0) < 0 ? 'down' : 'muted';
+  const params = r.params || {};
+  const sample = (r.samples || []).slice(0, 10).map((s) => {
+    const cls = Number(s.pnl_pct || 0) >= 0 ? 'up' : 'down';
+    return `<tr><td>${esc(s.symbol)}</td><td>${esc(s.name || '')}</td><td>${esc(s.signal_date)}</td><td>${esc(String(s.hold_days))}</td><td class="${cls}">${s.pnl_pct >= 0 ? '+' : ''}${fmtNum(s.pnl_pct, 2)}%</td><td>${esc(s.reason)}</td></tr>`;
+  }).join('');
+  root.innerHTML = `
+    <div class="sc-bt-header">
+      <h4>回测结果 · ${esc(params.strategy_name || '')}</h4>
+      <span class="sc-bt-meta">${esc(r.generated_at || '')} · ${r.elapsed_seconds}s · 规则 ${params.rules_count || '-'} 条 · 持有 ${params.hold_days}d / tp ${params.tp_pct}% / sl ${params.sl_pct}%</span>
+    </div>
+    <div class="sc-bt-stats">
+      <div class="sc-bt-stat"><span class="sc-bt-label">总信号</span><span class="sc-bt-value">${r.total_signals}</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">胜 / 负</span><span class="sc-bt-value">${r.wins} / ${r.losses}</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">胜率</span><span class="sc-bt-value">${fmtNum(r.hit_rate, 2)}%</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">累计收益</span><span class="sc-bt-value ${pnlCls}">${r.total_pnl_pct >= 0 ? '+' : ''}${fmtNum(r.total_pnl_pct, 2)}%</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">最大回撤</span><span class="sc-bt-value ${mddCls}">${fmtNum(r.max_drawdown_pct, 2)}%</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">平均持有</span><span class="sc-bt-value">${fmtNum(r.avg_hold_days, 1)}d</span></div>
+    </div>
+    ${sample ? `<details class="sc-bt-samples"><summary>展开样本 Top 10</summary>
+      <table class="sc-bt-table">
+        <thead><tr><th>代码</th><th>名称</th><th>信号日</th><th>持有</th><th>收益</th><th>出场原因</th></tr></thead>
+        <tbody>${sample}</tbody>
+      </table>
+    </details>` : ''}
+  `;
 }
 
 /* ==================== Hermes AI 能力面板 ==================== */
