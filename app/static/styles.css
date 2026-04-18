@@ -2371,3 +2371,118 @@ body { color: var(--text); }
 .bt-samples td { padding: 4px 8px; border-bottom: 1px solid rgba(148, 163, 184, 0.08); }
 .bt-samples td.pos { color: var(--up, #ef4444); font-weight: 600; }
 .bt-samples td.neg { color: var(--down, #10b981); font-weight: 600; }
+
+/* ==================== 自定义策略中心 ==================== */
+.strategy-center-area {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.55), rgba(15, 23, 42, 0.7));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.sc-header { display: flex; flex-direction: column; gap: 10px; }
+.sc-title-row { display: flex; align-items: center; gap: 10px; }
+.sc-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  color: #0f172a; font-size: 11px; font-weight: 700;
+}
+.sc-title-row h3 { margin: 0; color: #f1f5f9; font-size: 16px; }
+.sc-hint { color: #94a3b8; font-size: 12px; }
+.sc-strategy-row, .sc-meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sc-strategy-label { color: #cbd5e1; font-size: 13px; }
+.sc-select {
+  min-width: 260px; padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.8); color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 8px;
+  font-size: 13px;
+}
+.sc-strategy-badges { display: inline-flex; gap: 6px; }
+.sc-chip {
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+}
+.sc-chip.builtin { background: rgba(59, 130, 246, 0.18); color: #60a5fa; }
+.sc-chip.default { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+.sc-chip.new { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+.sc-strategy-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.sc-strategy-actions .danger { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+.sc-strategy-actions .danger:disabled { opacity: 0.45; cursor: not-allowed; }
+.sc-input {
+  flex: 0 1 220px; padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.75); color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 8px;
+  font-size: 13px;
+}
+.sc-input-wide { flex: 1 1 320px; }
+.sc-rules-panel {
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+}
+.sc-rules-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.sc-rules-header h4 { margin: 0; color: #e2e8f0; font-size: 14px; }
+.sc-rules-hint { color: #64748b; font-size: 11px; }
+.sc-rules-list { display: flex; flex-direction: column; gap: 14px; }
+.sc-rule-group-title { color: #94a3b8; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 6px; }
+.sc-rule-group-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.sc-rule-card {
+  padding: 10px 12px;
+  background: rgba(30, 41, 59, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.sc-rule-card.enabled {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.08);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2) inset;
+}
+.sc-rule-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.sc-rule-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #e2e8f0; cursor: pointer; }
+.sc-rule-title { font-weight: 600; }
+.sc-rule-cat { color: #64748b; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+.sc-rule-desc { margin: 6px 0 8px; color: #94a3b8; font-size: 11px; line-height: 1.5; }
+.sc-rule-params { display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-param { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: #cbd5e1; }
+.sc-param-bool { flex-direction: row; align-items: center; gap: 6px; }
+.sc-param-label { color: #94a3b8; font-size: 11px; }
+.sc-param-input { width: 110px; padding: 4px 6px; }
+.sc-action-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.sc-action-bar .btn-action { min-width: 140px; }
+.sc-action-bar .btn-secondary { min-width: 120px; }
+.sc-meta { color: #94a3b8; font-size: 12px; flex: 1; }
+.sc-backtest-card {
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+}
+.sc-bt-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.sc-bt-header h4 { margin: 0; color: #f1f5f9; font-size: 14px; }
+.sc-bt-meta { color: #64748b; font-size: 11px; }
+.sc-bt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.sc-bt-stat { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: rgba(30, 41, 59, 0.55); border-radius: 8px; }
+.sc-bt-label { color: #94a3b8; font-size: 11px; }
+.sc-bt-value { color: #f1f5f9; font-size: 16px; font-weight: 700; }
+.sc-bt-value.up { color: #ef4444; }
+.sc-bt-value.down { color: #10b981; }
+.sc-bt-samples { margin-top: 12px; }
+.sc-bt-samples summary { cursor: pointer; color: #cbd5e1; font-size: 12px; }
+.sc-bt-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+.sc-bt-table th { text-align: left; padding: 4px 8px; color: #94a3b8; border-bottom: 1px solid rgba(148, 163, 184, 0.2); }
+.sc-bt-table td { padding: 4px 8px; border-bottom: 1px solid rgba(148, 163, 184, 0.08); color: #cbd5e1; }
+.sc-bt-table td.up { color: #ef4444; font-weight: 600; }
+.sc-bt-table td.down { color: #10b981; font-weight: 600; }
+.sc-empty { color: #64748b; font-size: 12px; padding: 20px; text-align: center; }
+.sc-hit-card { cursor: pointer; }
+.sc-hit-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.sc-hit-tag {
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd; font-size: 10px;
+}

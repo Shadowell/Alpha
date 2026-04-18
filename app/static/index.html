@@ -178,35 +178,49 @@
             </div>
           </section>
 
-          <!-- ===== 缩量启动 形态扫描 ===== -->
-          <section class="quiet-breakout-area">
-            <div class="qb-header">
-              <div class="qb-title">
-                <span class="qb-badge">形态</span>
-                <h3>缩量启动 · 首板放量涨停</h3>
-                <span class="qb-hint">前 N 天缩量横盘，最新一天放量涨停</span>
+          <!-- ===== 自定义策略中心 ===== -->
+          <section class="strategy-center-area quiet-breakout-area" id="strategyCenterArea">
+            <div class="sc-header">
+              <div class="sc-title-row">
+                <span class="sc-badge">策略</span>
+                <h3>自定义策略中心</h3>
+                <span class="sc-hint">挑选 / 组合规则 → 全 A 股扫描 → 回测</span>
               </div>
-              <div class="qb-actions">
-                <label class="qb-param">
-                  横盘 <input id="qbLookback" type="number" min="10" max="60" value="25" /> 天
-                </label>
-                <label class="qb-param">
-                  振幅≤ <input id="qbAmp" type="number" min="5" max="50" step="1" value="20" /> %
-                </label>
-                <label class="qb-param">
-                  量能CV≤ <input id="qbCv" type="number" min="0.1" max="1" step="0.05" value="0.40" />
-                </label>
-                <label class="qb-param">
-                  放量≥ <input id="qbSpike" type="number" min="1.5" max="20" step="0.1" value="3.0" /> 倍
-                </label>
-                <label class="qb-toggle">
-                  <input id="qbLimitUp" type="checkbox" checked /> 必须涨停
-                </label>
-                <button id="btnQbScan" class="btn-action">立即扫描</button>
+              <div class="sc-strategy-row">
+                <label class="sc-strategy-label">当前策略</label>
+                <select id="scStrategySelect" class="sc-select"></select>
+                <span id="scStrategyBadges" class="sc-strategy-badges"></span>
+                <div class="sc-strategy-actions">
+                  <button id="btnScNew" class="btn-secondary btn-sm">新建</button>
+                  <button id="btnScClone" class="btn-secondary btn-sm">克隆</button>
+                  <button id="btnScSetDefault" class="btn-secondary btn-sm">设为默认</button>
+                  <button id="btnScDelete" class="btn-secondary btn-sm danger">删除</button>
+                </div>
+              </div>
+              <div class="sc-meta-row">
+                <input id="scStrategyName" class="sc-input" placeholder="策略名称" />
+                <input id="scStrategyDesc" class="sc-input sc-input-wide" placeholder="简短描述（可选）" />
+                <button id="btnScSave" class="btn-primary btn-sm">保存</button>
               </div>
             </div>
-            <div id="qbMeta" class="qb-meta muted">尚未扫描</div>
-            <div id="qbList" class="qb-list"></div>
+
+            <div class="sc-rules-panel">
+              <div class="sc-rules-header">
+                <h4>规则组合（AND：全部启用的规则都必须满足）</h4>
+                <span class="sc-rules-hint">勾选即启用，逐条调整参数</span>
+              </div>
+              <div id="scRulesList" class="sc-rules-list"></div>
+            </div>
+
+            <div class="sc-action-bar">
+              <button id="btnScScan" class="btn-action">立即扫描</button>
+              <button id="btnScBacktest" class="btn-secondary">回测 180 天</button>
+              <span id="scScanMeta" class="sc-meta muted">尚未扫描</span>
+            </div>
+
+            <div id="scBacktestCard" class="sc-backtest-card" style="display:none"></div>
+
+            <div id="scHitsList" class="sc-hits-list qb-list"></div>
           </section>
         </section>
 
