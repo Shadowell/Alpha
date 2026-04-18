@@ -1638,7 +1638,113 @@ function renderPaperTrades(trades) {
 /* ==================== Hermes Agent ==================== */
 
 async function loadAgentData() {
-  await Promise.all([loadAgentStatus(), loadAgentProposals(), loadAgentTasks(), loadMonitorConfig(), loadMonitorMessages()]);
+  await Promise.all([loadAgentStatus(), loadAgentProposals(), loadAgentTasks(), loadMonitorConfig(), loadMonitorMessages(), loadProposalStats()]);
+}
+
+/* ==================== 提案管理 — 筛选/搜索/批量 ==================== */
+
+const proposalState = {
+  selected: new Set(),
+  filterStatus: 'pending',
+  filterType: '',
+  filterRisk: '',
+  q: '',
+  items: [],
+};
+
+async function loadProposalStats() {
+  try {
+    const s = await request('/api/agent/proposals/stats');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('psPending', s.pending ?? 0);
+    set('psTodayNew', s.today_new ?? 0);
+    set('psApproved', s.approved ?? 0);
+    set('psRejected', s.rejected ?? 0);
+    set('psApprovalRate', (s.recent_decided ?? 0) > 0 ? `${s.recent_approval_rate}%` : '—');
+  } catch { /* ignore */ }
+}
+
+function _bindProposalToolbar() {
+  if (window._proposalBound) return;
+  window._proposalBound = true;
+  const bindChange = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => {
+      proposalState[key] = el.value;
+      proposalState.selected.clear();
+      loadAgentProposals();
+    });
+  };
+  bindChange('proposalFilterStatus', 'filterStatus');
+  bindChange('proposalFilterType', 'filterType');
+  bindChange('proposalFilterRisk', 'filterRisk');
+  const search = document.getElementById('proposalSearch');
+  if (search) {
+    let tm;
+    search.addEventListener('input', () => {
+      clearTimeout(tm);
+      tm = setTimeout(() => {
+        proposalState.q = search.value.trim();
+        loadAgentProposals();
+      }, 250);
+    });
+  }
+  const refreshBtn = document.getElementById('btnProposalRefresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', () => {
+    loadAgentProposals();
+    loadProposalStats();
+    loadAgentTasks();
+  });
+  const selAll = document.getElementById('proposalSelectAll');
+  if (selAll) selAll.addEventListener('change', () => {
+    const checked = selAll.checked;
+    proposalState.selected.clear();
+    if (checked) {
+      proposalState.items.filter(p => p.status === 'pending').forEach(p => proposalState.selected.add(p.id));
+    }
+    document.querySelectorAll('.proposal-check').forEach(cb => { cb.checked = checked && cb.dataset.status === 'pending'; });
+    _updateProposalBatchBar();
+  });
+}
+
+function _updateProposalBatchBar() {
+  const bar = document.getElementById('proposalBatchBar');
+  const cnt = document.getElementById('proposalBatchCount');
+  const n = proposalState.selected.size;
+  if (!bar || !cnt) return;
+  if (n > 0) {
+    bar.style.display = '';
+    cnt.textContent = `已选 ${n}`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function clearProposalSelection() {
+  proposalState.selected.clear();
+  document.querySelectorAll('.proposal-check').forEach(cb => { cb.checked = false; });
+  const selAll = document.getElementById('proposalSelectAll');
+  if (selAll) selAll.checked = false;
+  _updateProposalBatchBar();
+}
+
+function _toggleProposalCheck(id, el) {
+  id = Number(id);
+  if (el.checked) proposalState.selected.add(id);
+  else proposalState.selected.delete(id);
+  _updateProposalBatchBar();
+}
+
+async function batchDecide(action) {
+  const ids = Array.from(proposalState.selected);
+  if (!ids.length) return;
+  openProposalModal({
+    kind: 'batch',
+    action,
+    ids,
+    title: `批量${action === 'approve' ? '批准' : '驳回'} ${ids.length} 条提案`,
+    body: `<div class="proposal-modal-summary">将对以下 ${ids.length} 条提案执行 <strong>${action === 'approve' ? '批准' : '驳回'}</strong> 操作，不可撤销。</div>`,
+  });
 }
 
 async function loadAgentStatus() {
@@ -1694,22 +1800,47 @@ function _toggleCollapse(btn) {
   btn.textContent = expanded ? '收起' : btn.dataset.label;
 }
 
+const _TYPE_LABEL = {
+  rule_patch: '策略规则',
+  notice_rule_patch: '公告规则',
+  strategy_tune: '策略调参',
+  weight_tune: '权重调参',
+  config_change: '配置变更',
+};
+
 async function loadAgentProposals() {
+  _bindProposalToolbar();
   const container = document.getElementById('agentProposals');
   try {
-    const data = await request('/api/agent/proposals?limit=20');
+    const params = new URLSearchParams();
+    if (proposalState.filterStatus) params.set('status', proposalState.filterStatus);
+    if (proposalState.filterType) params.set('type', proposalState.filterType);
+    if (proposalState.filterRisk) params.set('risk_level', proposalState.filterRisk);
+    if (proposalState.q) params.set('q', proposalState.q);
+    params.set('limit', '30');
+    const data = await request(`/api/agent/proposals?${params.toString()}`);
+    proposalState.items = data.items || [];
+
+    const hint = document.getElementById('proposalTotalHint');
+    if (hint) hint.textContent = data.total != null ? `（共 ${data.total} 条）` : '';
+
     if (!data.items || data.items.length === 0) {
-      container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无待审批提案，Agent 空闲中</div></div>';
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-text">当前筛选下没有提案</div></div>';
+      clearProposalSelection();
       renderAgentSummary();
       return;
     }
     container.innerHTML = data.items.map(p => {
-      const riskCls = `risk-${p.risk_level || 'medium'}`;
+      const riskLevel = p.risk_level || 'medium';
+      const riskCls = `risk-${riskLevel}`;
+      const riskEmoji = { low: '🟢', medium: '🟡', high: '🔴' }[riskLevel] || '🟡';
       const statusCls = `status-${p.status}`;
       const diffStr = p.diff_payload ? JSON.stringify(p.diff_payload, null, 2) : '';
       const isPending = p.status === 'pending';
       const statusLabel = { pending: '待审批', approved: '已批准', rejected: '已驳回', deferred: '已暂缓' }[p.status] || p.status;
       const statusBadgeCls = { pending: 'badge--warning', approved: 'badge--success', rejected: 'badge--error' }[p.status] || '';
+      const typeLabel = _TYPE_LABEL[p.type] || p.type;
+      const conf = Math.round((p.confidence || 0) * 100);
       const reasoningHtml = p.reasoning
         ? `<button class="collapse-toggle" data-label="查看推理过程" onclick="_toggleCollapse(this)">查看推理过程</button>
            <div class="collapsible"><div class="agent-proposal-reasoning">${esc(p.reasoning)}</div></div>`
@@ -1718,26 +1849,34 @@ async function loadAgentProposals() {
         ? `<button class="collapse-toggle" data-label="查看变更" onclick="_toggleCollapse(this)">查看变更</button>
            <div class="collapsible"><div class="agent-proposal-diff">${_highlightDiff(diffStr)}</div></div>`
         : '';
+      const checked = proposalState.selected.has(p.id) ? 'checked' : '';
+      const checkHtml = isPending
+        ? `<input type="checkbox" class="proposal-check" data-status="${p.status}" ${checked} onchange="_toggleProposalCheck(${p.id}, this)">`
+        : `<span class="proposal-check-placeholder"></span>`;
       return `
-        <div class="agent-proposal-card ${statusCls}">
-          <div class="agent-proposal-title">${esc(p.title)}</div>
+        <div class="agent-proposal-card ${statusCls}" data-id="${p.id}">
+          <div class="agent-proposal-head">
+            ${checkHtml}
+            <div class="agent-proposal-title">${esc(p.title)}</div>
+            <span class="badge ${statusBadgeCls} agent-proposal-status-badge">${statusLabel}</span>
+          </div>
           <div class="agent-proposal-meta">
-            <span>类型: ${esc(p.type)}</span>
-            <span class="${riskCls}">风险: ${esc(p.risk_level)}</span>
-            <span>置信度: ${Math.round((p.confidence || 0) * 100)}%</span>
-            <span class="badge ${statusBadgeCls}" style="margin:0;display:inline-block">${statusLabel}</span>
-            <span>${(p.created_at || '').slice(0, 16)}</span>
+            <span class="meta-chip">${esc(typeLabel)}</span>
+            <span class="meta-chip ${riskCls}">${riskEmoji} ${esc(riskLevel)}</span>
+            <span class="meta-chip">置信度 ${conf}%</span>
+            <span class="meta-chip meta-chip-dim">${(p.created_at || '').slice(0, 16)}</span>
           </div>
           ${reasoningHtml}
           ${diffHtml}
           ${isPending ? `
-            <div class="agent-proposal-actions" style="margin-top:10px">
-              <button class="btn-primary" onclick="approveProposal(${p.id})">批准</button>
-              <button class="btn-danger" onclick="rejectProposal(${p.id})">驳回</button>
+            <div class="agent-proposal-actions">
+              <button class="btn-primary btn-sm" onclick="approveProposal(${p.id})">批准</button>
+              <button class="btn-danger btn-sm" onclick="rejectProposal(${p.id})">驳回</button>
             </div>
           ` : ''}
         </div>`;
     }).join('');
+    _updateProposalBatchBar();
     renderAgentSummary();
   } catch {
     container.innerHTML = '<div class="empty-state"><div class="empty-state-text">提案加载失败</div></div>';
@@ -1779,26 +1918,82 @@ async function loadAgentTasks() {
   }
 }
 
-async function approveProposal(id) {
-  if (!confirm('确认批准此提案？参数将自动应用。')) return;
-  try {
-    await request(`/api/agent/proposals/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
-    setStatus('提案已批准并应用', 'success');
-    await loadAgentData();
-  } catch (err) {
-    setStatus(`批准失败: ${err.message}`, 'error');
-  }
+function _findProposal(id) {
+  return proposalState.items.find(p => p.id === id);
 }
 
-async function rejectProposal(id) {
-  const note = prompt('驳回原因（可选）：') || '';
-  try {
-    await request(`/api/agent/proposals/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
-    setStatus('提案已驳回', 'success');
-    await loadAgentData();
-  } catch (err) {
-    setStatus(`驳回失败: ${err.message}`, 'error');
-  }
+function approveProposal(id) {
+  const p = _findProposal(id);
+  const title = p ? p.title : `#${id}`;
+  const diffStr = p?.diff_payload ? JSON.stringify(p.diff_payload, null, 2) : '';
+  const diffHtml = diffStr
+    ? `<div class="proposal-modal-diff">${_highlightDiff(diffStr)}</div>`
+    : '';
+  openProposalModal({
+    kind: 'single',
+    action: 'approve',
+    ids: [id],
+    title: `批准提案：${title}`,
+    body: `
+      <div class="proposal-modal-summary">确认后，参数变更将<strong>立即应用</strong>，并写入 Agent 长期记忆。</div>
+      ${diffHtml}
+    `,
+  });
+}
+
+function rejectProposal(id) {
+  const p = _findProposal(id);
+  const title = p ? p.title : `#${id}`;
+  openProposalModal({
+    kind: 'single',
+    action: 'reject',
+    ids: [id],
+    title: `驳回提案：${title}`,
+    body: `<div class="proposal-modal-summary">驳回后不会应用参数变更，建议在备注中写明原因以便 Agent 学习。</div>`,
+  });
+}
+
+function openProposalModal(opts) {
+  const modal = document.getElementById('proposalModal');
+  if (!modal) return;
+  document.getElementById('proposalModalTitle').textContent = opts.title;
+  document.getElementById('proposalModalBody').innerHTML = opts.body || '';
+  document.getElementById('proposalModalNote').value = '';
+  const confirmBtn = document.getElementById('proposalModalConfirm');
+  const isApprove = opts.action === 'approve';
+  confirmBtn.textContent = isApprove ? '批准' : '驳回';
+  confirmBtn.className = (isApprove ? 'btn-primary' : 'btn-danger') + ' btn-sm';
+  confirmBtn.onclick = async () => {
+    const note = document.getElementById('proposalModalNote').value || '';
+    confirmBtn.disabled = true;
+    try {
+      if (opts.kind === 'batch') {
+        const res = await request('/api/agent/proposals/batch', {
+          method: 'POST',
+          body: JSON.stringify({ ids: opts.ids, action: opts.action, note }),
+        });
+        setStatus(`批量${isApprove ? '批准' : '驳回'}：成功 ${res.processed} · 跳过 ${res.skipped?.length || 0}`, 'success');
+        clearProposalSelection();
+      } else {
+        const id = opts.ids[0];
+        const path = `/api/agent/proposals/${id}/${opts.action}`;
+        await request(path, { method: 'POST', body: JSON.stringify({ note }) });
+        setStatus(`提案已${isApprove ? '批准并应用' : '驳回'}`, 'success');
+      }
+      closeProposalModal();
+      await loadAgentData();
+    } catch (err) {
+      setStatus(`操作失败: ${err.message}`, 'error');
+    } finally {
+      confirmBtn.disabled = false;
+    }
+  };
+  modal.style.display = '';
+}
+
+function closeProposalModal() {
+  const modal = document.getElementById('proposalModal');
+  if (modal) modal.style.display = 'none';
 }
 
 /* ==================== 智能监控 ==================== */

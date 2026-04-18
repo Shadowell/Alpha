@@ -21,7 +21,7 @@ from typing import Any
 import pandas as pd
 
 from app.services.data_provider import AkshareDataProvider
-from app.services.feishu_notify import send_feishu_text
+from app.services.feishu_notify import notify_predict_top
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
@@ -304,16 +304,8 @@ class PredictFunnelService:
                 log.warning("[predict_funnel] feishu notify failed: %s", exc)
 
     async def _notify_feishu(self, top: list[dict[str, Any]], meta: dict[str, Any]) -> None:
-        lines = [
-            "🔮 Alpha 预测选股 Top 10",
-            "━━━━━━━━━━━━━━━━━━",
-            f"📅 交易日：{self._snapshot['trade_date']}  ⏱ {meta.get('elapsed_sec', 0)}s",
-            f"📊 扫描板块 {meta.get('boards_used', 0)} × 股票 {meta.get('stocks_scanned', 0)}",
-            "",
-        ]
-        for i, e in enumerate(top, start=1):
-            boards = ",".join(b["name"] for b in e.get("boards", [])[:2]) or "-"
-            lines.append(
-                f"{i:>2}. {e['name']}({e['symbol']}) 预测高+{e['pred_max_high_pct']:.1f}% | 收盘+{e['pred_last_close_pct']:.1f}% | 板块:{boards}"
-            )
-        await send_feishu_text("\n".join(lines))
+        await notify_predict_top(
+            trade_date=self._snapshot["trade_date"],
+            top_entries=top,
+            meta=meta,
+        )
