@@ -6,6 +6,8 @@ data/
 *.pyc
 .DS_Store
 .codex/
+.env
+.env.local
 
 # 测试 artifacts
 tests/e2e/node_modules/
