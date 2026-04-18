@@ -2256,34 +2256,53 @@ function _initHoverKlinePopupEvents() {
 
 function _parseMonitorThemes(text) {
   const themes = [];
-  const blocks = text.split(/(?=【[高中低]+[高]?】\s*主线)/);
-  for (const block of blocks) {
-    const m = block.match(/【([高中低]+[高]?)】\s*主线([一二三四五六七八九十\d]+)[：:]\s*(.+?)(?:\n|$)/);
+  const cnIdx = '一二三四五六七八九十';
+
+  const splitRe = new RegExp(
+    `(?=(?:^|\\n)\\s*(?:【[高中低]+[高]?】\\s*主线[${cnIdx}\\d]|[${cnIdx}]+[、\\.]\\s*【[高中低]+[高]?】))`
+  );
+  const blocks = text.split(splitRe);
+  const seenTitles = new Set();
+
+  const headRe = new RegExp(
+    `(?:【([高中低]+[高]?)】\\s*主线([${cnIdx}\\d]+)[：:]\\s*(.+?)(?:\\n|$))` +
+    `|(?:([${cnIdx}\\d]+)[、\\.]\\s*【([高中低]+[高]?)】\\s*([^\\n]+?)(?:\\n|$))`
+  );
+
+  for (const rawBlock of blocks) {
+    const tailIdx = rawBlock.search(/(?:={6,}|-{10,}|\n\s*(?:10\s*分钟内)?执行摘要)/);
+    const block = tailIdx >= 0 ? rawBlock.slice(0, tailIdx) : rawBlock;
+    const m = block.match(headRe);
     if (!m) continue;
-    const level = m[1];
-    const idx = m[2];
-    const title = m[3].trim();
+    let level, idx, title;
+    if (m[1]) { level = m[1]; idx = m[2]; title = m[3]; }
+    else { idx = m[4]; level = m[5]; title = m[6]; }
+    title = (title || '').trim().replace(/[（(][^）)]*[）)]\s*$/, '').trim();
+    if (!title) continue;
+    const dedupeKey = `${level}|${title}`;
+    if (seenTitles.has(dedupeKey)) continue;
+    seenTitles.add(dedupeKey);
 
     const stocks = [];
     const stockRe = /[-·]\s*(\d{6})\s+([^\s：:]+)[：:]\s*(.+)/g;
-    let sm;
-    const stockSection = block.match(/关注个股[\s\S]*?(?=\d\)\s|失效条件|【|$)/i);
+    const stockSection = block.match(/关注个股[\s\S]*?(?=\n\s*\d\)\s|失效条件|【|$)/i);
     const stockText = stockSection ? stockSection[0] : block;
+    let sm;
     while ((sm = stockRe.exec(stockText)) !== null) {
       stocks.push({ symbol: sm[1], name: sm[2], reason: sm[3].trim() });
     }
 
     let analysis = '';
-    const logicMatch = block.match(/逻辑链[\s\S]*?(?=\d\)\s*关注|$)/i);
+    const logicMatch = block.match(/逻辑链[\s\S]*?(?=\n\s*\d\)\s*关注|$)/i);
     if (logicMatch) {
-      analysis = logicMatch[0].replace(/^.*逻辑链[（(].*?[)）]\s*/i, '').trim();
+      analysis = logicMatch[0].replace(/^.*逻辑链[（(].*?[)）]\s*/i, '').replace(/^.*逻辑链[：:\s]*/i, '').trim();
       analysis = analysis.split('\n').filter(l => l.trim().startsWith('-')).map(l => l.trim().replace(/^-\s*/, '')).join(' ');
     }
 
     let risk = '';
-    const riskMatch = block.match(/失效条件[\s\S]*?(?=\d\)\s|【稳健|【激进|$)/i);
+    const riskMatch = block.match(/失效条件[\s\S]*?(?=\n\s*\d\)\s|【稳健|【激进|$)/i);
     if (riskMatch) {
-      risk = riskMatch[0].replace(/^.*失效条件.*?\n/i, '').trim();
+      risk = riskMatch[0].replace(/^.*失效条件[^\n]*\n/i, '').trim();
       risk = risk.split('\n').filter(l => l.trim().startsWith('-')).map(l => l.trim().replace(/^-\s*/, '')).slice(0, 2).join('；');
     }
 
