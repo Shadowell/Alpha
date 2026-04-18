@@ -819,29 +819,34 @@ class WeeklyReportBuilder:
         return report
 
     async def _push_feishu(self, report: dict) -> None:
-        import os as _os
-        url = _os.environ.get("FEISHU_WEBHOOK_URL") or _os.environ.get("FEISHU_WEBHOOK")
-        if not url:
-            return
-        import httpx
+        from app.services.feishu_notify import CardBuilder, send_feishu_card
+
         llm = report.get("llm", {}) or {}
         hot = report.get("hot_concepts", [])[:5]
-        hot_str = "、".join(f"{c['name']}({c.get('change_pct', 0)}%)" for c in hot)
+        hot_str = "、".join(f"{c['name']}({c.get('change_pct', 0)}%)" for c in hot) or "-"
         focus = llm.get("next_week_focus", []) or []
-        text_lines = [
-            f"📊 Alpha 周报 {report['week_start']} ~ {report['week_end']}",
-            f"📝 {llm.get('headline', '本周周报')}",
-            f"",
-            f"🌊 市场：{llm.get('market_overview', '')}",
-            f"⚙ 系统：{llm.get('system_performance', '')}",
-            f"🔥 热门：{hot_str}",
-            f"",
-            f"🎯 下周关注：",
-        ] + [f"  - {f}" for f in focus[:5]]
-        if llm.get("risk_alerts"):
-            text_lines.append("")
-            text_lines.append("⚠ 风险：")
-            text_lines.extend(f"  - {r}" for r in llm["risk_alerts"][:3])
-        msg = {"msg_type": "text", "content": {"text": "\n".join(text_lines)}}
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(url, json=msg)
+        risk_alerts = llm.get("risk_alerts", []) or []
+
+        builder = (
+            CardBuilder(
+                title="📊 Alpha 周报",
+                subtitle=f"{report['week_start']} ~ {report['week_end']}",
+                template="indigo",
+            )
+            .add_markdown(f"**{llm.get('headline', '本周周报')}**")
+            .add_kv_grid(
+                [
+                    ("🌊 市场", llm.get("market_overview", "-") or "-"),
+                    ("⚙ 系统", llm.get("system_performance", "-") or "-"),
+                ],
+                cols=1,
+            )
+            .add_markdown(f"🔥 **热门** {hot_str}")
+        )
+        if focus:
+            builder.add_hr()
+            builder.add_markdown("🎯 **下周关注**\n" + "\n".join(f"- {f}" for f in focus[:5]))
+        if risk_alerts:
+            builder.add_markdown("⚠ **风险**\n" + "\n".join(f"- {r}" for r in risk_alerts[:3]))
+        builder.add_note(f"生成于 {report.get('generated_at', '')}")
+        await send_feishu_card(builder.build())

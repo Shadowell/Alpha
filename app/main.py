@@ -606,9 +606,58 @@ async def run_agent_task(body: dict):
 
 
 @app.get("/api/agent/proposals")
-async def list_agent_proposals(status: str | None = None, type: str | None = None, limit: int = 20, offset: int = 0):
-    items, total = hermes_memory.list_proposals(status=status, proposal_type=type, limit=limit, offset=offset)
-    return {"items": items, "total": total}
+async def list_agent_proposals(
+    status: str | None = None,
+    type: str | None = None,
+    risk_level: str | None = None,
+    q: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """提案列表（支持 status/type/risk_level 过滤 + q 关键词搜索标题/推理）。"""
+    items, total = hermes_memory.list_proposals(status=status, proposal_type=type, limit=10_000, offset=0)
+
+    if risk_level:
+        items = [p for p in items if (p.get("risk_level") or "") == risk_level]
+    if q:
+        kw = q.strip().lower()
+        items = [
+            p for p in items
+            if kw in (p.get("title") or "").lower() or kw in (p.get("reasoning") or "").lower()
+        ]
+    total_filtered = len(items)
+    items = items[offset : offset + limit]
+    return {"items": items, "total": total_filtered, "total_all": total}
+
+
+@app.get("/api/agent/proposals/stats")
+async def get_proposal_stats():
+    """提案看板小卡：各状态计数 + 今日新增 + 近 7 日通过率。"""
+    from datetime import datetime, timedelta
+
+    counts = hermes_memory.count_by_status()
+    items, _ = hermes_memory.list_proposals(limit=500, offset=0)
+    today = now_cn_date_str()
+    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    today_new = sum(1 for p in items if (p.get("created_at") or "")[:10] == today)
+    recent = [p for p in items if (p.get("created_at") or "")[:10] >= week_ago]
+    recent_decided = [p for p in recent if p.get("status") in ("approved", "rejected")]
+    approved_cnt = sum(1 for p in recent_decided if p.get("status") == "approved")
+    approval_rate = (approved_cnt / len(recent_decided) * 100) if recent_decided else 0.0
+
+    return {
+        "pending": counts.get("pending", 0),
+        "approved": counts.get("approved", 0),
+        "rejected": counts.get("rejected", 0),
+        "today_new": today_new,
+        "recent_approval_rate": round(approval_rate, 1),
+        "recent_decided": len(recent_decided),
+    }
+
+
+def now_cn_date_str() -> str:
+    from app.services.time_utils import now_cn
+    return now_cn().date().isoformat()
 
 
 @app.get("/api/agent/proposals/{proposal_id}")
@@ -654,6 +703,12 @@ async def approve_agent_proposal(proposal_id: int, body: dict | None = None):
     except Exception as e:
         print(f"[hermes] outcome tracking setup failed: {e}")
 
+    try:
+        from app.services.feishu_notify import notify_proposal_decided
+        asyncio.create_task(notify_proposal_decided(proposal, "approve", note))
+    except Exception:
+        pass
+
     return {"success": True, "message": "提案已批准并应用"}
 
 
@@ -678,7 +733,94 @@ async def reject_agent_proposal(proposal_id: int, body: dict | None = None):
         diff_payload=proposal.get("diff_payload"),
     )
 
+    try:
+        from app.services.feishu_notify import notify_proposal_decided
+        asyncio.create_task(notify_proposal_decided(proposal, "reject", note))
+    except Exception:
+        pass
+
     return {"success": True, "message": "提案已驳回"}
+
+
+@app.post("/api/agent/proposals/batch")
+async def batch_decide_proposals(body: dict):
+    """批量审批/驳回：{ ids: [1,2,3], action: 'approve'|'reject', note?: str }"""
+    ids = body.get("ids") or []
+    action = body.get("action")
+    note = body.get("note", "")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action 必须为 approve/reject")
+
+    succeeded: list[int] = []
+    skipped: list[dict] = []
+    for pid in ids:
+        try:
+            pid = int(pid)
+        except Exception:
+            skipped.append({"id": pid, "reason": "非法 id"})
+            continue
+        proposal = hermes_memory.get_proposal(pid)
+        if not proposal:
+            skipped.append({"id": pid, "reason": "不存在"})
+            continue
+        if proposal["status"] != "pending":
+            skipped.append({"id": pid, "reason": f"状态={proposal['status']}"})
+            continue
+
+        if action == "approve":
+            hermes_memory.update_proposal_status(pid, "approved", approved_by="user")
+            hermes_memory.record_feedback(pid, "approve", note)
+            try:
+                record_feedback_to_hermes_memory(
+                    proposal_title=proposal["title"],
+                    proposal_type=proposal["type"],
+                    action="approve",
+                    note=note,
+                    diff_payload=proposal.get("diff_payload"),
+                )
+            except Exception:
+                pass
+            try:
+                funnel = await service.get_funnel()
+                baseline = {
+                    "candidate_count": funnel.stats.get("candidate", 0) if hasattr(funnel, "stats") else 0,
+                    "focus_count": funnel.stats.get("focus", 0) if hasattr(funnel, "stats") else 0,
+                    "buy_count": funnel.stats.get("buy", 0) if hasattr(funnel, "stats") else 0,
+                    "approved_at": proposal.get("approved_at", ""),
+                }
+                hermes_memory.create_outcome_tracking(pid, baseline, check_after_days=3)
+            except Exception:
+                pass
+        else:
+            hermes_memory.update_proposal_status(pid, "rejected")
+            hermes_memory.record_feedback(pid, "reject", note)
+            try:
+                record_feedback_to_hermes_memory(
+                    proposal_title=proposal["title"],
+                    proposal_type=proposal["type"],
+                    action="reject",
+                    note=note,
+                    diff_payload=proposal.get("diff_payload"),
+                )
+            except Exception:
+                pass
+
+        try:
+            from app.services.feishu_notify import notify_proposal_decided
+            asyncio.create_task(notify_proposal_decided(proposal, action, note))
+        except Exception:
+            pass
+        succeeded.append(pid)
+
+    return {
+        "success": True,
+        "processed": len(succeeded),
+        "skipped": skipped,
+        "ids": succeeded,
+        "action": action,
+    }
 
 
 @app.post("/api/agent/proposals/create")
@@ -706,6 +848,13 @@ async def create_agent_proposal(body: dict):
         confidence=float(body.get("confidence", 0.5)),
         evidence=body.get("evidence", []),
     )
+    try:
+        proposal = hermes_memory.get_proposal(proposal_id)
+        if proposal:
+            from app.services.feishu_notify import notify_proposal_created
+            asyncio.create_task(notify_proposal_created(proposal))
+    except Exception:
+        pass
     return {"success": True, "proposal_id": proposal_id, "task_id": task_id}
 
 

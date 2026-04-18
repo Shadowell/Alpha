@@ -37,6 +37,41 @@ class HermesRuntime:
         self._failures: dict[str, list[float]] = {}
         self._running = False
 
+    def _create_proposal_and_notify(
+        self,
+        task_id: int,
+        *,
+        proposal_type: str,
+        title: str,
+        risk_level: str,
+        reasoning: str,
+        diff_payload: Any,
+        expected_impact: str,
+        confidence: float,
+        evidence: Any,
+    ) -> int:
+        """创建提案并异步推送飞书卡片（fire-and-forget）。"""
+        proposal_id = self.memory.create_proposal(
+            task_id,
+            proposal_type=proposal_type,
+            title=title,
+            risk_level=risk_level,
+            reasoning=reasoning,
+            diff_payload=diff_payload,
+            expected_impact=expected_impact,
+            confidence=confidence,
+            evidence=evidence,
+        )
+        try:
+            proposal = self.memory.get_proposal(proposal_id)
+            if proposal:
+                from app.services.feishu_notify import notify_proposal_created
+
+                asyncio.create_task(notify_proposal_created(proposal))
+        except Exception:
+            pass
+        return proposal_id
+
     # ── P0 工具集（降级模式使用）──
 
     async def _tool_get_funnel_snapshot(self, trade_date: str | None = None) -> dict:
@@ -488,7 +523,7 @@ class HermesRuntime:
             for p in llm_result["proposals"]:
                 if not p.get("title"):
                     continue
-                self.memory.create_proposal(
+                self._create_proposal_and_notify(
                     task_id,
                     proposal_type=p.get("type", "rule_patch"),
                     title=p["title"],
@@ -504,7 +539,7 @@ class HermesRuntime:
         if not llm_result:
             llm_result = self._rule_based_daily_diagnosis(metrics)
             for p in llm_result.get("proposals", []):
-                self.memory.create_proposal(
+                self._create_proposal_and_notify(
                     task_id,
                     proposal_type=p.get("type", "rule_patch"),
                     title=p["title"],
@@ -679,7 +714,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         for p in result_data.get("proposals", []):
             if not p.get("title"):
                 continue
-            self.memory.create_proposal(
+            self._create_proposal_and_notify(
                 task_id,
                 proposal_type=p.get("type", "notice_rule_patch"),
                 title=p["title"],

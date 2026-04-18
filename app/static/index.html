@@ -349,18 +349,100 @@
 
             <!-- ── 子Tab: 提案管理 ── -->
             <div id="agentSubProposal" class="agent-subtab-content">
-              <div class="agent-status-bar" id="agentStatusBar">
-                <button id="btnAgentRun" class="btn-primary btn-sm">手动触发复盘</button>
+              <!-- Stats 概览 -->
+              <div id="proposalStats" class="proposal-stats">
+                <div class="proposal-stat-card">
+                  <div class="proposal-stat-label">待审批</div>
+                  <div class="proposal-stat-value warning" id="psPending">0</div>
+                </div>
+                <div class="proposal-stat-card">
+                  <div class="proposal-stat-label">今日新增</div>
+                  <div class="proposal-stat-value" id="psTodayNew">0</div>
+                </div>
+                <div class="proposal-stat-card">
+                  <div class="proposal-stat-label">已批准</div>
+                  <div class="proposal-stat-value success" id="psApproved">0</div>
+                </div>
+                <div class="proposal-stat-card">
+                  <div class="proposal-stat-label">已驳回</div>
+                  <div class="proposal-stat-value muted" id="psRejected">0</div>
+                </div>
+                <div class="proposal-stat-card">
+                  <div class="proposal-stat-label">近 7 天通过率</div>
+                  <div class="proposal-stat-value" id="psApprovalRate">—</div>
+                </div>
               </div>
+
+              <!-- 工具栏：触发 + 筛选 + 搜索 + 批量 -->
+              <div class="proposal-toolbar card-light">
+                <div class="proposal-toolbar-left">
+                  <button id="btnAgentRun" class="btn-primary btn-sm">手动触发复盘</button>
+                  <button id="btnProposalRefresh" class="btn-secondary btn-sm">刷新</button>
+                </div>
+                <div class="proposal-toolbar-filters">
+                  <select id="proposalFilterStatus" class="proposal-select">
+                    <option value="">全部状态</option>
+                    <option value="pending" selected>待审批</option>
+                    <option value="approved">已批准</option>
+                    <option value="rejected">已驳回</option>
+                  </select>
+                  <select id="proposalFilterType" class="proposal-select">
+                    <option value="">全部类型</option>
+                    <option value="rule_patch">策略规则</option>
+                    <option value="notice_rule_patch">公告规则</option>
+                    <option value="strategy_tune">策略调参</option>
+                    <option value="weight_tune">权重调参</option>
+                    <option value="config_change">配置变更</option>
+                  </select>
+                  <select id="proposalFilterRisk" class="proposal-select">
+                    <option value="">全部风险</option>
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                  </select>
+                  <input id="proposalSearch" class="proposal-search" type="search" placeholder="搜索标题/推理..." />
+                </div>
+                <div class="proposal-toolbar-right" id="proposalBatchBar" style="display:none">
+                  <span id="proposalBatchCount" class="proposal-batch-count">已选 0</span>
+                  <button class="btn-primary btn-sm" onclick="batchDecide('approve')">批量批准</button>
+                  <button class="btn-danger btn-sm" onclick="batchDecide('reject')">批量驳回</button>
+                  <button class="btn-secondary btn-sm" onclick="clearProposalSelection()">取消</button>
+                </div>
+              </div>
+
               <div class="agent-body">
                 <div class="agent-section card-solid">
-                  <h3>待审批提案</h3>
+                  <div class="proposal-list-head">
+                    <h3>提案列表 <span class="proposal-total-hint" id="proposalTotalHint"></span></h3>
+                    <label class="proposal-selectall-lbl">
+                      <input type="checkbox" id="proposalSelectAll" /> 全选本页
+                    </label>
+                  </div>
                   <div id="agentProposals" class="agent-proposals"></div>
                 </div>
                 <div class="agent-right">
                   <div class="agent-section card-light">
                     <h3>运行记录</h3>
                     <div id="agentTasks" class="agent-tasks"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 提案决策 Modal -->
+            <div id="proposalModal" class="proposal-modal" style="display:none">
+              <div class="proposal-modal-backdrop" onclick="closeProposalModal()"></div>
+              <div class="proposal-modal-panel">
+                <div class="proposal-modal-head">
+                  <span id="proposalModalTitle">确认操作</span>
+                  <button class="proposal-modal-close" onclick="closeProposalModal()">×</button>
+                </div>
+                <div class="proposal-modal-body" id="proposalModalBody"></div>
+                <div class="proposal-modal-foot">
+                  <textarea id="proposalModalNote" class="proposal-modal-note" rows="3" placeholder="备注（可选）..."></textarea>
+                  <div class="proposal-modal-actions">
+                    <button class="btn-secondary btn-sm" onclick="closeProposalModal()">取消</button>
+                    <button id="proposalModalConfirm" class="btn-primary btn-sm">确认</button>
                   </div>
                 </div>
               </div>
