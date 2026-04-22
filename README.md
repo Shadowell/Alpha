@@ -477,7 +477,8 @@ Alpha/
 │   ├── daban_2.py                     # 旧版打板策略迭代
 │   ├── daban_3.py                     # 旧版打板策略迭代
 │   └── first_limit_alpha/
-│       └── README.md                  # 首板介入连板预测模块设计文档
+│       ├── README.md                  # 首板介入连板预测模块设计文档
+│       └── AI_PROMPTS.md              # 可直接交给 AI 的分阶段实施提示词
 ├── logs/                              # 日志文件
 ├── start.sh / stop.sh / restart.sh    # 服务管理脚本
 └── requirements.txt
