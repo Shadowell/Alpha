@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,7 @@ class FunnelService:
         self.hot_concepts: list[dict[str, Any]] = []
         self.hot_stocks: list[dict[str, Any]] = []
         self.updated_at = now_cn().isoformat()
+        self.hot_stocks_updated_at = self.updated_at
         self.frozen = False
 
         self.strategy_profile = self._ensure_strategy_profile()
@@ -67,6 +69,7 @@ class FunnelService:
         self.hot_concepts = []
         self.hot_stocks = []
         self.updated_at = now_cn().isoformat()
+        self.hot_stocks_updated_at = self.updated_at
         self.frozen = False
 
     def _load_state(self) -> None:
@@ -86,6 +89,7 @@ class FunnelService:
             self.hot_concepts = payload.get("hot_concepts", [])
             self.hot_stocks = payload.get("hot_stocks", [])
             self.updated_at = payload.get("updated_at", self.updated_at)
+            self.hot_stocks_updated_at = payload.get("hot_stocks_updated_at", self.updated_at)
             self.frozen = bool(payload.get("frozen", False))
         except Exception:
             return
@@ -111,9 +115,17 @@ class FunnelService:
             "hot_concepts": self.hot_concepts,
             "hot_stocks": self.hot_stocks,
             "updated_at": self.updated_at,
+            "hot_stocks_updated_at": self.hot_stocks_updated_at,
             "frozen": self.frozen,
         }
         self.state_store.save_state(payload)
+
+    def _is_hot_stocks_stale(self, ttl_seconds: int = 300) -> bool:
+        try:
+            refreshed_at = datetime.fromisoformat(self.hot_stocks_updated_at)
+        except Exception:
+            return True
+        return (now_cn() - refreshed_at).total_seconds() >= ttl_seconds
 
     def _record_trigger(self, entry: dict[str, Any], note: str, level: str = "info") -> None:
         logs = entry.setdefault("trigger_log", [])
@@ -363,14 +375,14 @@ class FunnelService:
 
     async def _refresh_hot_stocks_unlocked(self, force: bool = False) -> None:
         """Refresh hot stocks. Caller MUST hold self.lock."""
-        if self.frozen and is_after_close(now_cn()) and not force:
+        if not force and self.hot_stocks and not self._is_hot_stocks_stale(ttl_seconds=300):
             return
-        hot_df = await self.provider.get_hot_stocks(top_n=30)
+        hot_df = await self.provider.get_hot_stocks(top_n=30, cache_ttl_seconds=300)
         if hot_df.empty:
             return
-        self.hot_stocks = []
+        items: list[dict[str, Any]] = []
         for _, row in hot_df.iterrows():
-            self.hot_stocks.append(
+            items.append(
                 {
                     "rank": int(row.get("rank", 0)),
                     "symbol": str(row.get("symbol", "")),
@@ -380,6 +392,8 @@ class FunnelService:
                     "change_amount": float(row.get("change_amount", 0.0)),
                 }
             )
+        self.hot_stocks = items
+        self.hot_stocks_updated_at = now_cn().isoformat()
 
     async def _refresh_market_panels_unlocked(self, force: bool = False) -> None:
         """Refresh market panels. Caller MUST hold self.lock."""
@@ -485,13 +499,12 @@ class FunnelService:
     async def get_hot_stocks(self, trade_date: str | None = None) -> HotStocksResponse:
         async with self.lock:
             await self.ensure_trade_date(trade_date)
-            if not self.hot_stocks:
+            if (not self.hot_stocks) or self._is_hot_stocks_stale(ttl_seconds=300):
                 await self._refresh_hot_stocks_unlocked(force=True)
-                self.updated_at = now_cn().isoformat()
                 self._save_state()
             return HotStocksResponse(
                 trade_date=self.trade_date,
-                updated_at=self.updated_at,
+                updated_at=self.hot_stocks_updated_at,
                 frozen=self.frozen,
                 items=self.hot_stocks,
             )
@@ -627,18 +640,23 @@ class FunnelService:
             if today != self.trade_date:
                 self._reset_state(today)
                 self._save_state()
+            hot_stocks_refreshed = False
+            if (not self.hot_stocks) or self._is_hot_stocks_stale(ttl_seconds=300):
+                await self._refresh_hot_stocks_unlocked(force=True)
+                self._save_state()
+                hot_stocks_refreshed = True
             has_entries = bool(self.entries)
             is_frozen = self.frozen
 
         if not has_entries and is_after_close(now_cn()):
-            return False
+            return hot_stocks_refreshed
 
         if not has_entries:
             async with self.lock:
                 await self._refresh_market_panels_unlocked(force=False)
                 self.updated_at = now_cn().isoformat()
                 self._save_state()
-            return False
+            return hot_stocks_refreshed
 
         if is_after_close(now_cn()):
             if not is_frozen:
@@ -648,7 +666,7 @@ class FunnelService:
                     self.updated_at = now_cn().isoformat()
                     self._save_state()
                 return True
-            return False
+            return hot_stocks_refreshed
 
         await self.recompute()
         return True
