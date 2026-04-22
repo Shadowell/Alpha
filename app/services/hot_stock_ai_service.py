@@ -255,6 +255,11 @@ class HotStockAIService:
                 "tradingagents_repo_path": ta_runtime.get("repo_path", ""),
                 "tradingagents_provider": ta_runtime.get("provider", DEEPSEEK_PROVIDER),
                 "tradingagents_backend_url": ta_runtime.get("backend_url", ""),
+                "tradingagents_command_example": (
+                    "uv run python -m cli.main analyze "
+                    "--ticker NVDA --date 2026-04-22 --provider deepseek "
+                    "--quick-model deepseek-chat --deep-model deepseek-reasoner"
+                ),
                 "execution_mode": "light_auto" if trigger == "auto" else "full_manual",
                 "runtime_top_n": int(runtime_cfg["top_n"]),
                 "thresholds": {
@@ -353,6 +358,8 @@ class HotStockAIService:
         ta_payload["status"] = "ok"
         ta_payload["source"] = source
         item["tradingagents"] = ta_payload
+        item["evaluation_action"] = result.get("decision_action", "watch")
+        item["evaluation_text"] = result.get("decision_action_text", "观望")
         item["base_score"] = round(float(item.get("score", 0.0)), 2)
         bonus = float(result.get("score_bonus", 0.0))
         item["tradingagents_bonus"] = round(bonus, 2)
@@ -509,5 +516,7 @@ class HotStockAIService:
             elif score >= float(cfg["threshold_focus"]):
                 pools[POOL_FOCUS].append(item)
             elif score >= float(cfg["threshold_candidate"]):
+                pools[POOL_CANDIDATE].append(item)
+            elif item.get("tradingagents", {}).get("status") == "ok":
                 pools[POOL_CANDIDATE].append(item)
         return pools
