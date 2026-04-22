@@ -13,6 +13,7 @@ from app.services.kline_store import KlineSQLiteStore
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
+from app.services.tradingagents_adapter import TradingAgentsAdapter
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ POOL_CANDIDATE = "candidate"
 POOL_FOCUS = "focus"
 POOL_BUY = "buy"
 STATE_KEY = "hot_stock_ai"
+DISCUSSION_STATE_KEY = "hot_stock_ai_tradingagents_discussions"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "top_n": 20,
@@ -32,6 +34,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_refresh_enabled": True,
     "refresh_interval_minutes": 5,
     "use_kronos": True,
+    "tradingagents_enabled": True,
+    "tradingagents_top_n": 20,
+    "tradingagents_timeout_seconds": 240,
+    "tradingagents_provider": "deepseek",
+    "tradingagents_quick_model": "deepseek-chat",
+    "tradingagents_deep_model": "deepseek-chat",
 }
 
 
@@ -52,11 +60,13 @@ class HotStockAIService:
         kline_store: KlineSQLiteStore,
         kronos_service: KronosPredictService,
         state_store: SQLiteStateStore,
+        tradingagents_adapter: TradingAgentsAdapter | None = None,
     ) -> None:
         self.provider = provider
         self.kline_store = kline_store
         self.kronos = kronos_service
         self.state_store = state_store
+        self.tradingagents = tradingagents_adapter
         self.lock = asyncio.Lock()
         self.running = False
         self.progress: dict[str, Any] = {
@@ -112,6 +122,9 @@ class HotStockAIService:
         cfg["refresh_interval_minutes"] = max(1, min(int(cfg["refresh_interval_minutes"]), 60))
         cfg["auto_refresh_enabled"] = bool(cfg["auto_refresh_enabled"])
         cfg["use_kronos"] = bool(cfg["use_kronos"])
+        cfg["tradingagents_enabled"] = bool(cfg["tradingagents_enabled"])
+        cfg["tradingagents_top_n"] = max(0, min(int(cfg["tradingagents_top_n"]), 20))
+        cfg["tradingagents_timeout_seconds"] = max(30, min(int(cfg["tradingagents_timeout_seconds"]), 900))
         self._snapshot["config"] = cfg
         self._save_state()
         return cfg
@@ -193,6 +206,8 @@ class HotStockAIService:
                 log.info("[hot_stock_ai] analyze fail %s: %s", symbol, exc)
 
         entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        discussion_meta = await self._attach_tradingagents_discussions(entries, cfg, trigger=trigger)
+        entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
         pools = self._build_pools(entries, cfg)
         trade_date = entries[0]["trade_date"] if entries else now_cn().date().isoformat()
         avg_score = round(sum(float(item["score"]) for item in entries) / max(len(entries), 1), 2) if entries else 0.0
@@ -214,6 +229,10 @@ class HotStockAIService:
                 "kronos_enabled": bool(cfg["use_kronos"]),
                 "kronos_loaded": self.kronos.is_loaded(),
                 "kronos_device": self.kronos.get_device(),
+                "tradingagents_enabled": bool(cfg["tradingagents_enabled"]),
+                "tradingagents_discussed": discussion_meta.get("discussed_count", 0),
+                "tradingagents_cache_hits": discussion_meta.get("cache_hits", 0),
+                "tradingagents_failures": discussion_meta.get("failed", 0),
                 "thresholds": {
                     "candidate": cfg["threshold_candidate"],
                     "focus": cfg["threshold_focus"],
@@ -221,6 +240,90 @@ class HotStockAIService:
                 },
             },
         }
+
+    def _load_discussion_cache(self) -> dict[str, Any]:
+        try:
+            payload = self.state_store.get_kv(DISCUSSION_STATE_KEY)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_discussion_cache(self, payload: dict[str, Any]) -> None:
+        try:
+            self.state_store.set_kv(DISCUSSION_STATE_KEY, payload)
+        except Exception:
+            pass
+
+    async def _attach_tradingagents_discussions(
+        self,
+        entries: list[dict[str, Any]],
+        cfg: dict[str, Any],
+        *,
+        trigger: str,
+    ) -> dict[str, int]:
+        if not entries:
+            return {"discussed_count": 0, "cache_hits": 0, "failed": 0}
+        if not cfg.get("tradingagents_enabled") or self.tradingagents is None:
+            for item in entries:
+                item["tradingagents"] = {"status": "disabled"}
+            return {"discussed_count": 0, "cache_hits": 0, "failed": 0}
+
+        cache = self._load_discussion_cache()
+        trade_date = str(entries[0].get("trade_date") or now_cn().date().isoformat())
+        discussed_count = 0
+        cache_hits = 0
+        failed = 0
+        top_n = int(cfg.get("tradingagents_top_n", 0))
+        selected_symbols = {item["symbol"] for item in entries[:top_n]}
+
+        for item in entries:
+            cache_key = (
+                f"{trade_date}:{item['symbol']}:"
+                f"{cfg['tradingagents_provider']}:{cfg['tradingagents_quick_model']}:{cfg['tradingagents_deep_model']}"
+            )
+            cached = cache.get(cache_key)
+            if cached:
+                cache_hits += 1
+                self._apply_tradingagents_result(item, cached, source="cache")
+                continue
+            if item["symbol"] not in selected_symbols:
+                item["tradingagents"] = {"status": "skipped", "reason": "not in discussion top n"}
+                continue
+
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.tradingagents.analyze,
+                        item["symbol"],
+                        trade_date,
+                        provider=str(cfg["tradingagents_provider"]),
+                        quick_model=str(cfg["tradingagents_quick_model"]),
+                        deep_model=str(cfg["tradingagents_deep_model"]),
+                        selected_analysts=["market", "news", "fundamentals"],
+                        output_language="Chinese",
+                    ),
+                    timeout=float(cfg["tradingagents_timeout_seconds"]),
+                )
+                discussed_count += 1
+                cache[cache_key] = result
+                self._apply_tradingagents_result(item, result, source="fresh")
+            except Exception as exc:
+                failed += 1
+                item["tradingagents"] = {"status": "failed", "error": str(exc)}
+
+        self._save_discussion_cache(cache)
+        return {"discussed_count": discussed_count, "cache_hits": cache_hits, "failed": failed}
+
+    @staticmethod
+    def _apply_tradingagents_result(item: dict[str, Any], result: dict[str, Any], *, source: str) -> None:
+        ta_payload = dict(result)
+        ta_payload["status"] = "ok"
+        ta_payload["source"] = source
+        item["tradingagents"] = ta_payload
+        item["base_score"] = round(float(item.get("score", 0.0)), 2)
+        bonus = float(result.get("score_bonus", 0.0))
+        item["tradingagents_bonus"] = round(bonus, 2)
+        item["score"] = round(_clamp(float(item["base_score"]) + bonus, 0.0, 20.0), 2)
 
     async def _analyze_symbol(self, row: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any] | None:
         symbol = normalize_symbol(row.get("symbol", ""))
@@ -344,6 +447,9 @@ class HotStockAIService:
             "pred_last_close_pct": round(pred_last_close_pct, 2),
             "pred_avg_close_pct": round(pred_avg_close_pct, 2),
             "predicted_kline": predicted,
+            "base_score": score,
+            "tradingagents_bonus": 0.0,
+            "tradingagents": {"status": "pending"},
             "score_breakdown": {
                 "popularity": round(popularity_score, 2),
                 "momentum": round(momentum_score, 2),

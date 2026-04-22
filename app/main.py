@@ -24,6 +24,7 @@ from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
 from app.services.predict_funnel_service import PredictFunnelService
 from app.services.hot_stock_ai_service import HotStockAIService
+from app.services.tradingagents_adapter import TradingAgentsAdapter
 from app.services.quiet_breakout_scanner import QuietBreakoutConfig, QuietBreakoutScanner
 from app.services.first_limit_alpha_service import FirstLimitAlphaService
 from app.services.custom_strategy import (
@@ -69,11 +70,13 @@ predict_funnel_service = PredictFunnelService(
     kronos_service=kronos_service,
     state_store=service.state_store,
 )
+tradingagents_adapter = TradingAgentsAdapter()
 hot_stock_ai_service = HotStockAIService(
     provider=provider,
     kline_store=_kline_store,
     kronos_service=kronos_service,
     state_store=service.state_store,
+    tradingagents_adapter=tradingagents_adapter,
 )
 first_limit_alpha_service = FirstLimitAlphaService(
     kline_store=_kline_store,

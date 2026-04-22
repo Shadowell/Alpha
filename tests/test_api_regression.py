@@ -165,11 +165,15 @@ class TestHotStockAI:
         data = r.json()
         assert isinstance(data, dict)
         assert "top_n" in data
+        assert "tradingagents_enabled" in data
 
     def test_hot_stock_ai_config_update(self, client):
         r = client.get("/api/strategy/hot-stock-ai/config")
         cfg = r.json()
-        payload = {"auto_refresh_enabled": bool(cfg.get("auto_refresh_enabled", True))}
+        payload = {
+            "auto_refresh_enabled": bool(cfg.get("auto_refresh_enabled", True)),
+            "tradingagents_top_n": int(cfg.get("tradingagents_top_n", 3)),
+        }
         r2 = client.post("/api/strategy/hot-stock-ai/config", json=payload)
         assert r2.status_code == 200
 

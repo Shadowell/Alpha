@@ -89,6 +89,29 @@ class FakeKronos:
         return {"predicted_kline": predicted}
 
 
+class FakeTradingAgentsAdapter:
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+
+    def analyze(self, symbol: str, trade_date: str, **kwargs) -> dict:
+        self.calls.append((symbol, trade_date))
+        mapping = {
+            "600001": ("BUY", 2.0, "龙头股量价共振，讨论结论偏进攻。"),
+            "600002": ("OVERWEIGHT", 1.0, "趋势保持但爆发性略弱，建议增配观察。"),
+        }
+        decision, bonus, summary = mapping.get(symbol, ("HOLD", 0.0, "讨论中性。"))
+        return {
+            "ok": True,
+            "symbol": symbol,
+            "trade_date": trade_date,
+            "decision": decision,
+            "score_bonus": bonus,
+            "summary": summary,
+            "discussion": summary,
+            "reports": {},
+        }
+
+
 def test_hot_stock_ai_builds_three_pools(tmp_path: Path):
     service = HotStockAIService(
         provider=FakeProvider(),
@@ -109,6 +132,40 @@ def test_hot_stock_ai_builds_three_pools(tmp_path: Path):
     assert "score_breakdown" in snap["entries"][0]
 
 
+def test_hot_stock_ai_applies_tradingagents_bonus_and_cache(tmp_path: Path):
+    adapter = FakeTradingAgentsAdapter()
+    service = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=FakeKronos(),
+        state_store=SQLiteStateStore(str(tmp_path / "state.db")),
+        tradingagents_adapter=adapter,
+    )
+    service.update_config({"tradingagents_top_n": 2, "tradingagents_enabled": True})
+
+    asyncio.run(service.run(trigger="manual"))
+    snap1 = service.get_snapshot()
+    entry1 = next(item for item in snap1["entries"] if item["symbol"] == "600001")
+    entry2 = next(item for item in snap1["entries"] if item["symbol"] == "600002")
+    entry3 = next(item for item in snap1["entries"] if item["symbol"] == "600003")
+
+    assert len(adapter.calls) == 2
+    assert snap1["meta"]["tradingagents_discussed"] == 2
+    assert entry1["tradingagents"]["decision"] == "BUY"
+    assert entry1["tradingagents"]["source"] == "fresh"
+    assert entry1["score"] > entry1["base_score"]
+    assert entry2["tradingagents_bonus"] == 1.0
+    assert entry3["tradingagents"]["status"] == "skipped"
+
+    asyncio.run(service.run(trigger="manual"))
+    snap2 = service.get_snapshot()
+    entry1_cached = next(item for item in snap2["entries"] if item["symbol"] == "600001")
+
+    assert len(adapter.calls) == 2
+    assert snap2["meta"]["tradingagents_cache_hits"] == 2
+    assert entry1_cached["tradingagents"]["source"] == "cache"
+
+
 def test_hot_stock_ai_config_is_clamped(tmp_path: Path):
     service = HotStockAIService(
         provider=FakeProvider(),
@@ -127,6 +184,8 @@ def test_hot_stock_ai_config_is_clamped(tmp_path: Path):
             "threshold_buy": 5.0,
             "refresh_interval_minutes": 0,
             "max_buy_pool_size": 99,
+            "tradingagents_top_n": 99,
+            "tradingagents_timeout_seconds": 5,
         }
     )
 
@@ -137,3 +196,5 @@ def test_hot_stock_ai_config_is_clamped(tmp_path: Path):
     assert cfg["threshold_buy"] >= cfg["threshold_focus"]
     assert cfg["refresh_interval_minutes"] == 1
     assert cfg["max_buy_pool_size"] == 10
+    assert cfg["tradingagents_top_n"] == 20
+    assert cfg["tradingagents_timeout_seconds"] == 30
