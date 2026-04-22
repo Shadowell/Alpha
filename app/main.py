@@ -270,10 +270,13 @@ async def _hot_stock_ai_scheduler_loop() -> None:
             cfg = hot_stock_ai_service.get_config()
             if cfg.get("auto_refresh_enabled") and not hot_stock_ai_service.running and hot_stock_ai_service.is_stale():
                 print(f"[hot_stock_ai] scheduled run at {now_cn().isoformat()}")
-                try:
-                    await hot_stock_ai_service.run(trigger="auto")
-                except Exception as exc:
-                    print(f"[hot_stock_ai] scheduled run failed: {exc}")
+                async def _run_hot_stock_ai_auto() -> None:
+                    try:
+                        await hot_stock_ai_service.run(trigger="auto")
+                    except Exception as exc:
+                        print(f"[hot_stock_ai] scheduled run failed: {exc}")
+
+                asyncio.create_task(_run_hot_stock_ai_auto())
         except Exception as exc:
             print(f"[hot_stock_ai] scheduler error: {exc}")
         await asyncio.sleep(60)

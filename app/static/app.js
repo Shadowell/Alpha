@@ -95,8 +95,11 @@ function setMeta() {
     const snap = state.hotStockAI;
     if (!snap) { meta.textContent = '热门智能分析 · 加载中…'; return; }
     const m = snap.meta || {};
-    const taPart = m.tradingagents_enabled ? ` · 讨论 ${m.tradingagents_discussed || 0}` : '';
-    const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned} · 均分 ${fmtNum(m.avg_score || 0, 1)}${taPart} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
+    const modeText = m.execution_mode === 'light_auto' ? ' · 自动轻量' : '';
+    const taPart = m.runtime_tradingagents_enabled
+      ? ` · 讨论 ${m.tradingagents_discussed || 0}`
+      : (m.tradingagents_enabled ? ' · 已跳过讨论' : '');
+    const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned}${modeText} · 均分 ${fmtNum(m.avg_score || 0, 1)}${taPart} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
     meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
   } else if (state.activeTab === 'graphic') {
     const snap = state.graphicFunnel;
@@ -3384,10 +3387,11 @@ function renderHotStockAI() {
   }
   if (metaEl) {
     const m = snap.meta || {};
-    const taText = m.tradingagents_enabled
+    const modeText = m.execution_mode === 'light_auto' ? ' · 自动轻量模式' : '';
+    const taText = m.runtime_tradingagents_enabled
       ? ` · 讨论 ${m.tradingagents_discussed || 0} · 缓存 ${m.tradingagents_cache_hits || 0}`
-      : '';
-    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20} · Kronos ${m.kronos_device || '--'}${taText} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
+      : (m.tradingagents_enabled ? ' · 自动任务已跳过讨论' : '');
+    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20}${modeText} · Kronos ${m.kronos_device || '--'}${taText} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
   }
   if (summary) {
     summary.innerHTML = [
