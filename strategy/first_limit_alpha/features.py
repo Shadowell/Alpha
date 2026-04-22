@@ -162,29 +162,21 @@ class FirstLimitFeatureBuilder:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
 
-    def build_features(
+    def transform_samples(
         self,
         samples: pd.DataFrame,
-        output_dir: str | Path,
         feature_cfg: FeatureConfig | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
         feature_cfg = feature_cfg or FeatureConfig()
-        out_dir = ensure_dir(Path(output_dir))
         if samples.empty:
-            features_path = write_dataframe(pd.DataFrame(), out_dir / "features.csv")
-            meta = {"feature_count": 0, "paths": {"features": str(features_path)}, "feature_config": feature_cfg.to_dict()}
-            write_json(meta, out_dir / "meta.json")
-            return meta
+            return pd.DataFrame(), {"feature_count": 0, "feature_config": feature_cfg.to_dict()}
 
         samples = samples.copy()
         samples["symbol"] = samples["symbol"].astype(str)
         samples["trade_date"] = samples["trade_date"].astype(str)
         kline = _read_kline(self.db_path)
         if kline.empty:
-            features_path = write_dataframe(samples.copy(), out_dir / "features.csv")
-            meta = {"feature_count": 0, "paths": {"features": str(features_path)}, "feature_config": feature_cfg.to_dict()}
-            write_json(meta, out_dir / "meta.json")
-            return meta
+            return samples.copy(), {"feature_count": 0, "feature_config": feature_cfg.to_dict()}
 
         symbol_features = []
         symbols = set(samples["symbol"].astype(str).tolist())
@@ -215,7 +207,6 @@ class FirstLimitFeatureBuilder:
             if merged[col].dtype.kind in {"f", "i"}:
                 merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(feature_cfg.fill_value)
 
-        features_path = write_dataframe(merged, out_dir / "features.csv")
         meta = {
             "feature_count": int(
                 len(
@@ -245,7 +236,6 @@ class FirstLimitFeatureBuilder:
                     ]
                 )
             ),
-            "paths": {"features": str(features_path)},
             "feature_config": feature_cfg.to_dict(),
             "feature_groups": {
                 "price_behavior": [
@@ -296,5 +286,17 @@ class FirstLimitFeatureBuilder:
                 ],
             },
         }
+        return merged, meta
+
+    def build_features(
+        self,
+        samples: pd.DataFrame,
+        output_dir: str | Path,
+        feature_cfg: FeatureConfig | None = None,
+    ) -> dict[str, Any]:
+        out_dir = ensure_dir(Path(output_dir))
+        merged, meta = self.transform_samples(samples, feature_cfg=feature_cfg)
+        features_path = write_dataframe(merged, out_dir / "features.csv")
+        meta["paths"] = {"features": str(features_path)}
         write_json(meta, out_dir / "meta.json")
         return meta
