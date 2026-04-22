@@ -59,8 +59,32 @@ if [[ "${BASH_VERSION:-}" ]]; then
   set +m
 fi
 
-nohup python3 -m uvicorn "${UVICORN_ARGS[@]}" >"$LOG_FILE" 2>&1 < /dev/null &
-BOOT_PID=$!
+UVICORN_ARGS_STR="$(printf '%s\x1f' "${UVICORN_ARGS[@]}")"
+
+BOOT_PID="$(
+ROOT_DIR="$ROOT_DIR" LOG_FILE="$LOG_FILE" UVICORN_ARGS_STR="$UVICORN_ARGS_STR" python3 - <<'PY'
+import os
+import subprocess
+
+root_dir = os.environ["ROOT_DIR"]
+log_file = os.environ["LOG_FILE"]
+uvicorn_args = [arg for arg in os.environ.get("UVICORN_ARGS_STR", "").split("\x1f") if arg]
+args = ["python3", "-m", "uvicorn", *uvicorn_args]
+
+with open(log_file, "ab", buffering=0) as fh:
+    proc = subprocess.Popen(
+        args,
+        cwd=root_dir,
+        stdin=subprocess.DEVNULL,
+        stdout=fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+        env=os.environ.copy(),
+    )
+print(proc.pid)
+PY
+)"
 
 NEW_PID="$BOOT_PID"
 for _ in {1..20}; do
