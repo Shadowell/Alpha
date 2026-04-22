@@ -26,6 +26,9 @@ const state = {
   predictFunnel: null,
   predictConfig: null,
   predictRunning: false,
+  hotStockAI: null,
+  hotStockAIConfig: null,
+  hotStockAIRunning: false,
   graphicFunnel: null,
   graphicConfig: null,
   graphicRunning: false,
@@ -87,6 +90,12 @@ function setMeta() {
     if (!snap) { meta.textContent = '预测选股 · 加载中…'; return; }
     const m = snap.meta || {};
     const extra = m.stocks_scanned ? `扫描 ${m.stocks_scanned} · 命中 ${m.entries_count || 0} · 用时 ${m.elapsed_sec || 0}s` : '尚未执行';
+    meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
+  } else if (state.activeTab === 'hotai') {
+    const snap = state.hotStockAI;
+    if (!snap) { meta.textContent = '热门智能分析 · 加载中…'; return; }
+    const m = snap.meta || {};
+    const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned} · 均分 ${fmtNum(m.avg_score || 0, 1)} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
     meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
   } else if (state.activeTab === 'graphic') {
     const snap = state.graphicFunnel;
@@ -248,7 +257,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', predict: '预测选股', graphic: '图形选股', agent: '智能监控 / 进化', paper: '模拟盘' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', predict: '预测选股', hotai: '热门智能', graphic: '图形选股', agent: '智能监控 / 进化', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -299,6 +308,12 @@ function switchTab(tab) {
     _startPredictPoll();
   } else {
     _stopPredictPoll();
+  }
+  if (tab === 'hotai') {
+    loadHotStockAI();
+    _startHotAiPoll();
+  } else {
+    _stopHotAiPoll();
   }
   if (tab === 'graphic') {
     loadGraphicFunnel();
@@ -3047,6 +3062,7 @@ async function init() {
   if (state.activeTab === 'data') startDcPolling();
   if (state.activeTab === 'paper') _startPaperPoll();
   if (state.activeTab === 'predict') { loadPredictFunnel(); _startPredictPoll(); }
+  if (state.activeTab === 'hotai') { loadHotStockAI(); _startHotAiPoll(); }
   if (state.activeTab === 'graphic') { loadGraphicFunnel(); _startGraphicPoll(); }
 
   document.addEventListener('visibilitychange', () => {
@@ -3056,12 +3072,16 @@ async function init() {
     if (state.activeTab === 'predict') {
       if (document.hidden) _stopPredictPoll(); else _startPredictPoll();
     }
+    if (state.activeTab === 'hotai') {
+      if (document.hidden) _stopHotAiPoll(); else _startHotAiPoll();
+    }
     if (state.activeTab === 'graphic') {
       if (document.hidden) _stopGraphicPoll(); else _startGraphicPoll();
     }
   });
 
   _bindPredictActions();
+  _bindHotAiActions();
   _bindGraphicActions();
   _bindStrategyCenterActions();
 }
@@ -3069,6 +3089,7 @@ async function init() {
 /* ==================== 预测选股 ==================== */
 
 let _predictPollTimer = null;
+let _hotAiPollTimer = null;
 let _graphicPollTimer = null;
 
 function _startPredictPoll() {
@@ -3084,6 +3105,21 @@ function _startPredictPoll() {
 
 function _stopPredictPoll() {
   if (_predictPollTimer) { clearTimeout(_predictPollTimer); _predictPollTimer = null; }
+}
+
+function _startHotAiPoll() {
+  _stopHotAiPoll();
+  const tick = async () => {
+    if (state.activeTab !== 'hotai') { _stopHotAiPoll(); return; }
+    try { await loadHotStockAI(); } catch (_) {}
+    const interval = state.hotStockAIRunning ? 2500 : 15000;
+    _hotAiPollTimer = setTimeout(tick, interval);
+  };
+  _hotAiPollTimer = setTimeout(tick, 1000);
+}
+
+function _stopHotAiPoll() {
+  if (_hotAiPollTimer) { clearTimeout(_hotAiPollTimer); _hotAiPollTimer = null; }
 }
 
 async function loadPredictFunnel() {
@@ -3200,6 +3236,137 @@ function renderPredictFunnel() {
       _psSep(),
       _psItem('板块', (snap.meta?.boards_used || 0)),
     ].join('');
+  }
+}
+
+function _hotAiScoreCls(score) {
+  const cfg = state.hotStockAI?.config || {};
+  if (score >= Number(cfg.threshold_buy || 14.5)) return 'up';
+  if (score >= Number(cfg.threshold_focus || 11.5)) return 'up';
+  return 'neutral';
+}
+
+function _hotAiCardHtml(e) {
+  const score = Number(e.score || 0);
+  const cls = _hotAiScoreCls(score);
+  const tags = (e.tags || []).slice(0, 4)
+    .map(tag => `<span class="predict-card-board-tag hot-ai-tag">${tag}</span>`)
+    .join('');
+  return `
+    <div class="pool-card hot-ai-card" data-symbol="${e.symbol}" onclick="openHotAiDetail('${e.symbol}')">
+      <div class="card-head">
+        <div class="card-name">
+          <span class="stock-name">${e.name || e.symbol}</span>
+          <span class="stock-code">${e.symbol}</span>
+        </div>
+        <div class="card-score ${cls}">${fmtNum(score, 1)}分</div>
+      </div>
+      <div class="predict-card-meta">
+        <span class="predict-card-metric">热度 <b>#${e.rank || '--'}</b></span>
+        <span class="predict-card-metric">现价 <b>${fmtNum(e.latest_price)}</b></span>
+        <span class="predict-card-metric">当日 ${(Number(e.change_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.change_pct, 2)}%</span>
+        <span class="predict-card-metric">3日高 <b>${(Number(e.pred_max_high_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.pred_max_high_pct, 2)}%</b></span>
+      </div>
+      <div class="predict-card-meta">
+        <span class="predict-card-metric">距MA20 <b>${(Number(e.dist_ma20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_ma20_pct, 2)}%</b></span>
+        <span class="predict-card-metric">距20日高 <b>${(Number(e.dist_high20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_high20_pct, 2)}%</b></span>
+        <span class="predict-card-metric">量额比20日 <b>${fmtNum(e.amount_ratio_20d, 2)}</b></span>
+      </div>
+      <div class="predict-card-meta hot-ai-breakdown">
+        <span class="predict-card-metric">热度分 <b>${fmtNum(e.score_breakdown?.popularity, 1)}</b></span>
+        <span class="predict-card-metric">趋势分 <b>${fmtNum(e.score_breakdown?.trend, 1)}</b></span>
+        <span class="predict-card-metric">预测分 <b>${fmtNum(e.score_breakdown?.prediction, 1)}</b></span>
+        <span class="predict-card-metric">风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
+      </div>
+      <div class="hot-ai-analysis">${e.analysis || '暂无分析摘要'}</div>
+      ${tags ? `<div class="predict-card-boards">${tags}</div>` : ''}
+    </div>`;
+}
+
+function renderHotStockAI() {
+  const snap = state.hotStockAI;
+  const metaEl = document.getElementById('hotAiMeta');
+  const progEl = document.getElementById('hotAiProgress');
+  const btn = document.getElementById('btnHotAiRun');
+  const summary = document.getElementById('hotAiPageSummary');
+  const toggle = document.getElementById('hotAiAutoToggle');
+  if (!snap) {
+    if (metaEl) metaEl.textContent = '无数据';
+    if (summary) summary.innerHTML = '';
+    return;
+  }
+  const cfg = snap.config || {};
+  state.hotStockAIConfig = cfg;
+  if (toggle) toggle.checked = !!cfg.auto_refresh_enabled;
+  const thC = document.getElementById('hotai-th-candidate');
+  const thF = document.getElementById('hotai-th-focus');
+  const thB = document.getElementById('hotai-th-buy');
+  if (thC) thC.textContent = `≥${cfg.threshold_candidate || 8}分`;
+  if (thF) thF.textContent = `≥${cfg.threshold_focus || 11.5}分`;
+  if (thB) thB.textContent = `≥${cfg.threshold_buy || 14.5}分`;
+
+  const pools = snap.pools || { candidate: [], focus: [], buy: [] };
+  const renderPool = (id, list) => {
+    const el = document.getElementById(id);
+    const cnt = document.getElementById(`hotai-count-${id.split('-').pop()}`);
+    if (cnt) cnt.textContent = (list || []).length;
+    if (!el) return;
+    if (!list || list.length === 0) {
+      el.innerHTML = '<div class="empty-pool">暂无</div>';
+      return;
+    }
+    el.innerHTML = list.map(_hotAiCardHtml).join('');
+  };
+  renderPool('hotai-pool-candidate', pools.candidate);
+  renderPool('hotai-pool-focus', pools.focus);
+  renderPool('hotai-pool-buy', pools.buy);
+
+  const prog = snap.progress || {};
+  const running = !!snap.running;
+  if (btn) {
+    btn.disabled = running;
+    btn.textContent = running ? '分析中…' : '立即分析';
+  }
+  if (progEl) {
+    if (running) {
+      progEl.textContent = `${prog.phase || '...'} ${prog.current || 0}/${prog.total || 0} ${prog.detail || ''}`;
+    } else if (prog.error) {
+      progEl.textContent = `失败：${prog.error}`;
+    } else if (snap.meta?.elapsed_sec) {
+      progEl.textContent = `上次${snap.meta.trigger || '手动'} · ${snap.meta.elapsed_sec}s · 失败${snap.meta.failed_count || 0}`;
+    } else {
+      progEl.textContent = '';
+    }
+  }
+  if (metaEl) {
+    const m = snap.meta || {};
+    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20} · Kronos ${m.kronos_device || '--'} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
+  }
+  if (summary) {
+    summary.innerHTML = [
+      _psItem('候选', (pools.candidate || []).length),
+      _psSep(),
+      _psItem('关注', (pools.focus || []).length),
+      _psSep(),
+      _psItem('买入', (pools.buy || []).length, 'warning'),
+      _psSep(),
+      _psItem('均分', fmtNum(snap.meta?.avg_score || 0, 1)),
+      _psSep(),
+      _psItem('扫描', `${snap.meta?.stocks_scanned || 0}只`),
+    ].join('');
+  }
+}
+
+async function loadHotStockAI() {
+  try {
+    const snap = await request('/api/strategy/hot-stock-ai');
+    state.hotStockAI = snap;
+    state.hotStockAIRunning = !!snap.running;
+    renderHotStockAI();
+    if (state.activeTab === 'hotai') setMeta();
+  } catch (err) {
+    const el = document.getElementById('hotAiMeta');
+    if (el) el.textContent = `加载失败: ${err.message}`;
   }
 }
 
@@ -3370,6 +3537,29 @@ async function openGraphicDetail(symbol) {
   }
 }
 
+async function openHotAiDetail(symbol) {
+  if (!symbol) return;
+  state.selectedSymbol = symbol;
+  let detail = { name: symbol, kline: [], metrics: {} };
+  try {
+    const d = await request(`/api/stock/${symbol}/detail?kline_days=30`);
+    detail = {
+      name: d?.name || symbol,
+      kline: d?.kline || [],
+      metrics: d?.metrics || {},
+    };
+  } catch (_) {}
+  try {
+    await openPredictModal(symbol, detail, {
+      titleSuffix: '热门股票智能分析',
+      badge: '附带 Kronos 三日预测',
+      badgeClass: 'predict-modal-badge',
+    });
+  } catch (err) {
+    setStatus(`详情加载失败: ${err?.message || err}`, 'error');
+  }
+}
+
 async function openPredictDetail(symbol, name) {
   if (!symbol) return;
   state.selectedSymbol = symbol;
@@ -3419,6 +3609,43 @@ function _bindPredictActions() {
       } catch (err) {
         setStatus(`设置失败: ${err.message}`, 'error');
         tog.checked = !tog.checked;
+      }
+    };
+  }
+}
+
+function _bindHotAiActions() {
+  const btn = document.getElementById('btnHotAiRun');
+  if (btn) {
+    btn.onclick = async () => {
+      if (state.hotStockAIRunning) return;
+      try {
+        setStatus('热门股票智能分析已启动，正在逐股打分…', 'info');
+        state.hotStockAIRunning = true;
+        renderHotStockAI();
+        await request('/api/strategy/hot-stock-ai/run', { method: 'POST' });
+        _startHotAiPoll();
+      } catch (err) {
+        state.hotStockAIRunning = false;
+        renderHotStockAI();
+        setStatus(`启动失败: ${err.message}`, 'error');
+      }
+    };
+  }
+  const toggle = document.getElementById('hotAiAutoToggle');
+  if (toggle) {
+    toggle.onchange = async () => {
+      try {
+        await request('/api/strategy/hot-stock-ai/config', {
+          method: 'POST',
+          body: JSON.stringify({ auto_refresh_enabled: toggle.checked }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (state.hotStockAI?.config) state.hotStockAI.config.auto_refresh_enabled = toggle.checked;
+        setStatus(`热门智能自动刷新已${toggle.checked ? '开启' : '关闭'}`, 'success');
+      } catch (err) {
+        toggle.checked = !toggle.checked;
+        setStatus(`设置失败: ${err.message}`, 'error');
       }
     };
   }

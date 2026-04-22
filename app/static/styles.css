@@ -2236,6 +2236,13 @@ body { color: var(--text); }
   border: 1px solid rgba(56, 189, 248, 0.22);
   border-radius: 14px;
 }
+.hot-ai-area {
+  margin-top: 18px;
+  padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.08) 0%, rgba(15, 23, 42, 0.58) 40%);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  border-radius: 14px;
+}
 .graphic-header {
   display: flex;
   justify-content: space-between;
@@ -2275,12 +2282,42 @@ body { color: var(--text); }
   background: rgba(56, 189, 248, 0.12);
   color: #38bdf8;
 }
+.hot-ai-area .pool-threshold {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+}
 .graphic-card .card-score {
+  min-width: 74px;
+  text-align: right;
+}
+.hot-ai-card .card-score {
   min-width: 74px;
   text-align: right;
 }
 .graphic-card .predict-card-metric b {
   color: #38bdf8;
+}
+.hot-ai-card .predict-card-metric b {
+  color: #fbbf24;
+}
+.hot-ai-badge {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  color: #451a03;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.24);
+}
+.hot-ai-analysis {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #cbd5e1;
+}
+.hot-ai-tag {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+}
+.hot-ai-breakdown {
+  padding-top: 4px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.14);
 }
 .graphic-tag-lowrisk {
   background: rgba(52, 211, 153, 0.08);

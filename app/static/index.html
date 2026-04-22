@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260422_graphic" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260422_hotai" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -36,6 +36,10 @@
       <a class="sidebar-item" data-tab="predict" title="预测选股">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-7 4 14 2-7h3"/><circle cx="19" cy="5" r="2"/></svg>
         <span>预测选股</span>
+      </a>
+      <a class="sidebar-item" data-tab="hotai" title="热门智能">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/><path d="M12 7v5"/><path d="M12 16h.01"/></svg>
+        <span>热门智能</span>
       </a>
       <a class="sidebar-item" data-tab="graphic" title="图形选股">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l4-5 4 2 8-9"/><path d="M4 6h16"/><path d="M4 18h16"/></svg>
@@ -293,6 +297,48 @@
               <div class="pool-column highlight-buy">
                 <div class="pool-header">买入候选池 <span id="predict-count-buy" class="pool-count">0</span><span class="pool-threshold" id="predict-th-buy">≥8%</span></div>
                 <div id="predict-pool-buy" class="pool-list"></div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- ========== 热门股票智能分析 ========== -->
+        <section id="tab-hotai" class="tab-content">
+          <div id="hotAiPageSummary" class="page-summary"></div>
+          <div class="tab-toolbar">
+            <div class="filter-line">
+              <span class="predict-meta" id="hotAiMeta">加载中…</span>
+              <span id="hotAiProgress" class="filter-hint"></span>
+            </div>
+            <div class="predict-actions">
+              <label class="predict-toggle">
+                <input type="checkbox" id="hotAiAutoToggle" checked />
+                <span>自动刷新</span>
+              </label>
+              <button id="btnHotAiRun" class="btn-action">立即分析</button>
+            </div>
+          </div>
+
+          <section class="funnel-area hot-ai-area">
+            <div class="graphic-header">
+              <div class="graphic-title">
+                <span class="graphic-badge hot-ai-badge">Top 20</span>
+                <h3>热门股票智能分析</h3>
+                <span class="graphic-hint">实时热门股接口输入，结合热度、趋势、量能和 Kronos 预测做三池分层</span>
+              </div>
+            </div>
+            <div class="funnel-grid">
+              <div class="pool-column">
+                <div class="pool-header">候选池 <span id="hotai-count-candidate" class="pool-count">0</span><span class="pool-threshold" id="hotai-th-candidate">≥8分</span></div>
+                <div id="hotai-pool-candidate" class="pool-list"></div>
+              </div>
+              <div class="pool-column highlight-focus">
+                <div class="pool-header">重点关注池 <span id="hotai-count-focus" class="pool-count">0</span><span class="pool-threshold" id="hotai-th-focus">≥11.5分</span></div>
+                <div id="hotai-pool-focus" class="pool-list"></div>
+              </div>
+              <div class="pool-column highlight-buy">
+                <div class="pool-header">买入候选池 <span id="hotai-count-buy" class="pool-count">0</span><span class="pool-threshold" id="hotai-th-buy">≥14.5分</span></div>
+                <div id="hotai-pool-buy" class="pool-list"></div>
               </div>
             </div>
           </section>
@@ -747,6 +793,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260422_graphic"></script>
+  <script src="/static/app.js?v=20260422_hotai"></script>
 </body>
 </html>

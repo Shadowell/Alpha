@@ -23,6 +23,7 @@ from app.services.hermes_memory_bridge import record_feedback_to_hermes_memory
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
 from app.services.predict_funnel_service import PredictFunnelService
+from app.services.hot_stock_ai_service import HotStockAIService
 from app.services.quiet_breakout_scanner import QuietBreakoutConfig, QuietBreakoutScanner
 from app.services.first_limit_alpha_service import FirstLimitAlphaService
 from app.services.custom_strategy import (
@@ -65,6 +66,12 @@ kronos_service = KronosPredictService(
 paper_trading = PaperTradingService()
 predict_funnel_service = PredictFunnelService(
     provider=provider,
+    kronos_service=kronos_service,
+    state_store=service.state_store,
+)
+hot_stock_ai_service = HotStockAIService(
+    provider=provider,
+    kline_store=_kline_store,
     kronos_service=kronos_service,
     state_store=service.state_store,
 )
@@ -251,6 +258,24 @@ async def _predict_funnel_scheduler_loop() -> None:
         await asyncio.sleep(300)
 
 
+async def _hot_stock_ai_scheduler_loop() -> None:
+    """热门股票智能分析自动刷新，每 60s 检查一次是否到达配置刷新窗口。"""
+    from app.services.time_utils import now_cn
+    await asyncio.sleep(90)
+    while True:
+        try:
+            cfg = hot_stock_ai_service.get_config()
+            if cfg.get("auto_refresh_enabled") and not hot_stock_ai_service.running and hot_stock_ai_service.is_stale():
+                print(f"[hot_stock_ai] scheduled run at {now_cn().isoformat()}")
+                try:
+                    await hot_stock_ai_service.run(trigger="auto")
+                except Exception as exc:
+                    print(f"[hot_stock_ai] scheduled run failed: {exc}")
+        except Exception as exc:
+            print(f"[hot_stock_ai] scheduler error: {exc}")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async def _startup_backfill() -> None:
@@ -267,13 +292,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
     app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
     app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
+    app.state.hot_stock_ai_task = asyncio.create_task(_hot_stock_ai_scheduler_loop())
     app.state.risk_guardian_task = asyncio.create_task(risk_guardian_loop(risk_guardian, interval_seconds=30))
     app.state.auto_trade_task = asyncio.create_task(_auto_trade_loop())
     app.state.weekly_report_task = asyncio.create_task(_weekly_report_scheduler())
     yield
     for key in [
         "backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task",
-        "predict_funnel_task", "risk_guardian_task", "auto_trade_task", "weekly_report_task",
+        "predict_funnel_task", "hot_stock_ai_task", "risk_guardian_task", "auto_trade_task", "weekly_report_task",
     ]:
         task = getattr(app.state, key, None)
         if task:
@@ -422,6 +448,30 @@ async def get_predict_funnel_config():
 @app.post("/api/predict-funnel/config")
 async def update_predict_funnel_config(payload: dict):
     cfg = predict_funnel_service.update_config(payload or {})
+    return {"success": True, "config": cfg}
+
+
+@app.get("/api/strategy/hot-stock-ai")
+async def get_hot_stock_ai_snapshot():
+    return hot_stock_ai_service.get_snapshot()
+
+
+@app.post("/api/strategy/hot-stock-ai/run")
+async def run_hot_stock_ai():
+    if hot_stock_ai_service.running:
+        raise HTTPException(status_code=409, detail="热门股票智能分析任务已在执行中")
+    asyncio.create_task(hot_stock_ai_service.run(trigger="manual"))
+    return {"success": True, "message": "热门股票智能分析任务已启动", "snapshot": hot_stock_ai_service.get_snapshot()}
+
+
+@app.get("/api/strategy/hot-stock-ai/config")
+async def get_hot_stock_ai_config():
+    return hot_stock_ai_service.get_config()
+
+
+@app.post("/api/strategy/hot-stock-ai/config")
+async def update_hot_stock_ai_config(payload: dict):
+    cfg = hot_stock_ai_service.update_config(payload or {})
     return {"success": True, "config": cfg}
 
 
