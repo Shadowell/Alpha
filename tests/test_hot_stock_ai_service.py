@@ -111,11 +111,15 @@ class FakeTradingAgentsAdapter:
             "600002": ("OVERWEIGHT", 1.0, "趋势保持但爆发性略弱，建议增配观察。"),
         }
         decision, bonus, summary = mapping.get(symbol, ("HOLD", 0.0, "讨论中性。"))
+        action = "buy" if decision in {"BUY", "OVERWEIGHT"} else "watch"
+        action_text = "买入" if action == "buy" else "观望"
         return {
             "ok": True,
             "symbol": symbol,
             "trade_date": trade_date,
             "decision": decision,
+            "decision_action": action,
+            "decision_action_text": action_text,
             "score_bonus": bonus,
             "summary": summary,
             "discussion": summary,
@@ -164,6 +168,7 @@ def test_hot_stock_ai_applies_tradingagents_bonus_and_cache(tmp_path: Path):
     assert snap1["meta"]["tradingagents_discussed"] == 2
     assert entry1["tradingagents"]["decision"] == "BUY"
     assert entry1["tradingagents"]["source"] == "fresh"
+    assert entry1["evaluation_text"] == "买入"
     assert entry1["score"] > entry1["base_score"]
     assert entry2["tradingagents_bonus"] == 1.0
     assert entry3["tradingagents"]["status"] == "skipped"
@@ -251,3 +256,27 @@ def test_hot_stock_ai_meta_exposes_tradingagents_backend(tmp_path: Path):
 
     assert snap["meta"]["tradingagents_backend"] == "TradingAgents + DeepSeek"
     assert snap["meta"]["tradingagents_provider"] == "deepseek"
+
+
+def test_hot_stock_ai_keeps_discussed_result_in_candidate_pool(tmp_path: Path):
+    adapter = FakeTradingAgentsAdapter()
+    service = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=FakeKronos(),
+        state_store=SQLiteStateStore(str(tmp_path / "state.db")),
+        tradingagents_adapter=adapter,
+    )
+    service.update_config({
+        "threshold_candidate": 30.0,
+        "threshold_focus": 31.0,
+        "threshold_buy": 32.0,
+        "tradingagents_top_n": 1,
+    })
+
+    asyncio.run(service.run(trigger="manual"))
+    snap = service.get_snapshot()
+
+    assert snap["pools"]["candidate"]
+    assert snap["pools"]["candidate"][0]["symbol"] == "600001"
+    assert snap["pools"]["candidate"][0]["evaluation_text"] == "买入"

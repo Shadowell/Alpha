@@ -3274,6 +3274,7 @@ function _hotAiCardHtml(e) {
   const cls = _hotAiScoreCls(score);
   const ta = e.tradingagents || {};
   const decision = String(ta.decision || '').toUpperCase();
+  const evaluationText = e.evaluation_text || _hotAiDecisionText(decision);
   const baseScore = Number(e.base_score ?? e.score ?? 0);
   const bonus = Number(e.tradingagents_bonus || 0);
   const bonusSign = bonus > 0 ? '+' : '';
@@ -3322,6 +3323,9 @@ function _hotAiCardHtml(e) {
         <span class="predict-card-metric">趋势分 <b>${fmtNum(e.score_breakdown?.trend, 1)}</b></span>
         <span class="predict-card-metric">预测分 <b>${fmtNum(e.score_breakdown?.prediction, 1)}</b></span>
         <span class="predict-card-metric">风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
+      </div>
+      <div class="predict-card-meta">
+        <span class="predict-card-metric">评价 <b>${evaluationText}</b></span>
       </div>
       ${decisionHtml}
       ${taSummary ? `<div class="hot-ai-ta-summary">${taSummary}</div>` : ''}
