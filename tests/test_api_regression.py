@@ -105,6 +105,12 @@ class TestFunnel:
         data = r.json()
         assert isinstance(data, dict)
 
+    def test_first_limit_alpha_status(self, client):
+        r = client.get("/api/strategy/first-limit-alpha/status")
+        assert r.status_code == 200
+        data = r.json()
+        assert "artifact_root" in data
+
     def test_quiet_breakout_snapshot(self, client):
         r = client.get("/api/strategy/quiet-breakout")
         assert r.status_code == 200

@@ -11,3 +11,5 @@ safetensors>=0.6.0
 tqdm>=4.60.0
 numpy>=1.24.0
 mcp>=1.27.0
+scikit-learn>=1.5.0
+lightgbm>=4.3.0

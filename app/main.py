@@ -24,6 +24,7 @@ from app.services.kronos_predict_service import KronosPredictService
 from app.services.paper_trading import PaperTradingService
 from app.services.predict_funnel_service import PredictFunnelService
 from app.services.quiet_breakout_scanner import QuietBreakoutConfig, QuietBreakoutScanner
+from app.services.first_limit_alpha_service import FirstLimitAlphaService
 from app.services.custom_strategy import (
     BUILTIN_STRATEGIES,
     CustomStrategy,
@@ -42,6 +43,7 @@ from app.services.hermes_ai_extensions import (
 from app.services.risk_guardian import RiskGuardian, risk_guardian_loop
 
 from app.routers.kline import init_kline_router, kline_cache_loop
+from app.routers.first_limit_alpha import init_first_limit_alpha_router
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -65,6 +67,10 @@ predict_funnel_service = PredictFunnelService(
     provider=provider,
     kronos_service=kronos_service,
     state_store=service.state_store,
+)
+first_limit_alpha_service = FirstLimitAlphaService(
+    kline_store=_kline_store,
+    provider=provider,
 )
 
 
@@ -284,6 +290,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(init_kline_router(provider, kline_cache_service), prefix="/api")
+app.include_router(init_first_limit_alpha_router(first_limit_alpha_service), prefix="/api")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

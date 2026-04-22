@@ -404,6 +404,27 @@ python -m tests.benchmark_kronos  # 复现测试
 
 ---
 
+## FirstLimit Alpha
+
+`FirstLimit Alpha` 是新增的后端策略模块，目标是识别 A 股短线场景下“前期震荡后第一次涨停”的标的，并在首板收盘后给出次日介入评分。
+
+当前版本已在仓库内落地完整研发链路：
+
+- **数据与标签工程**：基于本地 `market_kline.db` 扫描首板样本，产出 `连板延续`、`3 日强势`、`断板风险` 三类标签
+- **特征工程**：生成 70+ 个结构化特征，覆盖价格行为、量能、K 线质量、市场情绪和交互项
+- **baseline 训练**：默认优先使用 `LightGBM`，自动回退到 `RandomForest`，输出统一 `first_limit_score`
+- **时序模型升级**：提供 `GRU` 序列训练入口，用于验证多日序列是否带来增量
+- **回测评估**：按交易日 TopK 选股回测，支持持有天数、止盈止损、手续费和滑点
+- **FastAPI 接口**：支持数据集构建、特征生成、baseline 训练、序列训练、推理和回测
+
+模块默认预测时点为：
+
+`首板收盘后决策，次日开盘价作为回测介入价`
+
+这样可以在第一版中严格避免未来函数，并且和现有日线数据能力保持一致。
+
+---
+
 ## 飞书卡片推送
 
 所有飞书通知统一使用**交互式卡片**（`msg_type=interactive`），通过 `app/services/feishu_notify.py` 的 `CardBuilder` 构建，视觉风格统一简洁：**色带标题 + KV 网格 + 关键正文 + 灰色备注**。
@@ -426,6 +447,7 @@ python -m tests.benchmark_kronos  # 复现测试
 |------|------|
 | **后端** | Python 3.11+ · FastAPI · Uvicorn · asyncio |
 | **预测模型** | [Kronos-base](https://huggingface.co/NeoQuasar/Kronos-base) 102.3M · PyTorch · HuggingFace Hub |
+| **策略建模** | FirstLimit Alpha · LightGBM · scikit-learn · GRU |
 | **智能体** | Hermes Agent（CLI `hermes chat -q` / HTTP API）· MCP 协议 · OpenAI 兼容 LLM |
 | **数据源** | AkShare（K 线 / 公告 / 交易日历）· 同花顺（热门概念/个股）· 新浪（实时行情 fallback） |
 | **存储** | SQLite × 2：`market_kline.db`（K 线缓存）+ `funnel_state.db`（漏斗/持仓/Agent 记忆） |
@@ -442,8 +464,10 @@ Alpha/
 │   ├── models.py                      # Pydantic 请求/响应模型
 │   ├── mcp_server.py                  # Alpha MCP Server（20+ 工具 → Hermes Agent）
 │   ├── routers/
-│   │   └── kline.py                   # K 线缓存路由 + 自动同步循环
+│   │   ├── kline.py                   # K 线缓存路由 + 自动同步循环
+│   │   └── first_limit_alpha.py       # FirstLimit Alpha API 路由
 │   └── services/
+│       ├── first_limit_alpha_service.py # FirstLimit Alpha 服务编排（数据/特征/训练/推理/回测）
 │       ├── kronos_predict_service.py  # Kronos 预测（惰性加载·异步锁·串行推理）
 │       ├── kronos_model/              # Kronos 模型实现（Tokenizer + Transformer）
 │       ├── hermes_runtime.py          # Agent 调度（双模式·熔断·定时任务·监控tick）
@@ -479,6 +503,15 @@ Alpha/
 │   └── first_limit_alpha/
 │       ├── README.md                  # 首板介入连板预测模块设计文档
 │       └── AI_PROMPTS.md              # 可直接交给 AI 的分阶段实施提示词
+│       ├── data_builder.py            # 首板样本扫描 + 标准化训练样本集
+│       ├── labeling.py                # 连板延续 / 3日强势 / 断板风险标签
+│       ├── features.py                # 结构化特征工程（70+ 特征）
+│       ├── modeling.py                # baseline 训练、时间切分、评分融合
+│       ├── backtest.py                # TopK 回测 + 风控规则
+│       ├── inference.py               # 模型加载与在线打分
+│       ├── sequence_dataset.py        # 时序样本构建
+│       ├── sequence_model.py          # GRU 时序模型
+│       └── train_sequence.py          # 时序训练入口
 ├── logs/                              # 日志文件
 ├── start.sh / stop.sh / restart.sh    # 服务管理脚本
 └── requirements.txt
@@ -556,6 +589,18 @@ pip3 install -r requirements.txt
 | POST | `/api/strategy/custom/{id}/backtest` | 对该策略执行 180 天回测（复用 `BacktestLab`） |
 | GET | `/api/strategy/quiet-breakout` | **（兼容保留）** 缩量启动最近一次扫描快照 |
 | POST | `/api/strategy/quiet-breakout/scan` | **（兼容保留）** 触发全 A 股缩量启动扫描（参数：`lookback_days`/`amp_threshold`/`vol_cv_threshold`/`vol_spike_ratio`/`require_limit_up`） |
+
+### FirstLimit Alpha
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/strategy/first-limit-alpha/status` | 查看最新数据集 / 特征 / 模型产物状态 |
+| POST | `/api/strategy/first-limit-alpha/dataset/build` | 构建首板样本数据集（支持 `start_date` / `end_date`） |
+| POST | `/api/strategy/first-limit-alpha/features/build` | 基于最新样本集生成特征文件 |
+| POST | `/api/strategy/first-limit-alpha/train/baseline` | 训练 baseline 模型并输出 `first_limit_score` |
+| POST | `/api/strategy/first-limit-alpha/train/sequence` | 训练 GRU 时序模型并输出对比结果 |
+| POST | `/api/strategy/first-limit-alpha/inference/run` | 对最新或指定交易日样本执行模型打分 |
+| POST | `/api/strategy/first-limit-alpha/backtest` | 基于最近一次 baseline 结果执行 TopK 回测 |
 
 ### Hermes AI 扩展能力
 
