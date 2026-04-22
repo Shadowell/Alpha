@@ -97,6 +97,13 @@ class FakeTradingAgentsAdapter:
     def __init__(self):
         self.calls: list[tuple[str, str]] = []
 
+    def describe_runtime(self) -> dict[str, str]:
+        return {
+            "repo_path": "/Users/jie.feng/work/github/TradingAgents",
+            "provider": "deepseek",
+            "backend_url": "https://api.deepseek.com",
+        }
+
     def analyze(self, symbol: str, trade_date: str, **kwargs) -> dict:
         self.calls.append((symbol, trade_date))
         mapping = {
@@ -202,6 +209,7 @@ def test_hot_stock_ai_config_is_clamped(tmp_path: Path):
     assert cfg["max_buy_pool_size"] == 10
     assert cfg["tradingagents_top_n"] == 20
     assert cfg["tradingagents_timeout_seconds"] == 30
+    assert cfg["tradingagents_provider"] == "deepseek"
 
 
 def test_hot_stock_ai_auto_run_uses_light_mode(tmp_path: Path):
@@ -226,3 +234,20 @@ def test_hot_stock_ai_auto_run_uses_light_mode(tmp_path: Path):
     assert snap["meta"]["tradingagents_discussed"] == 0
     assert kronos.calls == []
     assert adapter.calls == []
+
+
+def test_hot_stock_ai_meta_exposes_tradingagents_backend(tmp_path: Path):
+    adapter = FakeTradingAgentsAdapter()
+    service = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=FakeKronos(),
+        state_store=SQLiteStateStore(str(tmp_path / "state.db")),
+        tradingagents_adapter=adapter,
+    )
+
+    asyncio.run(service.run(trigger="manual"))
+    snap = service.get_snapshot()
+
+    assert snap["meta"]["tradingagents_backend"] == "TradingAgents + DeepSeek"
+    assert snap["meta"]["tradingagents_provider"] == "deepseek"

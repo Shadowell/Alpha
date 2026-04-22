@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
+DEEPSEEK_PROVIDER = "deepseek"
+DEEPSEEK_BACKEND_URL = "https://api.deepseek.com"
+DEFAULT_QUICK_MODEL = "deepseek-chat"
+DEFAULT_DEEP_MODEL = "deepseek-chat"
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -19,6 +25,15 @@ class TradingAgentsAdapter:
         self.repo_path = Path(repo_path)
         self.runtime_root = Path(runtime_root)
         self.runtime_root.mkdir(parents=True, exist_ok=True)
+
+    def describe_runtime(self) -> dict[str, str]:
+        return {
+            "repo_path": str(self.repo_path),
+            "provider": DEEPSEEK_PROVIDER,
+            "backend_url": DEEPSEEK_BACKEND_URL,
+            "quick_model": DEFAULT_QUICK_MODEL,
+            "deep_model": DEFAULT_DEEP_MODEL,
+        }
 
     @staticmethod
     def to_vendor_symbol(symbol: str) -> str:
@@ -58,19 +73,23 @@ class TradingAgentsAdapter:
         symbol: str,
         trade_date: str,
         *,
-        provider: str = "deepseek",
-        quick_model: str = "deepseek-chat",
-        deep_model: str = "deepseek-chat",
+        provider: str = DEEPSEEK_PROVIDER,
+        quick_model: str = DEFAULT_QUICK_MODEL,
+        deep_model: str = DEFAULT_DEEP_MODEL,
         selected_analysts: list[str] | None = None,
         output_language: str = "Chinese",
     ) -> dict[str, Any]:
+        if not os.getenv("DEEPSEEK_API_KEY"):
+            raise RuntimeError("DEEPSEEK_API_KEY 未设置，无法调用 TradingAgents DeepSeek 分析")
+
         TradingAgentsGraph, DEFAULT_CONFIG = self._load_classes()
         vendor_symbol = self.to_vendor_symbol(symbol)
 
         config = DEFAULT_CONFIG.copy()
-        config["llm_provider"] = provider
-        config["quick_think_llm"] = quick_model
-        config["deep_think_llm"] = deep_model
+        config["llm_provider"] = DEEPSEEK_PROVIDER
+        config["backend_url"] = DEEPSEEK_BACKEND_URL
+        config["quick_think_llm"] = quick_model or DEFAULT_QUICK_MODEL
+        config["deep_think_llm"] = deep_model or DEFAULT_DEEP_MODEL
         config["output_language"] = output_language
         config["max_debate_rounds"] = 1
         config["max_risk_discuss_rounds"] = 1
@@ -97,6 +116,8 @@ class TradingAgentsAdapter:
             "symbol": symbol,
             "vendor_symbol": vendor_symbol,
             "trade_date": trade_date,
+            "provider": DEEPSEEK_PROVIDER,
+            "backend_url": DEEPSEEK_BACKEND_URL,
             "decision": str(decision or "").strip().upper(),
             "score_bonus": self._decision_bonus(decision),
             "summary": summary,
