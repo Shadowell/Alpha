@@ -95,7 +95,8 @@ function setMeta() {
     const snap = state.hotStockAI;
     if (!snap) { meta.textContent = '热门智能分析 · 加载中…'; return; }
     const m = snap.meta || {};
-    const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned} · 均分 ${fmtNum(m.avg_score || 0, 1)} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
+    const taPart = m.tradingagents_enabled ? ` · 讨论 ${m.tradingagents_discussed || 0}` : '';
+    const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned} · 均分 ${fmtNum(m.avg_score || 0, 1)}${taPart} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
     meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
   } else if (state.activeTab === 'graphic') {
     const snap = state.graphicFunnel;
@@ -3246,12 +3247,52 @@ function _hotAiScoreCls(score) {
   return 'neutral';
 }
 
+function _hotAiDecisionCls(decision) {
+  const value = String(decision || '').toUpperCase();
+  if (value === 'BUY') return 'buy';
+  if (value === 'OVERWEIGHT') return 'watch';
+  if (value === 'UNDERWEIGHT' || value === 'SELL') return 'risk';
+  return 'hold';
+}
+
+function _hotAiDecisionText(decision) {
+  const value = String(decision || '').toUpperCase();
+  return {
+    BUY: '买入',
+    OVERWEIGHT: '增配',
+    HOLD: '观望',
+    UNDERWEIGHT: '减配',
+    SELL: '回避',
+  }[value] || '待讨论';
+}
+
 function _hotAiCardHtml(e) {
   const score = Number(e.score || 0);
   const cls = _hotAiScoreCls(score);
+  const ta = e.tradingagents || {};
+  const decision = String(ta.decision || '').toUpperCase();
+  const baseScore = Number(e.base_score ?? e.score ?? 0);
+  const bonus = Number(e.tradingagents_bonus || 0);
+  const bonusSign = bonus > 0 ? '+' : '';
+  const decisionCls = _hotAiDecisionCls(decision);
+  const sourceText = ta.source === 'cache' ? '缓存讨论' : ta.source === 'fresh' ? '实时讨论' : '';
+  const taSummary = ta.summary || ta.discussion || '';
   const tags = (e.tags || []).slice(0, 4)
     .map(tag => `<span class="predict-card-board-tag hot-ai-tag">${tag}</span>`)
     .join('');
+  const decisionHtml = ta.status === 'ok'
+    ? `<div class="hot-ai-ta-row">
+        <span class="hot-ai-ta-pill ${decisionCls}">TradingAgents ${_hotAiDecisionText(decision)}</span>
+        <span class="hot-ai-ta-source">${sourceText}</span>
+        <span class="hot-ai-ta-bonus ${bonus >= 0 ? 'up' : 'down'}">${bonusSign}${fmtNum(bonus, 1)}分</span>
+      </div>`
+    : ta.status === 'failed'
+      ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill risk">讨论失败</span><span class="hot-ai-ta-source">${ta.error || '调用异常'}</span></div>`
+      : ta.status === 'skipped'
+        ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">未讨论</span><span class="hot-ai-ta-source">${ta.reason || '未进入讨论名单'}</span></div>`
+        : ta.status === 'disabled'
+          ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">讨论关闭</span></div>`
+          : `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">待讨论</span></div>`;
   return `
     <div class="pool-card hot-ai-card" data-symbol="${e.symbol}" onclick="openHotAiDetail('${e.symbol}')">
       <div class="card-head">
@@ -3273,11 +3314,14 @@ function _hotAiCardHtml(e) {
         <span class="predict-card-metric">量额比20日 <b>${fmtNum(e.amount_ratio_20d, 2)}</b></span>
       </div>
       <div class="predict-card-meta hot-ai-breakdown">
+        <span class="predict-card-metric">基础分 <b>${fmtNum(baseScore, 1)}</b></span>
         <span class="predict-card-metric">热度分 <b>${fmtNum(e.score_breakdown?.popularity, 1)}</b></span>
         <span class="predict-card-metric">趋势分 <b>${fmtNum(e.score_breakdown?.trend, 1)}</b></span>
         <span class="predict-card-metric">预测分 <b>${fmtNum(e.score_breakdown?.prediction, 1)}</b></span>
         <span class="predict-card-metric">风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
       </div>
+      ${decisionHtml}
+      ${taSummary ? `<div class="hot-ai-ta-summary">${taSummary}</div>` : ''}
       <div class="hot-ai-analysis">${e.analysis || '暂无分析摘要'}</div>
       ${tags ? `<div class="predict-card-boards">${tags}</div>` : ''}
     </div>`;
@@ -3340,7 +3384,10 @@ function renderHotStockAI() {
   }
   if (metaEl) {
     const m = snap.meta || {};
-    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20} · Kronos ${m.kronos_device || '--'} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
+    const taText = m.tradingagents_enabled
+      ? ` · 讨论 ${m.tradingagents_discussed || 0} · 缓存 ${m.tradingagents_cache_hits || 0}`
+      : '';
+    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20} · Kronos ${m.kronos_device || '--'}${taText} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
   }
   if (summary) {
     summary.innerHTML = [
@@ -3353,6 +3400,8 @@ function renderHotStockAI() {
       _psItem('均分', fmtNum(snap.meta?.avg_score || 0, 1)),
       _psSep(),
       _psItem('扫描', `${snap.meta?.stocks_scanned || 0}只`),
+      _psSep(),
+      _psItem('讨论', `${snap.meta?.tradingagents_discussed || 0}只`, snap.meta?.tradingagents_discussed ? 'brand' : ''),
     ].join('');
   }
 }
@@ -3552,7 +3601,7 @@ async function openHotAiDetail(symbol) {
   try {
     await openPredictModal(symbol, detail, {
       titleSuffix: '热门股票智能分析',
-      badge: '附带 Kronos 三日预测',
+      badge: 'Kronos 预测 + TradingAgents 讨论',
       badgeClass: 'predict-modal-badge',
     });
   } catch (err) {
