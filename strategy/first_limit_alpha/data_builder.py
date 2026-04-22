@@ -92,6 +92,48 @@ class FirstLimitAlphaDataBuilder:
         frame["distance_to_recent_high"] = (frame["close"] / frame["prior_high"]) - 1.0
         return frame
 
+    def _passes_sample_filter(self, row: pd.Series, cfg: SampleBuildConfig) -> bool:
+        if not bool(row["is_limit_up"]):
+            return False
+        if float(row.get("prior_limitup_count", 0.0) or 0.0) > 0:
+            return False
+        if pd.isna(row["consolidation_amp"]) or pd.isna(row["consolidation_volatility"]):
+            return False
+        if float(row["consolidation_amp"]) > cfg.max_consolidation_amp:
+            return False
+        if float(row["consolidation_volatility"]) > cfg.max_consolidation_volatility:
+            return False
+        if float(row.get("recent_spike", 0.0) or 0.0) > cfg.max_recent_spike:
+            return False
+        if float(row.get("volume_cv", 0.0) or 0.0) > cfg.max_volume_cv:
+            return False
+        if float(row.get("avg_amount", 0.0) or 0.0) < cfg.min_avg_amount:
+            return False
+        return True
+
+    def _base_sample_payload(self, symbol: str, name: str, row: pd.Series) -> dict[str, Any]:
+        return {
+            "symbol": str(symbol),
+            "name": name,
+            "trade_date": str(row["trade_date"]),
+            "sample_type": "first_limit_after_consolidation",
+            "is_first_limit": 1,
+            "close": round(float(row["close"]), 6),
+            "open": round(float(row["open"]), 6),
+            "high": round(float(row["high"]), 6),
+            "low": round(float(row["low"]), 6),
+            "volume": round(float(row["volume"]), 6),
+            "amount": round(float(row["amount"]), 6),
+            "pct_change_today": round(float(row["pct_change"]), 6),
+            "limit_pct": float(row["limit_pct"]),
+            "prior_limitup_count": int(row["prior_limitup_count"] or 0),
+            "consolidation_amp": round(float(row["consolidation_amp"]), 6),
+            "consolidation_volatility": round(float(row["consolidation_volatility"]), 6),
+            "volume_cv": round(float(row["volume_cv"]), 6),
+            "recent_spike": round(float(row["recent_spike"]), 6),
+            "distance_to_recent_high": round(float(row["distance_to_recent_high"]), 6),
+        }
+
     def build_dataset(
         self,
         output_dir: str | Path,
@@ -130,49 +172,12 @@ class FirstLimitAlphaDataBuilder:
                 continue
             for idx in range(build_cfg.min_history_days, len(prepared) - label_cfg.evaluation_horizon):
                 row = prepared.iloc[idx]
-                if not bool(row["is_limit_up"]):
-                    continue
-                if float(row.get("prior_limitup_count", 0.0) or 0.0) > 0:
-                    continue
-                if pd.isna(row["consolidation_amp"]) or pd.isna(row["consolidation_volatility"]):
-                    continue
-                if float(row["consolidation_amp"]) > build_cfg.max_consolidation_amp:
-                    continue
-                if float(row["consolidation_volatility"]) > build_cfg.max_consolidation_volatility:
-                    continue
-                if float(row.get("recent_spike", 0.0) or 0.0) > build_cfg.max_recent_spike:
-                    continue
-                if float(row.get("volume_cv", 0.0) or 0.0) > build_cfg.max_volume_cv:
-                    continue
-                if float(row.get("avg_amount", 0.0) or 0.0) < build_cfg.min_avg_amount:
+                if not self._passes_sample_filter(row, build_cfg):
                     continue
                 labels = compute_sample_labels(prepared, idx, label_cfg)
                 if labels is None:
                     continue
-                samples.append(
-                    {
-                        "symbol": symbol,
-                        "name": name,
-                        "trade_date": str(row["trade_date"]),
-                        "sample_type": "first_limit_after_consolidation",
-                        "is_first_limit": 1,
-                        "close": round(float(row["close"]), 6),
-                        "open": round(float(row["open"]), 6),
-                        "high": round(float(row["high"]), 6),
-                        "low": round(float(row["low"]), 6),
-                        "volume": round(float(row["volume"]), 6),
-                        "amount": round(float(row["amount"]), 6),
-                        "pct_change_today": round(float(row["pct_change"]), 6),
-                        "limit_pct": float(row["limit_pct"]),
-                        "prior_limitup_count": int(row["prior_limitup_count"] or 0),
-                        "consolidation_amp": round(float(row["consolidation_amp"]), 6),
-                        "consolidation_volatility": round(float(row["consolidation_volatility"]), 6),
-                        "volume_cv": round(float(row["volume_cv"]), 6),
-                        "recent_spike": round(float(row["recent_spike"]), 6),
-                        "distance_to_recent_high": round(float(row["distance_to_recent_high"]), 6),
-                        **labels,
-                    }
-                )
+                samples.append({**self._base_sample_payload(symbol, name, row), **labels})
 
         samples_df = pd.DataFrame(samples).sort_values(["trade_date", "symbol"]).reset_index(drop=True)
         samples_path = write_dataframe(samples_df, out_dir / "samples.csv")
@@ -231,3 +236,38 @@ class FirstLimitAlphaDataBuilder:
         }
         write_json(meta, out_dir / "meta.json")
         return meta
+
+    def build_candidate_frame(
+        self,
+        trade_date: str | None = None,
+        build_cfg: SampleBuildConfig | None = None,
+        symbols: Iterable[str] | None = None,
+    ) -> pd.DataFrame:
+        build_cfg = build_cfg or SampleBuildConfig()
+        frame = self._load_kline_frame(end_date=trade_date, symbols=symbols)
+        if frame.empty:
+            return pd.DataFrame()
+        target_trade_date = str(trade_date or frame["trade_date"].max())
+        candidates: list[dict[str, Any]] = []
+        for symbol, group in frame.groupby("symbol", sort=False):
+            name = self.name_map.get(symbol, "")
+            if build_cfg.allowed_prefixes and not str(symbol).startswith(build_cfg.allowed_prefixes):
+                continue
+            if build_cfg.exclude_st and "ST" in name.upper():
+                continue
+            prepared = self._prepare_symbol_frame(group, build_cfg)
+            if len(prepared) < build_cfg.min_history_days:
+                continue
+            matched = prepared.index[prepared["trade_date"].astype(str) == target_trade_date].tolist()
+            if not matched:
+                continue
+            idx = matched[-1]
+            if idx < build_cfg.min_history_days:
+                continue
+            row = prepared.iloc[idx]
+            if not self._passes_sample_filter(row, build_cfg):
+                continue
+            candidates.append(self._base_sample_payload(symbol, name, row))
+        if not candidates:
+            return pd.DataFrame()
+        return pd.DataFrame(candidates).sort_values(["trade_date", "symbol"]).reset_index(drop=True)

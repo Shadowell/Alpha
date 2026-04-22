@@ -71,6 +71,7 @@ predict_funnel_service = PredictFunnelService(
 first_limit_alpha_service = FirstLimitAlphaService(
     kline_store=_kline_store,
     provider=provider,
+    state_store=service.state_store,
 )
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.services.first_limit_alpha_service import FirstLimitAlphaService
 from app.services.kline_store import KlineSQLiteStore
 from strategy.first_limit_alpha.data_builder import FirstLimitAlphaDataBuilder
 from strategy.first_limit_alpha.features import FirstLimitFeatureBuilder
@@ -98,6 +99,30 @@ def test_data_builder_and_feature_builder(tmp_path: Path):
     assert ft_meta["feature_count"] >= 30
     assert "market_mean_return" in features.columns
     assert "interaction_market_x_limit" in features.columns
+
+
+def test_build_candidate_frame_returns_latest_first_limit(tmp_path: Path):
+    store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
+    rows = _symbol_rows(10.0, "strong")
+    store.upsert_symbol_klines("600001", rows, "2026-04-22T11:00:00+08:00")
+    target_date = rows[24]["trade_date"]
+    builder = FirstLimitAlphaDataBuilder(store.db_path, name_map={"600001": "强势样本"})
+    candidates = builder.build_candidate_frame(
+        trade_date=target_date,
+        build_cfg=SampleBuildConfig(
+            lookback_days=15,
+            prior_limitup_window=15,
+            min_history_days=20,
+            max_consolidation_amp=0.18,
+            max_consolidation_volatility=0.03,
+            max_recent_spike=0.05,
+            min_avg_amount=1000.0,
+        ),
+    )
+    assert len(candidates) == 1
+    assert str(candidates.iloc[0]["symbol"]) == "600001"
+    assert str(candidates.iloc[0]["trade_date"]) == target_date
+    assert int(candidates.iloc[0]["is_first_limit"]) == 1
 
 
 def test_baseline_trainer_excludes_future_columns(tmp_path: Path):
@@ -223,3 +248,21 @@ def test_sequence_trainer_outputs_metrics_and_predictions(tmp_path: Path):
     assert "metrics" in result
     assert "comparison_vs_baseline" in result
     assert "backtest" in result
+
+
+def test_graphic_pool_split_by_score_thresholds():
+    scored = pd.DataFrame(
+        [
+            {"symbol": "600001", "name": "A", "trade_date": "2026-02-01", "first_limit_score": 15.2, "proba_continuation": 0.7, "proba_strong_3d": 0.5, "proba_break_risk": 0.2, "close": 12.3, "pct_change_today": 0.1, "consolidation_amp": 0.12, "consolidation_volatility": 0.02, "volume_ratio_20d": 1.6, "distance_to_20d_high": -0.01, "open_gap_pct": 0.02, "limit_quality": 0.04},
+            {"symbol": "600002", "name": "B", "trade_date": "2026-02-01", "first_limit_score": 11.0, "proba_continuation": 0.6, "proba_strong_3d": 0.4, "proba_break_risk": 0.3, "close": 10.1, "pct_change_today": 0.1, "consolidation_amp": 0.1, "consolidation_volatility": 0.02, "volume_ratio_20d": 1.3, "distance_to_20d_high": -0.03, "open_gap_pct": 0.01, "limit_quality": 0.03},
+            {"symbol": "600003", "name": "C", "trade_date": "2026-02-01", "first_limit_score": 7.4, "proba_continuation": 0.55, "proba_strong_3d": 0.35, "proba_break_risk": 0.45, "close": 9.8, "pct_change_today": 0.1, "consolidation_amp": 0.09, "consolidation_volatility": 0.018, "volume_ratio_20d": 1.1, "distance_to_20d_high": -0.04, "open_gap_pct": 0.0, "limit_quality": 0.02},
+            {"symbol": "600004", "name": "D", "trade_date": "2026-02-01", "first_limit_score": 5.8, "proba_continuation": 0.45, "proba_strong_3d": 0.25, "proba_break_risk": 0.5, "close": 8.5, "pct_change_today": 0.1, "consolidation_amp": 0.11, "consolidation_volatility": 0.019, "volume_ratio_20d": 1.0, "distance_to_20d_high": -0.05, "open_gap_pct": -0.01, "limit_quality": 0.01},
+        ]
+    )
+    pools = FirstLimitAlphaService._build_graphic_pools(
+        scored,
+        {"threshold_candidate": 6.0, "threshold_focus": 10.0, "threshold_buy": 14.0},
+    )
+    assert [item["symbol"] for item in pools["buy"]] == ["600001"]
+    assert [item["symbol"] for item in pools["focus"]] == ["600002"]
+    assert [item["symbol"] for item in pools["candidate"]] == ["600003"]
