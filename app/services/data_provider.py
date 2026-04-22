@@ -479,13 +479,13 @@ class AkshareDataProvider:
 
     async def _fetch_hot_stocks_from_spot(self) -> pd.DataFrame:
         """按"当日真实涨跌幅"排行 Top N。
-        优先走 get_realtime_snapshot（东财 em → 新浪 → DB 三级兜底，已去噪）。
-        只在上面完全拿不到时才回退到同花顺的 rank 榜单（但同花顺 lxsz 是连涨累计涨幅，
+        优先走实时行情接口（东财 em → 新浪），不使用本地 DB 快照。
+        只在实时接口完全拿不到时才回退到同花顺的 rank 榜单（但同花顺 lxsz 是连涨累计涨幅，
         字段语义与"当日涨跌幅"不同，仅作最后兜底）。
         """
         # 1) 主路径：全市场实时 snapshot（保证 "涨跌幅" 就是当日真实涨幅）
         try:
-            payload = await self.get_realtime_snapshot(cache_ttl_seconds=60)
+            payload = await self._fetch_spot_em()
             if payload is not None and not payload.empty:
                 df = payload.copy()
                 # 只保留沪深主板/创业板/科创板主 A 股；过滤 ST / 未上市
@@ -502,10 +502,11 @@ class AkshareDataProvider:
                 result["latest_price"] = pd.to_numeric(df["最新价"], errors="coerce").fillna(0.0).values
                 result["change_amount"] = pd.to_numeric(df.get("涨跌额", 0), errors="coerce").fillna(0.0).values
                 result["change_pct"] = pd.to_numeric(df["涨跌幅"], errors="coerce").fillna(0.0).values
-                print(f"[data_provider] hot stocks via realtime_snapshot({self.realtime_snapshot_source}): {len(result)} rows")
+                print("[data_provider] hot stocks via live spot interface: "
+                      f"{len(result)} rows")
                 return result
         except Exception as exc:
-            print(f"[data_provider] realtime_snapshot path failed: {exc}")
+            print(f"[data_provider] live spot path failed: {exc}")
 
         # 2) 兜底：同花顺创新高榜（"涨跌幅"是当日）
         try:
