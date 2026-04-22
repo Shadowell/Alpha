@@ -37,6 +37,9 @@ class FirstLimitSequenceDatasetBuilder:
         cfg = cfg or SequenceConfig()
         if samples.empty:
             return {"x": np.zeros((0, cfg.seq_len, 6), dtype=np.float32), "y": np.zeros((0, 3), dtype=np.float32), "meta": pd.DataFrame()}
+        samples = samples.copy()
+        samples["symbol"] = samples["symbol"].astype(str)
+        samples["trade_date"] = samples["trade_date"].astype(str)
         symbols = sorted(samples["symbol"].astype(str).unique().tolist())
         kline = self._load_kline(symbols)
         feature_names = ["ret", "range", "body", "upper", "lower", "volume_ratio"]

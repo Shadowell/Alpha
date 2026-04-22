@@ -121,7 +121,7 @@ class FirstLimitAlphaService:
     def train_sequence(self, sequence_cfg: SequenceConfig | None = None) -> dict[str, Any]:
         samples = self._load_latest_samples()
         out_dir = build_version_dir(self.root, "sequence_models", prefix="gru")
-        baseline_meta = {}
+        baseline_meta: dict[str, Any] = {}
         latest_model = self._latest_dir("models")
         if latest_model and (latest_model / "meta.json").exists():
             baseline_meta = read_json(latest_model / "meta.json")
@@ -129,7 +129,7 @@ class FirstLimitAlphaService:
             samples,
             out_dir,
             cfg=sequence_cfg,
-            baseline_metrics=baseline_meta.get("metrics", {}),
+            baseline_metrics=baseline_meta,
         )
         result["output_dir"] = str(out_dir)
         return result

@@ -172,3 +172,54 @@ def test_sequence_trainer_small_sample_returns_graceful_result(tmp_path: Path):
     result = FirstLimitSequenceTrainer(store.db_path).train(samples, tmp_path / "sequence", cfg=SequenceConfig(seq_len=10, epochs=1))
     assert result["ok"] is False
     assert result["reason"] == "sequence samples too small"
+
+
+def test_sequence_trainer_outputs_metrics_and_predictions(tmp_path: Path):
+    store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
+    name_map = {}
+    for idx in range(40):
+        symbol = f"600{idx+100:03d}"
+        mode = "strong" if idx % 2 == 0 else "weak"
+        name_map[symbol] = f"N{idx}"
+        store.upsert_symbol_klines(symbol, _symbol_rows(10.0 + idx * 0.1, mode), "2026-04-22T11:00:00+08:00")
+
+    dataset_dir = tmp_path / "dataset_seq"
+    samples_meta = FirstLimitAlphaDataBuilder(store.db_path, name_map=name_map).build_dataset(
+        dataset_dir,
+        build_cfg=SampleBuildConfig(
+            lookback_days=15,
+            prior_limitup_window=15,
+            min_history_days=20,
+            max_consolidation_amp=0.18,
+            max_consolidation_volatility=0.03,
+            max_recent_spike=0.05,
+            min_avg_amount=1000.0,
+        ),
+        label_cfg=LabelConfig(),
+    )
+    assert samples_meta["sample_count"] >= 32
+    samples = pd.read_csv(dataset_dir / "samples.csv")
+    baseline_reference = {
+        "split": {
+            "train": sorted(samples["trade_date"].astype(str).unique().tolist())[:-5],
+            "test": sorted(samples["trade_date"].astype(str).unique().tolist())[-5:],
+        },
+        "metrics": {
+            "continuation": {"test_auc": 0.5, "test_ap": 0.5},
+            "strong_3d": {"test_auc": 0.5, "test_ap": 0.5},
+            "break_risk": {"test_auc": 0.5, "test_ap": 0.5},
+        },
+        "backtest": {"summary": {"cum_return": 0.01, "win_rate": 0.5, "max_drawdown": -0.05}},
+    }
+    result = FirstLimitSequenceTrainer(store.db_path).train(
+        samples,
+        tmp_path / "sequence_full",
+        cfg=SequenceConfig(seq_len=20, epochs=1, batch_size=128, hidden_size=16),
+        baseline_metrics=baseline_reference,
+    )
+    assert result["ok"] is True
+    assert Path(result["paths"]["model"]).exists()
+    assert Path(result["paths"]["test_predictions"]).exists()
+    assert "metrics" in result
+    assert "comparison_vs_baseline" in result
+    assert "backtest" in result
