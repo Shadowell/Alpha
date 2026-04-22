@@ -59,6 +59,9 @@ class FakeKlineStore:
 
 
 class FakeKronos:
+    def __init__(self):
+        self.calls: list[tuple[str, int, int]] = []
+
     def is_loaded(self) -> bool:
         return True
 
@@ -66,6 +69,7 @@ class FakeKronos:
         return "cpu"
 
     async def predict(self, symbol: str, lookback: int = 90, horizon: int = 3) -> dict:
+        self.calls.append((symbol, lookback, horizon))
         bases = {
             "600001": [19.0, 19.6, 20.1],
             "600002": [12.7, 12.8, 12.85],
@@ -198,3 +202,27 @@ def test_hot_stock_ai_config_is_clamped(tmp_path: Path):
     assert cfg["max_buy_pool_size"] == 10
     assert cfg["tradingagents_top_n"] == 20
     assert cfg["tradingagents_timeout_seconds"] == 30
+
+
+def test_hot_stock_ai_auto_run_uses_light_mode(tmp_path: Path):
+    kronos = FakeKronos()
+    adapter = FakeTradingAgentsAdapter()
+    service = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=kronos,
+        state_store=SQLiteStateStore(str(tmp_path / "state.db")),
+        tradingagents_adapter=adapter,
+    )
+    service.update_config({"use_kronos": True, "tradingagents_enabled": True, "top_n": 20})
+
+    asyncio.run(service.run(trigger="auto"))
+    snap = service.get_snapshot()
+
+    assert snap["meta"]["execution_mode"] == "light_auto"
+    assert snap["meta"]["runtime_top_n"] == 12
+    assert snap["meta"]["runtime_kronos_enabled"] is False
+    assert snap["meta"]["runtime_tradingagents_enabled"] is False
+    assert snap["meta"]["tradingagents_discussed"] == 0
+    assert kronos.calls == []
+    assert adapter.calls == []

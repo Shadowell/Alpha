@@ -42,6 +42,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tradingagents_deep_model": "deepseek-chat",
 }
 
+AUTO_LIGHT_TOP_N = 12
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -171,9 +173,10 @@ class HotStockAIService:
 
     async def _execute(self, trigger: str) -> dict[str, Any]:
         cfg = self.get_config()
+        runtime_cfg = self._resolve_runtime_config(cfg, trigger=trigger)
         t0 = time.time()
-        self.progress.update(phase="fetch", detail=f"拉取热门股票 Top{cfg['top_n']}")
-        hot_df = await self.provider.get_hot_stocks(top_n=int(cfg["top_n"]), cache_ttl_seconds=300)
+        self.progress.update(phase="fetch", detail=f"拉取热门股票 Top{runtime_cfg['top_n']}")
+        hot_df = await self.provider.get_hot_stocks(top_n=int(runtime_cfg["top_n"]), cache_ttl_seconds=300)
         if hot_df is None or hot_df.empty:
             self.progress["error"] = "热门股票接口返回为空"
             return {
@@ -185,7 +188,7 @@ class HotStockAIService:
                 "meta": {"error": "hot stocks unavailable", "trigger": trigger},
             }
 
-        hot_df = hot_df.head(int(cfg["top_n"])).copy()
+        hot_df = hot_df.head(int(runtime_cfg["top_n"])).copy()
         total = len(hot_df)
         self.progress.update(phase="analyze", current=0, total=total, detail=f"开始逐股分析 {total} 只")
 
@@ -196,7 +199,7 @@ class HotStockAIService:
             name = str(row.get("name", "") or symbol)
             self.progress.update(current=idx, detail=f"{idx}/{total} {name}")
             try:
-                analyzed = await self._analyze_symbol(row.to_dict(), cfg)
+                analyzed = await self._analyze_symbol(row.to_dict(), runtime_cfg)
                 if analyzed is None:
                     failed.append({"symbol": symbol, "name": name, "reason": "insufficient_history"})
                     continue
@@ -206,7 +209,7 @@ class HotStockAIService:
                 log.info("[hot_stock_ai] analyze fail %s: %s", symbol, exc)
 
         entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        discussion_meta = await self._attach_tradingagents_discussions(entries, cfg, trigger=trigger)
+        discussion_meta = await self._attach_tradingagents_discussions(entries, runtime_cfg, trigger=trigger)
         entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
         pools = self._build_pools(entries, cfg)
         trade_date = entries[0]["trade_date"] if entries else now_cn().date().isoformat()
@@ -227,12 +230,16 @@ class HotStockAIService:
                 "elapsed_sec": round(time.time() - t0, 2),
                 "avg_score": avg_score,
                 "kronos_enabled": bool(cfg["use_kronos"]),
+                "runtime_kronos_enabled": bool(runtime_cfg["use_kronos"]),
                 "kronos_loaded": self.kronos.is_loaded(),
                 "kronos_device": self.kronos.get_device(),
                 "tradingagents_enabled": bool(cfg["tradingagents_enabled"]),
+                "runtime_tradingagents_enabled": bool(runtime_cfg["tradingagents_enabled"]),
                 "tradingagents_discussed": discussion_meta.get("discussed_count", 0),
                 "tradingagents_cache_hits": discussion_meta.get("cache_hits", 0),
                 "tradingagents_failures": discussion_meta.get("failed", 0),
+                "execution_mode": "light_auto" if trigger == "auto" else "full_manual",
+                "runtime_top_n": int(runtime_cfg["top_n"]),
                 "thresholds": {
                     "candidate": cfg["threshold_candidate"],
                     "focus": cfg["threshold_focus"],
@@ -240,6 +247,15 @@ class HotStockAIService:
                 },
             },
         }
+
+    @staticmethod
+    def _resolve_runtime_config(cfg: dict[str, Any], *, trigger: str) -> dict[str, Any]:
+        runtime_cfg = dict(cfg)
+        if trigger == "auto":
+            runtime_cfg["top_n"] = min(int(runtime_cfg.get("top_n", 20)), AUTO_LIGHT_TOP_N)
+            runtime_cfg["use_kronos"] = False
+            runtime_cfg["tradingagents_enabled"] = False
+        return runtime_cfg
 
     def _load_discussion_cache(self) -> dict[str, Any]:
         try:
