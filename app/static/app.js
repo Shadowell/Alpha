@@ -3391,7 +3391,8 @@ function renderHotStockAI() {
     const taText = m.runtime_tradingagents_enabled
       ? ` · 讨论 ${m.tradingagents_discussed || 0} · 缓存 ${m.tradingagents_cache_hits || 0}`
       : (m.tradingagents_enabled ? ' · 自动任务已跳过讨论' : '');
-    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20}${modeText} · Kronos ${m.kronos_device || '--'}${taText} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
+    const backendText = m.tradingagents_backend ? ` · ${m.tradingagents_backend}` : '';
+    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 分析 ${m.entries_count || 0}/${m.stocks_scanned || cfg.top_n || 20}${modeText} · Kronos ${m.kronos_device || '--'}${taText}${backendText} · 均分 ${fmtNum(m.avg_score || 0, 1)}`;
   }
   if (summary) {
     summary.innerHTML = [

@@ -13,7 +13,12 @@ from app.services.kline_store import KlineSQLiteStore
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
-from app.services.tradingagents_adapter import TradingAgentsAdapter
+from app.services.tradingagents_adapter import (
+    DEFAULT_DEEP_MODEL,
+    DEFAULT_QUICK_MODEL,
+    DEEPSEEK_PROVIDER,
+    TradingAgentsAdapter,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,9 +42,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tradingagents_enabled": True,
     "tradingagents_top_n": 20,
     "tradingagents_timeout_seconds": 240,
-    "tradingagents_provider": "deepseek",
-    "tradingagents_quick_model": "deepseek-chat",
-    "tradingagents_deep_model": "deepseek-chat",
+    "tradingagents_provider": DEEPSEEK_PROVIDER,
+    "tradingagents_quick_model": DEFAULT_QUICK_MODEL,
+    "tradingagents_deep_model": DEFAULT_DEEP_MODEL,
 }
 
 AUTO_LIGHT_TOP_N = 12
@@ -127,6 +132,9 @@ class HotStockAIService:
         cfg["tradingagents_enabled"] = bool(cfg["tradingagents_enabled"])
         cfg["tradingagents_top_n"] = max(0, min(int(cfg["tradingagents_top_n"]), 20))
         cfg["tradingagents_timeout_seconds"] = max(30, min(int(cfg["tradingagents_timeout_seconds"]), 900))
+        cfg["tradingagents_provider"] = DEEPSEEK_PROVIDER
+        cfg["tradingagents_quick_model"] = str(cfg.get("tradingagents_quick_model") or DEFAULT_QUICK_MODEL).strip() or DEFAULT_QUICK_MODEL
+        cfg["tradingagents_deep_model"] = str(cfg.get("tradingagents_deep_model") or DEFAULT_DEEP_MODEL).strip() or DEFAULT_DEEP_MODEL
         self._snapshot["config"] = cfg
         self._save_state()
         return cfg
@@ -214,6 +222,11 @@ class HotStockAIService:
         pools = self._build_pools(entries, cfg)
         trade_date = entries[0]["trade_date"] if entries else now_cn().date().isoformat()
         avg_score = round(sum(float(item["score"]) for item in entries) / max(len(entries), 1), 2) if entries else 0.0
+        ta_runtime = (
+            self.tradingagents.describe_runtime()
+            if self.tradingagents is not None and hasattr(self.tradingagents, "describe_runtime")
+            else {}
+        )
         self.progress.update(phase="done", current=total, total=total, detail=f"完成分析 {len(entries)} 只")
         return {
             "trade_date": trade_date,
@@ -238,6 +251,10 @@ class HotStockAIService:
                 "tradingagents_discussed": discussion_meta.get("discussed_count", 0),
                 "tradingagents_cache_hits": discussion_meta.get("cache_hits", 0),
                 "tradingagents_failures": discussion_meta.get("failed", 0),
+                "tradingagents_backend": "TradingAgents + DeepSeek" if self.tradingagents is not None else "disabled",
+                "tradingagents_repo_path": ta_runtime.get("repo_path", ""),
+                "tradingagents_provider": ta_runtime.get("provider", DEEPSEEK_PROVIDER),
+                "tradingagents_backend_url": ta_runtime.get("backend_url", ""),
                 "execution_mode": "light_auto" if trigger == "auto" else "full_manual",
                 "runtime_top_n": int(runtime_cfg["top_n"]),
                 "thresholds": {
