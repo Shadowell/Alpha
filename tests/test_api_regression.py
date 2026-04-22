@@ -151,6 +151,29 @@ class TestPredict:
         assert r.status_code in (200, 503)
 
 
+class TestHotStockAI:
+    def test_hot_stock_ai_snapshot(self, client):
+        r = client.get("/api/strategy/hot-stock-ai")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, dict)
+        assert "pools" in data
+
+    def test_hot_stock_ai_config(self, client):
+        r = client.get("/api/strategy/hot-stock-ai/config")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, dict)
+        assert "top_n" in data
+
+    def test_hot_stock_ai_config_update(self, client):
+        r = client.get("/api/strategy/hot-stock-ai/config")
+        cfg = r.json()
+        payload = {"auto_refresh_enabled": bool(cfg.get("auto_refresh_enabled", True))}
+        r2 = client.post("/api/strategy/hot-stock-ai/config", json=payload)
+        assert r2.status_code == 200
+
+
 # ─────────────────────────────────────────────
 # 5. K 线缓存
 # ─────────────────────────────────────────────
