@@ -472,6 +472,12 @@ Alpha/
 ├── tests/
 │   └── benchmark_kronos.py            # Kronos 性能 benchmark
 ├── data/                              # SQLite 数据库（运行时生成）
+├── strategy/
+│   ├── daban.py                       # 旧版打板/强势股脚本
+│   ├── daban_2.py                     # 旧版打板策略迭代
+│   ├── daban_3.py                     # 旧版打板策略迭代
+│   └── first_limit_alpha/
+│       └── README.md                  # 首板介入连板预测模块设计文档
 ├── logs/                              # 日志文件
 ├── start.sh / stop.sh / restart.sh    # 服务管理脚本
 └── requirements.txt
