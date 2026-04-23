@@ -159,7 +159,7 @@
         <!-- ========== 策略选股 ========== -->
         <section id="tab-funnel" class="tab-content">
           <div id="funnelSummary" class="page-summary"></div>
-          <div class="tab-toolbar">
+          <div class="tab-toolbar funnel-toolbar">
             <div class="filter-line">
               <span>概念筛选：</span>
               <span id="activeConcept" class="chip muted">全部</span>
@@ -169,29 +169,12 @@
             <button id="btnEodScreen" class="btn-action">盘后筛选</button>
           </div>
 
-          <section class="funnel-area">
-            <div class="funnel-grid">
-              <div class="pool-column">
-                <div class="pool-header">调整期候选池 <span id="count-candidate" class="pool-count">0</span></div>
-                <div id="pool-candidate" class="pool-list"></div>
-              </div>
-              <div class="pool-column highlight-focus">
-                <div class="pool-header">重点关注池 <span id="count-focus" class="pool-count">0</span></div>
-                <div id="pool-focus" class="pool-list"></div>
-              </div>
-              <div class="pool-column highlight-buy">
-                <div class="pool-header">买入池 <span id="count-buy" class="pool-count">0</span></div>
-                <div id="pool-buy" class="pool-list"></div>
-              </div>
-            </div>
-          </section>
-
           <!-- ===== 自定义策略中心 ===== -->
           <section class="strategy-center-area quiet-breakout-area" id="strategyCenterArea">
             <div class="sc-header">
               <div class="sc-title-row">
                 <span class="sc-badge">策略</span>
-                <h3>自定义策略中心</h3>
+                <h3>自适应策略中心</h3>
                 <span class="sc-hint">挑选 / 组合规则 → 全 A 股扫描 → 回测</span>
               </div>
               <div class="sc-strategy-row">
@@ -227,8 +210,29 @@
             </div>
 
             <div id="scBacktestCard" class="sc-backtest-card" style="display:none"></div>
+          </section>
 
-            <div id="scHitsList" class="sc-hits-list qb-list"></div>
+          <section class="funnel-area funnel-bottom-area">
+            <div class="funnel-section-head">
+              <div>
+                <h3>三池跟踪</h3>
+                <p>第一个池子合并展示策略命中与系统候选，后两池继续跟踪重点与买入。</p>
+              </div>
+            </div>
+            <div class="funnel-grid">
+              <div class="pool-column composite-candidate-column">
+                <div class="pool-header">复合候选池 <span id="count-candidate" class="pool-count">0</span></div>
+                <div id="pool-candidate" class="pool-list pool-list-composite"></div>
+              </div>
+              <div class="pool-column highlight-focus">
+                <div class="pool-header">重点关注池 <span id="count-focus" class="pool-count">0</span></div>
+                <div id="pool-focus" class="pool-list"></div>
+              </div>
+              <div class="pool-column highlight-buy">
+                <div class="pool-header">买入池 <span id="count-buy" class="pool-count">0</span></div>
+                <div id="pool-buy" class="pool-list"></div>
+              </div>
+            </div>
           </section>
         </section>
 
@@ -793,6 +797,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260422_hotai"></script>
+  <script src="/static/app.js?v=20260423_funnel_layout"></script>
 </body>
 </html>
