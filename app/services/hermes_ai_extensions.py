@@ -1,4 +1,4 @@
-"""Hermes AI 能力扩展 — 7 项增强 MVP。
+"""Hermes AI 能力扩展 — 6 项增强 MVP。
 
 设计原则：
 - 共享 HermesRuntime 的 _call_llm / _call_monitor_llm / memory / funnel / notice。
@@ -6,10 +6,9 @@
 - 所有写入走 kv_store（SqliteKVStore）+ 独立表，避免污染现有业务表。
 
 能力列表：
-- [A] AutoTradeLoop          ：让 Hermes 的提案自动下模拟盘 buy，止盈止损自动 sell（配开关）
+- [A] AutoTradeLoop          ：让 Hermes 根据 buy 池自动下模拟盘 buy，止盈止损自动 sell（配开关）
 - [C] BacktestLab            ：对"缩量启动"策略在 180 天历史上批量回测
 - [D] ResearchCardGenerator  ：对 buy 池个股聚合 财报+概念+龙虎榜+Kronos+形态 生成研报
-- [E] ProposalLearner        ：把历史 outcome_tracking 注入 prompt（下次复盘自动规避）
 - [F] NewsInsightExtractor   ：把公告/龙虎榜/概念带到 LLM 上下文，输出"消息→标的→操作"链路
 - [G] WeeklyReportBuilder    ：周五盘后生成周报，自动推飞书
 """
@@ -17,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -37,12 +35,12 @@ class AutoTradeConfig:
     position_size: int = 1000       # 每笔股数
     tp_pct: float = 8.0             # 止盈（%）
     sl_pct: float = -5.0            # 止损（%）
-    min_llm_confidence: float = 0.6 # 提案最低置信度
+    min_llm_confidence: float = 0.6 # 自动买入最低置信门槛
     dry_run: bool = True            # dry_run=True 时不真下单
 
 
 class AutoTradeLoop:
-    """监听 Hermes 提案 + buy 池变化，自动下模拟盘 buy；盘中监控持仓触发 tp/sl 后 sell。
+    """监听 buy 池变化，自动下模拟盘 buy；盘中监控持仓触发 tp/sl 后 sell。
 
     触发点：
     1. 每 60 秒轮询一次 buy 池 + open_positions，执行规则引擎
@@ -703,72 +701,6 @@ class ResearchCardGenerator:
         bundle["elapsed_seconds"] = round(time.time() - t0, 2)
         self._cache[symbol] = bundle
         return bundle
-
-
-# ==================== [E] 提案学习闭环 ====================
-
-class ProposalLearner:
-    """历史提案 outcome 统计 + prompt 注入。
-
-    每次 daily_review 前被调用，把"最近 30 天不同提案类型的命中率"注入 system prompt，
-    让 LLM 知道「上次建议 concept_xxx 的命中率只有 30%，降低置信度」。
-    """
-
-    def __init__(self, hermes_memory: Any) -> None:
-        self.memory = hermes_memory
-
-    def build_prompt_insert(self) -> str:
-        stats = self._get_stats()
-        if not stats:
-            return ""
-        lines = ["## 历史提案效果参考（最近 30 天 outcome_tracking）", ""]
-        lines.append("| 提案类型 | 样本 | 池子净增样本 | 建议 |")
-        lines.append("|------|-----|------|------|")
-        for item in stats:
-            net = item["net_pool_change"]
-            suggest = "⚠ 慎用（效果为负）" if net < 0 else "✓ 可信（有效提升）" if net > 0 else "~ 中性"
-            lines.append(
-                f"| {item['type']} | {item['total']} | {net:+d} | {suggest} |"
-            )
-        lines.append("")
-        lines.append('⚠ 对 “净增样本 < 0” 的提案类型，请主动降低 confidence 或跳过该类型建议。')
-        return "\n".join(lines)
-
-    def _get_stats(self) -> list[dict]:
-        conn = sqlite3.connect(self.memory.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-            rows = conn.execute(
-                """
-                SELECT p.type      AS type,
-                       COUNT(*)    AS total,
-                       ot.outcome  AS outcome_json
-                FROM agent_proposals p
-                JOIN agent_outcome_tracking ot ON ot.proposal_id = p.id
-                WHERE p.created_at >= ?
-                  AND ot.status = 'success'
-                GROUP BY p.id
-                """,
-                (thirty_days_ago,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []
-        finally:
-            conn.close()
-
-        agg: dict[str, dict] = {}
-        for r in rows:
-            t = r["type"] or "unknown"
-            a = agg.setdefault(t, {"type": t, "total": 0, "net_pool_change": 0})
-            a["total"] += 1
-            try:
-                d = json.loads(r["outcome_json"] or "{}").get("delta", {})
-                a["net_pool_change"] += int(d.get("buy", 0)) + int(d.get("focus", 0))
-            except Exception:
-                pass
-        return sorted(agg.values(), key=lambda x: -x["total"])[:10]
-
 
 # ==================== [F] 消息驱动分析 ====================
 

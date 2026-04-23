@@ -19,7 +19,7 @@ mcp = FastMCP(
     name="alpha-quant",
     instructions=(
         "Alpha 量化选股系统工具集。提供漏斗状态查询、策略参数读取、"
-        "公告筛选数据、个股详情、K线数据和提案管理能力。"
+        "公告筛选数据、个股详情、K线数据和诊断执行能力。"
     ),
 )
 
@@ -198,133 +198,6 @@ async def get_stock_realtime(symbol: str) -> str:
         symbol: 股票代码，如 '603577'
     """
     data = await _get(f"/api/stock/{symbol}/realtime")
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-# ── 提案管理 ──
-
-
-@mcp.tool()
-async def propose_rule_patch(
-    title: str,
-    diff: str,
-    reasoning: str,
-    expected_impact: str,
-    confidence: float = 0.5,
-    evidence: str = "[]",
-    risk_level: str = "medium",
-) -> str:
-    """创建策略参数调整提案（rule_patch 类型）。提案创建后处于 pending 状态，等待人工审批。
-
-    Args:
-        title: 提案标题
-        diff: 参数变更的 JSON 字符串，如 '{"box_range_threshold": {"from": 0.18, "to": 0.20}}'
-        reasoning: 推理过程
-        expected_impact: 预期影响
-        confidence: 置信度 0-1
-        evidence: 证据列表的 JSON 字符串
-        risk_level: 风险等级 low/medium/high
-    """
-    diff_obj = json.loads(diff) if isinstance(diff, str) else diff
-    evidence_obj = json.loads(evidence) if isinstance(evidence, str) else evidence
-
-    result = await _post("/api/agent/proposals/create", {
-        "type": "rule_patch",
-        "title": title,
-        "risk_level": risk_level,
-        "diff": diff_obj,
-        "reasoning": reasoning,
-        "expected_impact": expected_impact,
-        "confidence": confidence,
-        "evidence": evidence_obj,
-    })
-    return json.dumps(result, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-async def propose_notice_rule_patch(
-    title: str,
-    diff: str,
-    reasoning: str,
-    expected_impact: str,
-    confidence: float = 0.5,
-    evidence: str = "[]",
-    risk_level: str = "medium",
-) -> str:
-    """创建公告规则调整提案（notice_rule_patch 类型）。提案创建后处于 pending 状态，等待人工审批。
-
-    Args:
-        title: 提案标题
-        diff: 建议的 JSON 字符串，如 '{"说明": "将业绩预增权重从14调为16"}'
-        reasoning: 推理过程
-        expected_impact: 预期影响
-        confidence: 置信度 0-1
-        evidence: 证据列表的 JSON 字符串
-        risk_level: 风险等级 low/medium/high
-    """
-    diff_obj = json.loads(diff) if isinstance(diff, str) else diff
-    evidence_obj = json.loads(evidence) if isinstance(evidence, str) else evidence
-
-    result = await _post("/api/agent/proposals/create", {
-        "type": "notice_rule_patch",
-        "title": title,
-        "risk_level": risk_level,
-        "diff": diff_obj,
-        "reasoning": reasoning,
-        "expected_impact": expected_impact,
-        "confidence": confidence,
-        "evidence": evidence_obj,
-    })
-    return json.dumps(result, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-async def list_proposals(status: str | None = None, limit: int = 10) -> str:
-    """列出现有提案。
-
-    Args:
-        status: 过滤状态：pending/approved/rejected，缺省全部
-        limit: 返回数量
-    """
-    params: dict = {"limit": limit}
-    if status:
-        params["status"] = status
-    data = await _get("/api/agent/proposals", params)
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-async def get_proposal_detail(proposal_id: int) -> str:
-    """获取提案详情，包含历史反馈。
-
-    Args:
-        proposal_id: 提案 ID
-    """
-    data = await _get(f"/api/agent/proposals/{proposal_id}")
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-async def approve_proposal(proposal_id: int, note: str = "") -> str:
-    """批准一个待处理提案。
-
-    Args:
-        proposal_id: 提案 ID
-        note: 批准备注
-    """
-    data = await _post(f"/api/agent/proposals/{proposal_id}/approve", {"note": note})
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-async def reject_proposal(proposal_id: int, note: str = "") -> str:
-    """驳回一个待处理提案。
-
-    Args:
-        proposal_id: 提案 ID
-        note: 驳回原因
-    """
-    data = await _post(f"/api/agent/proposals/{proposal_id}/reject", {"note": note})
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 

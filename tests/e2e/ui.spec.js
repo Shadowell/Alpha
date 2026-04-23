@@ -159,23 +159,12 @@ test.describe('核心 Tab 数据展示', () => {
     }
   });
 
-  test('[提案管理] stats + 列表正常', async ({ page }) => {
+  test('[智能进化] 不再显示提案管理入口', async ({ page }) => {
     await page.goto('/');
     await page.click('.sidebar-item[data-tab="agent"]');
     await page.waitForTimeout(800);
-
-    // 切到 "提案管理" 子 tab
     const proposalTab = page.locator('.agent-inner-tab[data-subtab="proposal"]');
-    await expect(proposalTab).toBeVisible();
-    await proposalTab.click();
-    await page.waitForTimeout(1200);
-
-    // stats 容器应可见
-    const stats = page.locator('#proposalStats');
-    await expect(stats).toBeVisible();
-    // 至少有 stat 卡片/数字
-    const cards = stats.locator('.stat-card, .stat, div');
-    expect(await cards.count()).toBeGreaterThan(0);
+    await expect(proposalTab).toHaveCount(0);
   });
 
   test('[模拟盘] summary 卡片渲染', async ({ page }) => {
