@@ -1,4 +1,4 @@
-"""Hermes 记忆层 — agent_tasks / agent_proposals / agent_feedback 持久化。"""
+"""Hermes 记忆层 — agent_tasks / agent_monitor_* 持久化。"""
 from __future__ import annotations
 
 import json
@@ -42,49 +42,6 @@ class HermesMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_tasks_type ON agent_tasks(task_type);
                 CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at);
-
-                CREATE TABLE IF NOT EXISTS agent_proposals (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_id       INTEGER REFERENCES agent_tasks(id),
-                    type          TEXT NOT NULL,
-                    title         TEXT NOT NULL,
-                    risk_level    TEXT NOT NULL,
-                    status        TEXT NOT NULL DEFAULT 'pending',
-                    reasoning     TEXT,
-                    diff_payload  TEXT,
-                    expected_impact TEXT,
-                    confidence    REAL,
-                    evidence      TEXT,
-                    approved_by   TEXT,
-                    approved_at   TEXT,
-                    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-                );
-                CREATE INDEX IF NOT EXISTS idx_agent_proposals_status ON agent_proposals(status);
-                CREATE INDEX IF NOT EXISTS idx_agent_proposals_type ON agent_proposals(type);
-
-                CREATE TABLE IF NOT EXISTS agent_feedback (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    proposal_id   INTEGER NOT NULL REFERENCES agent_proposals(id),
-                    action        TEXT NOT NULL,
-                    note          TEXT,
-                    outcome       TEXT,
-                    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-                );
-                CREATE INDEX IF NOT EXISTS idx_agent_feedback_proposal ON agent_feedback(proposal_id);
-
-                CREATE TABLE IF NOT EXISTS agent_outcome_tracking (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    proposal_id   INTEGER NOT NULL REFERENCES agent_proposals(id),
-                    baseline      TEXT NOT NULL,
-                    check_after_days INTEGER NOT NULL DEFAULT 3,
-                    check_date    TEXT NOT NULL,
-                    status        TEXT NOT NULL DEFAULT 'pending',
-                    outcome       TEXT,
-                    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-                    checked_at    TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_outcome_tracking_status ON agent_outcome_tracking(status);
-                CREATE INDEX IF NOT EXISTS idx_outcome_tracking_date ON agent_outcome_tracking(check_date);
 
                 CREATE TABLE IF NOT EXISTS agent_monitor_config (
                     id                INTEGER PRIMARY KEY CHECK (id = 1),
@@ -159,97 +116,6 @@ class HermesMemory:
                     "SELECT * FROM agent_tasks ORDER BY id DESC LIMIT 1"
                 ).fetchone()
             return _row_to_dict(row) if row else None
-
-    # ── agent_proposals ──
-
-    def create_proposal(
-        self,
-        task_id: int,
-        *,
-        proposal_type: str,
-        title: str,
-        risk_level: str,
-        reasoning: str = "",
-        diff_payload: dict | None = None,
-        expected_impact: str = "",
-        confidence: float = 0.0,
-        evidence: list | None = None,
-    ) -> int:
-        with self._connect() as conn:
-            cur = conn.execute(
-                """INSERT INTO agent_proposals(task_id, type, title, risk_level, reasoning,
-                       diff_payload, expected_impact, confidence, evidence)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, proposal_type, title, risk_level, reasoning,
-                 _dumps(diff_payload), expected_impact, confidence, _dumps(evidence)),
-            )
-            conn.commit()
-            return cur.lastrowid  # type: ignore[return-value]
-
-    def list_proposals(
-        self,
-        status: str | None = None,
-        proposal_type: str | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> tuple[list[dict], int]:
-        clauses: list[str] = []
-        params: list[Any] = []
-        if status:
-            clauses.append("status=?")
-            params.append(status)
-        if proposal_type:
-            clauses.append("type=?")
-            params.append(proposal_type)
-        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-
-        with self._connect() as conn:
-            total = conn.execute(f"SELECT COUNT(*) FROM agent_proposals {where}", params).fetchone()[0]
-            rows = conn.execute(
-                f"SELECT * FROM agent_proposals {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-                params + [limit, offset],
-            ).fetchall()
-            return [_row_to_dict(r) for r in rows], total
-
-    def get_proposal(self, proposal_id: int) -> dict | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM agent_proposals WHERE id=?", (proposal_id,)).fetchone()
-            return _row_to_dict(row) if row else None
-
-    def update_proposal_status(self, proposal_id: int, status: str, approved_by: str = "") -> bool:
-        ts = now_cn().isoformat()
-        with self._connect() as conn:
-            cur = conn.execute(
-                "UPDATE agent_proposals SET status=?, approved_by=?, approved_at=? WHERE id=?",
-                (status, approved_by, ts, proposal_id),
-            )
-            conn.commit()
-            return cur.rowcount > 0
-
-    def count_by_status(self) -> dict[str, int]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT status, COUNT(*) as cnt FROM agent_proposals GROUP BY status"
-            ).fetchall()
-            return {r["status"]: r["cnt"] for r in rows}
-
-    # ── agent_feedback ──
-
-    def record_feedback(self, proposal_id: int, action: str, note: str = "") -> int:
-        with self._connect() as conn:
-            cur = conn.execute(
-                "INSERT INTO agent_feedback(proposal_id, action, note) VALUES (?, ?, ?)",
-                (proposal_id, action, note),
-            )
-            conn.commit()
-            return cur.lastrowid  # type: ignore[return-value]
-
-    def get_feedback_for_proposal(self, proposal_id: int) -> list[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM agent_feedback WHERE proposal_id=? ORDER BY id", (proposal_id,)
-            ).fetchall()
-            return [_row_to_dict(r) for r in rows]
 
     # ── agent_monitor_config ──
 
@@ -352,59 +218,6 @@ class HermesMemory:
                 "SELECT * FROM agent_monitor_messages ORDER BY id DESC LIMIT 1"
             ).fetchone()
             return dict(row) if row else None
-
-    # ── agent_outcome_tracking ──
-
-    def create_outcome_tracking(
-        self,
-        proposal_id: int,
-        baseline: dict,
-        check_after_days: int = 3,
-    ) -> int:
-        from datetime import timedelta
-        check_date = (now_cn() + timedelta(days=check_after_days)).date().isoformat()
-        with self._connect() as conn:
-            cur = conn.execute(
-                """INSERT INTO agent_outcome_tracking(proposal_id, baseline, check_after_days, check_date)
-                   VALUES (?, ?, ?, ?)""",
-                (proposal_id, _dumps(baseline), check_after_days, check_date),
-            )
-            conn.commit()
-            return cur.lastrowid  # type: ignore[return-value]
-
-    def get_pending_outcome_checks(self, today: str | None = None) -> list[dict]:
-        if today is None:
-            today = now_cn().date().isoformat()
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT ot.*, ap.title as proposal_title, ap.type as proposal_type,
-                          ap.diff_payload
-                   FROM agent_outcome_tracking ot
-                   JOIN agent_proposals ap ON ot.proposal_id = ap.id
-                   WHERE ot.status = 'pending' AND ot.check_date <= ?
-                   ORDER BY ot.check_date""",
-                (today,),
-            ).fetchall()
-            return [_row_to_dict(r) for r in rows]
-
-    def complete_outcome_check(self, tracking_id: int, outcome: dict) -> None:
-        ts = now_cn().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """UPDATE agent_outcome_tracking
-                   SET status='checked', outcome=?, checked_at=?
-                   WHERE id=?""",
-                (_dumps(outcome), ts, tracking_id),
-            )
-            conn.execute(
-                """UPDATE agent_feedback
-                   SET outcome=?
-                   WHERE proposal_id=(SELECT proposal_id FROM agent_outcome_tracking WHERE id=?)
-                   AND action='approve'""",
-                (_dumps(outcome), tracking_id),
-            )
-            conn.commit()
-
 
 # ── helpers ──
 

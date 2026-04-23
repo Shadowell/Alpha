@@ -37,41 +37,6 @@ class HermesRuntime:
         self._failures: dict[str, list[float]] = {}
         self._running = False
 
-    def _create_proposal_and_notify(
-        self,
-        task_id: int,
-        *,
-        proposal_type: str,
-        title: str,
-        risk_level: str,
-        reasoning: str,
-        diff_payload: Any,
-        expected_impact: str,
-        confidence: float,
-        evidence: Any,
-    ) -> int:
-        """创建提案并异步推送飞书卡片（fire-and-forget）。"""
-        proposal_id = self.memory.create_proposal(
-            task_id,
-            proposal_type=proposal_type,
-            title=title,
-            risk_level=risk_level,
-            reasoning=reasoning,
-            diff_payload=diff_payload,
-            expected_impact=expected_impact,
-            confidence=confidence,
-            evidence=evidence,
-        )
-        try:
-            proposal = self.memory.get_proposal(proposal_id)
-            if proposal:
-                from app.services.feishu_notify import notify_proposal_created
-
-                asyncio.create_task(notify_proposal_created(proposal))
-        except Exception:
-            pass
-        return proposal_id
-
     # ── P0 工具集（降级模式使用）──
 
     async def _tool_get_funnel_snapshot(self, trade_date: str | None = None) -> dict:
@@ -348,11 +313,11 @@ class HermesRuntime:
 ## 职责
 1. 主动调用工具观察系统运行数据（漏斗状态、公告筛选结果、策略参数、K线同步质量）
 2. 根据收集到的数据，诊断问题（候选池过空/过满、转化率异常、参数偏差、数据质量问题）
-3. 如果发现需要调整的地方，使用提案工具（propose_rule_patch / propose_notice_rule_patch）直接创建提案
+3. 如果发现需要调整的地方，输出结构化建议和需要继续验证的方向
 
 ## 约束
 - 你只能建议，不能直接修改系统配置
-- 所有建议必须包含理由、证据、预期影响和置信度
+- 所有建议必须基于真实数据，包含理由和验证方向
 - 参数调整建议每次变动不超过 20%，一次最多调 2 个参数
 - 最终输出一个 JSON 对象作为任务总结
 
@@ -361,7 +326,6 @@ class HermesRuntime:
 - box_range_threshold 默认 0.18，正常范围 0.14-0.24
 - buy_score_threshold 默认 78，不低于 70
 - 公告分池: ≥80→buy, ≥65→focus, 其余→candidate
-- 检查 MEMORY.md 中的历史调参经验，避免重复过去被驳回的建议
 
 ## 技能经验库
 你的 skills/alpha/references/ 目录下有详细的诊断流程和参数调优经验，
@@ -380,11 +344,11 @@ class HermesRuntime:
 你的职责是：
 1. 观察系统运行数据（漏斗状态、公告筛选结果、策略参数、K线同步质量）
 2. 诊断问题（候选池过空/过满、转化率异常、参数偏差、数据质量问题）
-3. 产出结构化优化提案（参数建议、关键词调整、实验设计）
+3. 产出结构化优化建议（参数建议、关键词调整、实验设计）
 
 你的约束是：
 - 你只能建议，不能直接修改系统配置
-- 所有建议必须包含理由、证据、预期影响和置信度
+- 所有建议必须包含理由、证据和预期影响
 - 你的输出必须是严格的 JSON 格式
 
 请用中文回答。"""
@@ -417,8 +381,8 @@ class HermesRuntime:
    - 检查数据完整性
 
 3. **产出建议**：
-   - 如果发现问题，调用 propose_rule_patch 创建参数调优提案
-   - 每个提案必须包含：理由、证据、预期影响、置信度(0-1)
+   - 如果发现问题，直接返回参数观察与后续验证建议
+   - 仅返回诊断结论与建议，不调用任何变更接口
 
 4. **返回总结**：输出以下 JSON 格式
 ```json
@@ -427,7 +391,7 @@ class HermesRuntime:
   "diagnosis": [
     {{"issue": "问题描述", "severity": "low/medium/high", "detail": "详细说明"}}
   ],
-  "proposals_created": 0
+  "recommendations": ["建议 1", "建议 2"]
 }}
 ```
 
@@ -443,10 +407,12 @@ class HermesRuntime:
                     "task": "daily_review",
                     "mode": "agent",
                     "llm_used": True,
-                    "proposals_created": result.get("proposals_created", 0),
                     "message": result.get("summary", "Agent 模式复盘完成"),
                 },
-                "observations": {"diagnosis": result.get("diagnosis", [])},
+                "observations": {
+                    "diagnosis": result.get("diagnosis", []),
+                    "recommendations": result.get("recommendations", []),
+                },
             }
 
         print("[hermes] agent delegation failed, falling back to legacy mode")
@@ -459,14 +425,6 @@ class HermesRuntime:
 
         strategy = obs.get("get_strategy_profile") or {}
         sync_status = obs.get("get_kline_sync_status") or {}
-
-        # 历史提案学习：注入最近 30 天 outcome 统计，避免重复无效提案
-        learner_insert = ""
-        try:
-            from app.main import proposal_learner as _pl
-            learner_insert = _pl.build_prompt_insert() or ""
-        except Exception:
-            pass
 
         user_prompt = f"""## 任务：盘后复盘
 
@@ -484,12 +442,10 @@ class HermesRuntime:
 ### 热门概念 Top3
 {metrics.get('hot_concepts_top3', [])}
 
-{learner_insert}
-
 ### 请你完成：
 1. 评估今日策略表现（候选池质量、转化率、筛选效率）
 2. 识别参数可能存在的偏差
-3. 如果发现问题，产出参数调整建议
+3. 给出后续观察重点和参数优化建议
 
 ### 输出 JSON 格式：
 {{
@@ -501,71 +457,32 @@ class HermesRuntime:
       "detail": "详细说明"
     }}
   ],
-  "proposals": [
-    {{
-      "type": "rule_patch",
-      "title": "建议标题",
-      "risk_level": "low/medium/high",
-      "diff": {{"参数名": {{"from": 原值, "to": 建议值}}}},
-      "reasoning": "推理过程",
-      "expected_impact": "预期影响",
-      "confidence": 0.0到1.0,
-      "evidence": ["证据1", "证据2"]
-    }}
-  ]
+  "recommendations": ["建议1", "建议2"]
 }}"""
 
         llm_result = await self._call_llm(self._FALLBACK_SYSTEM_PROMPT, user_prompt)
         tool_calls.append({"tool": "llm_daily_review", "status": "ok" if llm_result else "skipped"})
 
-        proposals_created = 0
-        if llm_result and "proposals" in llm_result:
-            for p in llm_result["proposals"]:
-                if not p.get("title"):
-                    continue
-                self._create_proposal_and_notify(
-                    task_id,
-                    proposal_type=p.get("type", "rule_patch"),
-                    title=p["title"],
-                    risk_level=p.get("risk_level", "medium"),
-                    reasoning=p.get("reasoning", ""),
-                    diff_payload=p.get("diff"),
-                    expected_impact=p.get("expected_impact", ""),
-                    confidence=float(p.get("confidence", 0.5)),
-                    evidence=p.get("evidence", []),
-                )
-                proposals_created += 1
-
         if not llm_result:
             llm_result = self._rule_based_daily_diagnosis(metrics)
-            for p in llm_result.get("proposals", []):
-                self._create_proposal_and_notify(
-                    task_id,
-                    proposal_type=p.get("type", "rule_patch"),
-                    title=p["title"],
-                    risk_level=p.get("risk_level", "medium"),
-                    reasoning=p.get("reasoning", ""),
-                    diff_payload=p.get("diff"),
-                    expected_impact=p.get("expected_impact", ""),
-                    confidence=float(p.get("confidence", 0.5)),
-                    evidence=p.get("evidence", []),
-                )
-                proposals_created += 1
 
         return {
             "summary": {
                 "task": "daily_review",
                 "mode": "fallback",
                 "llm_used": llm_result is not None,
-                "proposals_created": proposals_created,
                 "message": (llm_result or {}).get("summary", "复盘完成"),
             },
-            "observations": metrics,
+            "observations": {
+                **metrics,
+                "diagnosis": (llm_result or {}).get("diagnosis", []),
+                "recommendations": (llm_result or {}).get("recommendations", []),
+            },
         }
 
     def _rule_based_daily_diagnosis(self, metrics: dict) -> dict:
         """无 LLM 时的规则化诊断。"""
-        proposals = []
+        recommendations = []
         diagnosis = []
 
         cc = metrics.get("funnel_candidate_count", 0)
@@ -575,24 +492,16 @@ class HermesRuntime:
                 "severity": "medium",
                 "detail": "当日盘后筛选未产出任何候选股票",
             })
-            proposals.append({
-                "type": "rule_patch",
-                "title": "候选池为空，建议检查选股参数",
-                "risk_level": "medium",
-                "diff": None,
-                "reasoning": "候选池为空可能因为参数过严或非交易日。建议检查 box_range_threshold、volume_shrink_threshold 等参数。",
-                "expected_impact": "增加候选池覆盖度",
-                "confidence": 0.4,
-                "evidence": [f"候选池数量: {cc}"],
-            })
+            recommendations.append("候选池为空，优先检查 box_range_threshold、volume_shrink_threshold 和交易日数据完整性。")
         elif cc > 50:
             diagnosis.append({
                 "issue": "候选池过满",
                 "severity": "low",
                 "detail": f"候选池 {cc} 只，可能参数过松",
             })
+            recommendations.append("候选池过满，建议复核缩量和箱体阈值，避免噪声样本过多。")
 
-        return {"summary": "规则化诊断完成", "diagnosis": diagnosis, "proposals": proposals}
+        return {"summary": "规则化诊断完成", "diagnosis": diagnosis, "recommendations": recommendations}
 
     # ── notice_review 公告复盘 ──
 
@@ -620,8 +529,8 @@ class HermesRuntime:
    - 检查是否有新类型的利好公告未被覆盖
 
 3. **产出建议**：
-   - 如果发现权重偏差或规则缺失，调用 propose_notice_rule_patch 创建提案
-   - 每个提案包含具体的调整建议
+   - 如果发现权重偏差或规则缺失，直接给出后续观察与优化建议
+   - 仅返回诊断结论与建议，不触发额外流程
 
 4. **返回总结**：输出以下 JSON 格式
 ```json
@@ -630,7 +539,7 @@ class HermesRuntime:
   "diagnosis": [
     {{"issue": "问题描述", "severity": "low/medium/high", "detail": "详细说明"}}
   ],
-  "proposals_created": 0
+  "recommendations": ["建议 1", "建议 2"]
 }}
 ```
 
@@ -646,10 +555,12 @@ class HermesRuntime:
                     "task": "notice_review",
                     "mode": "agent",
                     "llm_used": True,
-                    "proposals_created": result.get("proposals_created", 0),
                     "message": result.get("summary", "Agent 模式公告复盘完成"),
                 },
-                "observations": {"diagnosis": result.get("diagnosis", [])},
+                "observations": {
+                    "diagnosis": result.get("diagnosis", []),
+                    "recommendations": result.get("recommendations", []),
+                },
             }
 
         print("[hermes] agent delegation failed, falling back to legacy mode")
@@ -679,7 +590,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
 ### 请你完成：
 1. 评估公告筛选的命中质量
 2. 分析关键词类型的命中分布是否合理
-3. 如果发现权重偏差，产出调整建议
+3. 如果发现权重偏差，给出后续观察和优化建议
 
 ### 输出 JSON 格式：
 {{
@@ -691,51 +602,26 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
       "detail": "详细说明"
     }}
   ],
-  "proposals": [
-    {{
-      "type": "notice_rule_patch",
-      "title": "建议标题",
-      "risk_level": "low/medium/high",
-      "diff": {{"说明": "具体建议"}},
-      "reasoning": "推理过程",
-      "expected_impact": "预期影响",
-      "confidence": 0.0到1.0,
-      "evidence": ["证据1"]
-    }}
-  ]
+  "recommendations": ["建议1", "建议2"]
 }}"""
 
         llm_result = await self._call_llm(self._FALLBACK_SYSTEM_PROMPT, user_prompt)
         tool_calls.append({"tool": "llm_notice_review", "status": "ok" if llm_result else "skipped"})
 
-        proposals_created = 0
-        result_data = llm_result or {"summary": "公告复盘完成（无 LLM）", "proposals": []}
-
-        for p in result_data.get("proposals", []):
-            if not p.get("title"):
-                continue
-            self._create_proposal_and_notify(
-                task_id,
-                proposal_type=p.get("type", "notice_rule_patch"),
-                title=p["title"],
-                risk_level=p.get("risk_level", "medium"),
-                reasoning=p.get("reasoning", ""),
-                diff_payload=p.get("diff"),
-                expected_impact=p.get("expected_impact", ""),
-                confidence=float(p.get("confidence", 0.5)),
-                evidence=p.get("evidence", []),
-            )
-            proposals_created += 1
+        result_data = llm_result or {"summary": "公告复盘完成（无 LLM）", "recommendations": []}
 
         return {
             "summary": {
                 "task": "notice_review",
                 "mode": "fallback",
                 "llm_used": llm_result is not None,
-                "proposals_created": proposals_created,
                 "message": result_data.get("summary", "公告复盘完成"),
             },
-            "observations": metrics,
+            "observations": {
+                **metrics,
+                "diagnosis": result_data.get("diagnosis", []),
+                "recommendations": result_data.get("recommendations", []),
+            },
         }
 
     # ── full_diagnosis 全面诊断 ──
@@ -743,12 +629,9 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
     async def _do_full_diagnosis(self, task_id: int, tool_calls: list, params: dict) -> dict:
         daily = await self._do_daily_review(task_id, tool_calls, params)
         notice = await self._do_notice_review(task_id, tool_calls, params)
-        total_proposals = (daily["summary"].get("proposals_created", 0)
-                          + notice["summary"].get("proposals_created", 0))
         return {
             "summary": {
                 "task": "full_diagnosis",
-                "proposals_created": total_proposals,
                 "message": "全面诊断完成",
                 "daily": daily["summary"],
                 "notice": notice["summary"],
@@ -1002,7 +885,6 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
 
     async def get_status_async(self) -> dict:
         last = self.memory.get_last_task()
-        counts = self.memory.count_by_status()
         api_key = os.environ.get("OPENAI_API_KEY", "")
         hermes_ok = await self._check_hermes_agent()
         return {
@@ -1012,28 +894,15 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             "hermes_agent_url": self._HERMES_AGENT_BASE,
             "mode": "agent" if hermes_ok else "fallback",
             "last_run": _format_last_run(last) if last else None,
-            "stats": {
-                "total_proposals": sum(counts.values()),
-                "pending_proposals": counts.get("pending", 0),
-                "approved_proposals": counts.get("approved", 0),
-                "rejected_proposals": counts.get("rejected", 0),
-            },
         }
 
     def get_status(self) -> dict:
         last = self.memory.get_last_task()
-        counts = self.memory.count_by_status()
         api_key = os.environ.get("OPENAI_API_KEY", "")
         return {
             "running": self._running,
             "llm_available": bool(api_key),
             "last_run": _format_last_run(last) if last else None,
-            "stats": {
-                "total_proposals": sum(counts.values()),
-                "pending_proposals": counts.get("pending", 0),
-                "approved_proposals": counts.get("approved", 0),
-                "rejected_proposals": counts.get("rejected", 0),
-            },
         }
 
 
@@ -1060,10 +929,6 @@ async def hermes_scheduler_loop(runtime: HermesRuntime) -> None:
                 if not last or last.get("started_at", "")[:10] != n.date().isoformat():
                     print("[hermes] scheduled notice_review")
                     await runtime.run_task("notice_review", trigger="scheduled")
-
-            # 效果追踪检查 16:00（盘后数据已更新）
-            if h == 16 and 0 <= m < 10:
-                await _check_outcome_tracking(runtime)
 
         except Exception as e:
             print(f"[hermes] scheduler error: {e}")
@@ -1107,68 +972,6 @@ async def monitor_loop(runtime: HermesRuntime, hub: Any = None) -> None:
         except Exception as e:
             print(f"[monitor] loop error: {e}")
         await asyncio.sleep(30)
-
-
-async def _check_outcome_tracking(runtime: HermesRuntime) -> None:
-    """检查到期的提案效果追踪，比较基线与当前指标。"""
-    from app.services.hermes_memory_bridge import record_outcome_to_hermes_memory
-
-    pending = runtime.memory.get_pending_outcome_checks()
-    if not pending:
-        return
-
-    print(f"[hermes] checking {len(pending)} outcome tracking records")
-
-    try:
-        funnel = await runtime.funnel.get_funnel()
-        current = {
-            "candidate_count": funnel.stats.get("candidate", 0) if hasattr(funnel, "stats") else 0,
-            "focus_count": funnel.stats.get("focus", 0) if hasattr(funnel, "stats") else 0,
-            "buy_count": funnel.stats.get("buy", 0) if hasattr(funnel, "stats") else 0,
-        }
-    except Exception as e:
-        print(f"[hermes] outcome tracking: cannot get current funnel: {e}")
-        return
-
-    for record in pending:
-        try:
-            import json
-            baseline = record.get("baseline") or {}
-            if isinstance(baseline, str):
-                baseline = json.loads(baseline)
-
-            outcome = {
-                "baseline": baseline,
-                "current": current,
-                "delta": {
-                    "candidate": current["candidate_count"] - baseline.get("candidate_count", 0),
-                    "focus": current["focus_count"] - baseline.get("focus_count", 0),
-                    "buy": current["buy_count"] - baseline.get("buy_count", 0),
-                },
-                "days_elapsed": record.get("check_after_days", 3),
-            }
-
-            delta = outcome["delta"]
-            if delta["candidate"] > 0:
-                effect = f"候选池+{delta['candidate']}"
-            elif delta["candidate"] < 0:
-                effect = f"候选池{delta['candidate']}"
-            else:
-                effect = "候选池不变"
-
-            if delta["focus"] != 0:
-                effect += f", 重点池{'+'if delta['focus']>0 else ''}{delta['focus']}"
-            if delta["buy"] != 0:
-                effect += f", 买入池{'+'if delta['buy']>0 else ''}{delta['buy']}"
-
-            runtime.memory.complete_outcome_check(record["id"], outcome)
-
-            title = record.get("proposal_title", "未知提案")
-            record_outcome_to_hermes_memory(title, effect)
-
-            print(f"[hermes] outcome tracked: {title} -> {effect}")
-        except Exception as e:
-            print(f"[hermes] outcome tracking error for record {record.get('id')}: {e}")
 
 
 # ── helpers ──

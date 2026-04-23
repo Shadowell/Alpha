@@ -15,7 +15,7 @@ import httpx
 os.environ["no_proxy"] = "*"
 os.environ["NO_PROXY"] = "*"
 
-BASE_URL = "http://127.0.0.1:18888"
+BASE_URL = os.environ.get("ALPHA_TEST_BASE_URL", "http://127.0.0.1:18888")
 TEST_SYMBOL = "600519"  # 贵州茅台，主板大盘股
 
 
@@ -241,26 +241,6 @@ class TestAgent:
         data = r.json()
         assert isinstance(data, dict)
 
-    def test_proposals_list_default(self, client):
-        r = client.get("/api/agent/proposals?limit=5")
-        assert r.status_code == 200
-        data = r.json()
-        assert "items" in data and "total" in data
-
-    def test_proposals_list_with_filters(self, client):
-        """新增的筛选参数应正确响应。"""
-        r = client.get("/api/agent/proposals?status=pending&type=rule_patch&risk_level=low&q=test&limit=5")
-        assert r.status_code == 200
-        data = r.json()
-        assert "items" in data
-
-    def test_proposals_stats(self, client):
-        r = client.get("/api/agent/proposals/stats")
-        assert r.status_code == 200
-        data = r.json()
-        required = {"pending", "approved", "rejected", "today_new", "recent_approval_rate"}
-        assert required.issubset(data.keys()), f"缺字段: {required - data.keys()}"
-
     def test_agent_tasks(self, client):
         r = client.get("/api/agent/tasks?limit=5")
         assert r.status_code == 200
@@ -291,10 +271,6 @@ class TestHermesAI:
 
     def test_backtest_last(self, client):
         r = client.get("/api/hermes-ai/backtest")
-        assert r.status_code == 200
-
-    def test_proposal_learner(self, client):
-        r = client.get("/api/hermes-ai/proposal-learner")
         assert r.status_code == 200
 
     def test_news_insight_last(self, client):
@@ -335,29 +311,25 @@ class TestPaper:
 
 
 # ─────────────────────────────────────────────
-# 10. 提案管理（batch / create 非破坏性）
+# 10. 已移除提案接口
 # ─────────────────────────────────────────────
 
-class TestProposalLifecycle:
-    def test_batch_validation_empty_ids(self, client):
-        """batch 接口：空 ids 应返回 400"""
-        r = client.post("/api/agent/proposals/batch", json={"ids": [], "action": "approve"})
-        assert r.status_code == 400
-
-    def test_batch_validation_bad_action(self, client):
-        r = client.post("/api/agent/proposals/batch", json={"ids": [999999], "action": "invalid"})
-        assert r.status_code == 400
-
-    def test_batch_skip_missing(self, client):
-        """batch 接口对不存在的 id 应 skip 而不是 500。"""
-        r = client.post("/api/agent/proposals/batch", json={"ids": [999999], "action": "approve"})
-        assert r.status_code == 200
-        data = r.json()
-        assert data.get("processed") == 0
-        assert any("不存在" in (s.get("reason") or "") for s in data.get("skipped", []))
-
-    def test_proposal_get_404(self, client):
-        r = client.get("/api/agent/proposals/999999")
+class TestRemovedProposalApis:
+    @pytest.mark.parametrize("path,method", [
+        ("/api/agent/proposals", "get"),
+        ("/api/agent/proposals/stats", "get"),
+        ("/api/agent/proposals/999999", "get"),
+        ("/api/agent/proposals/999999/approve", "post"),
+        ("/api/agent/proposals/999999/reject", "post"),
+        ("/api/agent/proposals/batch", "post"),
+        ("/api/agent/proposals/create", "post"),
+        ("/api/hermes-ai/proposal-learner", "get"),
+    ])
+    def test_removed_routes_return_404(self, client, path, method):
+        if method == "post":
+            r = client.post(path, json={})
+        else:
+            r = client.get(path)
         assert r.status_code == 404
 
 
@@ -381,7 +353,6 @@ class TestPerformance:
         "/api/funnel",
         "/api/strategy/profile",
         "/api/agent/status",
-        "/api/agent/proposals/stats",
         "/api/paper/summary",
         "/api/jobs/kline-cache/stats",
     ])
