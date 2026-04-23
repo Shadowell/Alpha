@@ -32,6 +32,7 @@ const state = {
   graphicFunnel: null,
   graphicConfig: null,
   graphicRunning: false,
+  strategyScanSnapshot: null,
 };
 
 function fmtNum(v, digits = 2) {
@@ -184,7 +185,7 @@ function renderFunnelSummary() {
   const el = document.getElementById('funnelSummary');
   if (!el) return;
   if (!state.funnel) { el.innerHTML = ''; return; }
-  const c = (state.funnel.pools.candidate || []).filter(passConceptFilter).length;
+  const c = _getCompositeCandidateCount();
   const f = (state.funnel.pools.focus || []).filter(passConceptFilter).length;
   const b = (state.funnel.pools.buy || []).filter(passConceptFilter).length;
   el.innerHTML = [
@@ -338,9 +339,19 @@ function passConceptFilter(stock) {
   return (stock.concept_tags || []).some((t) => t.name === state.selectedConcept);
 }
 
+function _getStrategyScanHits() {
+  return state.strategyScanSnapshot?.hits || [];
+}
+
+function _getCompositeCandidateCount() {
+  const strategyHits = _getStrategyScanHits().length;
+  const funnelCandidates = (state.funnel?.pools?.candidate || []).filter(passConceptFilter).length;
+  return strategyHits + funnelCandidates;
+}
+
 function renderCounts() {
   if (!state.funnel) return;
-  const c = (state.funnel.pools.candidate || []).filter(passConceptFilter).length;
+  const c = _getCompositeCandidateCount();
   const f = (state.funnel.pools.focus || []).filter(passConceptFilter).length;
   const b = (state.funnel.pools.buy || []).filter(passConceptFilter).length;
   document.getElementById('count-candidate').textContent = c;
@@ -422,6 +433,10 @@ async function movePool(symbol, targetPool) {
 
 function renderPool(poolName, list) {
   const root = document.getElementById(`pool-${poolName}`);
+  if (poolName === 'candidate') {
+    renderCompositeCandidatePool(root, list || []);
+    return;
+  }
   root.innerHTML = '';
   const filtered = list.filter(passConceptFilter);
   filtered.forEach((stock) => {
@@ -482,6 +497,142 @@ function renderPool(poolName, list) {
       : '尚未运行筛选，点击上方「盘后筛选」开始';
     root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
   }
+}
+
+function _renderCompositeSection(title, hint, bodyHtml, count, kind = '') {
+  const countHtml = `<span class="composite-section-count">${count}</span>`;
+  return `
+    <section class="composite-section ${kind}">
+      <div class="composite-section-head">
+        <div class="composite-section-title">${title}${countHtml}</div>
+        <div class="composite-section-hint">${hint}</div>
+      </div>
+      <div class="composite-section-body">${bodyHtml}</div>
+    </section>
+  `;
+}
+
+function _strategyHitCardHtml(hit) {
+  const cls = Number(hit.change_pct || 0) >= 0 ? 'up' : 'down';
+  const sign = Number(hit.change_pct || 0) >= 0 ? '+' : '';
+  const badges = (hit.rule_hits || []).slice(0, 4).map((rh) => (
+    `<span class="sc-hit-tag">${esc(rh.title)}: ${esc(String(rh.label || '✓'))}</span>`
+  )).join('');
+  return `
+    <div class="qb-card sc-hit-card sc-hit-card-inline" data-symbol="${hit.symbol}" data-name="${esc(hit.name || '')}">
+      <div class="qb-card-top">
+        <div class="qb-card-name">${esc(hit.name || '--')}<small>${hit.symbol}</small></div>
+        <div class="qb-card-pct ${cls}">${sign}${fmtNum(hit.change_pct, 2)}%</div>
+      </div>
+      <div class="qb-card-meta">
+        <span class="qb-tag">收 ${fmtNum(hit.close, 2)}</span>
+        <span class="qb-tag spike">综合分 ${fmtNum(hit.composite_score, 1)}</span>
+      </div>
+      ${badges ? `<div class="sc-hit-tags">${badges}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderCompositeCandidatePool(root, systemCandidates) {
+  if (!root) return;
+  const strategyHits = _getStrategyScanHits();
+  const filteredSystem = (systemCandidates || []).filter(passConceptFilter);
+  const parts = [];
+
+  if (strategyHits.length) {
+    parts.push(_renderCompositeSection(
+      '策略中心命中',
+      '来自当前策略的最新扫描结果',
+      strategyHits.slice(0, 200).map(_strategyHitCardHtml).join(''),
+      strategyHits.length,
+      'strategy',
+    ));
+  } else {
+    parts.push(_renderCompositeSection(
+      '策略中心命中',
+      '暂无策略命中，先运行上方扫描',
+      '<div class="empty-state compact-empty"><div class="empty-state-text">当前策略还没有扫描命中结果</div></div>',
+      0,
+      'strategy',
+    ));
+  }
+
+  if (filteredSystem.length) {
+    const host = document.createElement('div');
+    filteredSystem.forEach((stock) => {
+      const div = document.createElement('div');
+      div.className = `stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
+      div.onclick = () => selectSymbol(stock.symbol);
+      const delta = Number(stock.score_delta || 0);
+      const deltaCls = _chgCls(delta);
+      const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
+      const conceptTags = stock.concept_tags || [];
+      const tags = conceptTags
+        .map((tag) => `<span class="tag" style="background:${tag.color}" title="热度:${tag.heat} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${tag.name} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
+        .join('');
+      const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
+      const badge = stock.recommended_pool
+        ? `<span class="badge ${stock.recommended_pool === 'buy' ? 'buy' : 'focus'}">建议进入${stock.recommended_pool === 'buy' ? '买入池' : '重点池'}</span>`
+        : '';
+      const btns = cardActions(stock)
+        .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
+        .join('');
+      const pct = Number(stock.pct_change || 0);
+      const pctCls = _chgCls(pct);
+      const pctSign = pct > 0 ? '+' : '';
+      const price = Number(stock.price || 0);
+      const priceHtml = price > 0 ? `<span class="stock-price">${fmtNum(price, 2)}</span>` : '';
+      const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
+      div.innerHTML = `
+        <div class="stock-top">
+          <div class="stock-name">${stock.name} <span class="stock-code">${stock.symbol}</span></div>
+          <div class="stock-price-area">${priceHtml}${pctHtml}</div>
+        </div>
+        ${tagsHtml}
+        <div class="metrics">
+          <span>评分 <b class="${deltaCls}">${fmtNum(stock.score)}</b> (${deltaTxt})</span>
+          <span class="metrics-sep">·</span>
+          <span>放量比 ${fmtNum(stock.volume_ratio, 2)}</span>
+          <span class="metrics-sep">·</span>
+          <span>突破位 ${fmtNum(stock.breakout_level, 2)}</span>
+        </div>
+        ${badge}
+        <div class="card-actions">${btns}</div>
+      `;
+      div.querySelectorAll('button[data-pool]').forEach((btn) => {
+        btn.onclick = (e) => { e.stopPropagation(); movePool(btn.dataset.symbol, btn.dataset.pool); };
+      });
+      host.appendChild(div);
+    });
+    parts.push(_renderCompositeSection(
+      '系统候选',
+      state.selectedConcept ? `当前概念：${state.selectedConcept}` : '来自系统漏斗的调整期候选',
+      host.innerHTML,
+      filteredSystem.length,
+      'system',
+    ));
+  } else {
+    const hint = state.selectedConcept
+      ? `当前概念「${state.selectedConcept}」下无系统候选`
+      : '尚未运行筛选，点击上方「盘后筛选」开始';
+    parts.push(_renderCompositeSection(
+      '系统候选',
+      '来自系统漏斗的调整期候选',
+      `<div class="empty-state compact-empty"><div class="empty-state-text">${hint}</div></div>`,
+      0,
+      'system',
+    ));
+  }
+
+  root.innerHTML = parts.join('');
+  root.querySelectorAll('.sc-hit-card').forEach((el) => {
+    el.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openPredictDetail(el.getAttribute('data-symbol'), el.getAttribute('data-name'));
+      return false;
+    };
+  });
 }
 
 function renderFunnel() {
@@ -3736,6 +3887,7 @@ const strategyCenterState = {
   currentId: null,
   editing: null,      // 当前正在编辑的策略（本地 draft）
   scActionsBound: false,
+  scanSnapshot: null,
 };
 
 async function loadStrategyCenter() {
@@ -4102,49 +4254,17 @@ async function _loadScanSnapshot() {
 
 function _renderScanSnapshot(snap) {
   const meta = document.getElementById('scScanMeta');
-  const list = document.getElementById('scHitsList');
-  if (!meta || !list) return;
+  if (!meta) return;
+  strategyCenterState.scanSnapshot = snap && snap.generated_at ? snap : null;
+  state.strategyScanSnapshot = strategyCenterState.scanSnapshot;
+  if (state.activeTab === 'funnel') renderFunnel();
   if (!snap || !snap.generated_at) {
     meta.textContent = '尚未扫描，点击"立即扫描"开始（覆盖全 A 股，约 30~60 秒）';
-    list.innerHTML = '';
     return;
   }
   const hits = snap.hits || [];
   meta.textContent = `扫描时间 ${(snap.generated_at || '').replace('T', ' ')} · 扫描 ${snap.total_scanned} 只 · 命中 ${snap.total_hits} 只 · 耗时 ${snap.elapsed_seconds}s · 启用规则 ${snap.rules_count}`;
-  if (!hits.length) {
-    list.innerHTML = '<div class="qb-empty sc-empty">本次规则组合下没有命中的候选股，可放宽条件后再试</div>';
-    return;
-  }
-  list.innerHTML = hits.slice(0, 200).map((h) => {
-    const cls = Number(h.change_pct || 0) >= 0 ? 'up' : 'down';
-    const sign = Number(h.change_pct || 0) >= 0 ? '+' : '';
-    const badges = (h.rule_hits || []).slice(0, 6).map((rh) => {
-      return `<span class="sc-hit-tag">${esc(rh.title)}: ${esc(String(rh.label || '✓'))}</span>`;
-    }).join('');
-    return `
-      <div class="qb-card sc-hit-card" data-symbol="${h.symbol}" data-name="${esc(h.name || '')}">
-        <div class="qb-card-top">
-          <div class="qb-card-name">${esc(h.name || '--')}<small>${h.symbol}</small></div>
-          <div class="qb-card-pct ${cls}">${sign}${fmtNum(h.change_pct, 2)}%</div>
-        </div>
-        <div class="qb-card-meta">
-          <span class="qb-tag">收 ${fmtNum(h.close, 2)}</span>
-          <span class="qb-tag spike">综合分 ${fmtNum(h.composite_score, 1)}</span>
-        </div>
-        <div class="sc-hit-tags">${badges}</div>
-      </div>
-    `;
-  }).join('');
-  list.querySelectorAll('.sc-hit-card').forEach((el) => {
-    el.onclick = (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const sym = el.getAttribute('data-symbol');
-      const name = el.getAttribute('data-name');
-      openPredictDetail(sym, name);
-      return false;
-    };
-  });
+  if (!hits.length) meta.textContent += ' · 当前无命中';
 }
 
 function _renderBacktestResult(r) {
