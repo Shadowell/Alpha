@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +48,8 @@ from app.routers.first_limit_alpha import init_first_limit_alpha_router
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+PAPER_SNAPSHOT_TIMEOUT_SECONDS = 2.5
+PAPER_DB_FALLBACK_TIMEOUT_SECONDS = 1.0
 
 from app.services.kline_store import KlineSQLiteStore as _KlineSQLiteStore
 
@@ -933,15 +936,44 @@ async def _get_realtime_price(symbol: str) -> tuple[float, str]:
 
     返回 (price, source)，source ∈ em_live | db_fallback | stale_cache | none
     """
-    df = await provider.get_realtime_snapshot(cache_ttl_seconds=5, prefer_live=True)
-    source = provider.realtime_snapshot_source or "none"
-    if df.empty:
+    df, source = await _get_paper_realtime_snapshot(cache_ttl_seconds=5, prefer_live=True)
+    if df is None or df.empty:
         return 0.0, source
     match = df[df["代码"] == symbol]
     if match.empty:
         return 0.0, source
     val = match.iloc[0].get("最新价", 0)
     return (float(val) if val else 0.0), source
+
+
+async def _get_paper_realtime_snapshot(
+    cache_ttl_seconds: int,
+    prefer_live: bool,
+) -> tuple[Any | None, str]:
+    try:
+        df = await asyncio.wait_for(
+            provider.get_realtime_snapshot(
+                retries=0,
+                retry_wait_seconds=0,
+                cache_ttl_seconds=cache_ttl_seconds,
+                prefer_live=prefer_live,
+            ),
+            timeout=PAPER_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+        return df, provider.realtime_snapshot_source or "none"
+    except Exception as exc:
+        source = f"snapshot_timeout:{type(exc).__name__}"
+
+    try:
+        df = await asyncio.wait_for(
+            asyncio.to_thread(provider._snapshot_from_db),
+            timeout=PAPER_DB_FALLBACK_TIMEOUT_SECONDS,
+        )
+        if df is not None and not df.empty:
+            return df, "db_fallback_after_timeout"
+    except Exception as exc:
+        source = f"{source};db_fallback_failed:{type(exc).__name__}"
+    return None, source
 
 
 @app.get("/api/paper/positions")
@@ -952,11 +984,10 @@ async def paper_positions():
     if opens:
         open_market = _is_a_market_open()
         ttl = 10 if open_market else 300
-        df = await provider.get_realtime_snapshot(
+        df, source = await _get_paper_realtime_snapshot(
             cache_ttl_seconds=ttl, prefer_live=open_market
         )
-        source = provider.realtime_snapshot_source or "none"
-        if not df.empty:
+        if df is not None and not df.empty:
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
             paper_trading.update_prices(price_map)
@@ -977,11 +1008,10 @@ async def paper_summary():
     if opens:
         open_market = _is_a_market_open()
         ttl = 10 if open_market else 300
-        df = await provider.get_realtime_snapshot(
+        df, source = await _get_paper_realtime_snapshot(
             cache_ttl_seconds=ttl, prefer_live=open_market
         )
-        source = provider.realtime_snapshot_source or "none"
-        if not df.empty:
+        if df is not None and not df.empty:
             price_map = {}
             for _, r in df.iterrows():
                 price_map[r["代码"]] = float(r["最新价"]) if r["最新价"] else 0
