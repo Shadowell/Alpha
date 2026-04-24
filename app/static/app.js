@@ -3120,7 +3120,36 @@ function _hotAiDecisionText(decision) {
   }[value] || '待讨论';
 }
 
-function _hotAiCardHtml(e) {
+function _hotAiActions(poolName) {
+  const actions = [];
+  if (poolName === 'candidate') actions.push(['加入重点', 'focus']);
+  if (poolName === 'focus') {
+    actions.push(['移回候选', 'candidate']);
+    actions.push(['加入买入', 'buy']);
+  }
+  if (poolName === 'buy') actions.push(['降级重点', 'focus']);
+  return actions;
+}
+
+async function moveHotAiPool(symbol, targetPool) {
+  try {
+    const res = await request('/api/strategy/hot-stock-ai/pool/move', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, target_pool: targetPool }),
+    });
+    if (!res.success) {
+      alert(res.message || '迁移失败');
+      return;
+    }
+    state.hotStockAI = res.snapshot;
+    renderHotStockAI();
+    setStatus(res.message || '迁移成功', 'success');
+  } catch (err) {
+    alert(err.message || '迁移失败');
+  }
+}
+
+function _hotAiCardHtml(e, poolName) {
   const score = Number(e.score || 0);
   const cls = _hotAiScoreCls(score);
   const ta = e.tradingagents || {};
@@ -3132,8 +3161,17 @@ function _hotAiCardHtml(e) {
   const decisionCls = _hotAiDecisionCls(decision);
   const sourceText = ta.source === 'cache' ? '缓存讨论' : ta.source === 'fresh' ? '实时讨论' : '';
   const taSummary = ta.summary || ta.discussion || '';
+  const pct = Number(e.change_pct || 0);
+  const pctCls = _chgCls(pct);
+  const pctSign = pct > 0 ? '+' : '';
+  const price = Number(e.latest_price || 0);
+  const priceHtml = price > 0 ? `<span class="stock-price">${fmtNum(price, 2)}</span>` : '';
+  const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
   const tags = (e.tags || []).slice(0, 4)
-    .map(tag => `<span class="predict-card-board-tag hot-ai-tag">${tag}</span>`)
+    .map(tag => `<span class="tag hot-ai-tag">${tag}</span>`)
+    .join('');
+  const btns = _hotAiActions(poolName)
+    .map(([txt, pool]) => `<button data-hotai-pool="${pool}" data-symbol="${e.symbol}">${txt}</button>`)
     .join('');
   const decisionHtml = ta.status === 'ok'
     ? `<div class="hot-ai-ta-row">
@@ -3149,39 +3187,42 @@ function _hotAiCardHtml(e) {
           ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">讨论关闭</span></div>`
           : `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">待讨论</span></div>`;
   return `
-    <div class="pool-card hot-ai-card" data-symbol="${e.symbol}" onclick="openHotAiDetail('${e.symbol}')">
-      <div class="card-head">
-        <div class="card-name">
-          <span class="stock-name">${e.name || e.symbol}</span>
-          <span class="stock-code">${e.symbol}</span>
-        </div>
-        <div class="card-score ${cls}">${fmtNum(score, 1)}分</div>
+    <div class="stock-card hot-ai-card ${state.selectedSymbol === e.symbol ? 'active' : ''}" data-symbol="${e.symbol}" onclick="openHotAiDetail('${e.symbol}')">
+      <div class="stock-top">
+        <div class="stock-name">${e.name || e.symbol} <span class="stock-code">${e.symbol}</span></div>
+        <div class="stock-price-area">${priceHtml}${pctHtml}</div>
       </div>
-      <div class="predict-card-meta">
-        <span class="predict-card-metric">热度 <b>#${e.rank || '--'}</b></span>
-        <span class="predict-card-metric">现价 <b>${fmtNum(e.latest_price)}</b></span>
-        <span class="predict-card-metric">当日 ${(Number(e.change_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.change_pct, 2)}%</span>
-        <span class="predict-card-metric">3日高 <b>${(Number(e.pred_max_high_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.pred_max_high_pct, 2)}%</b></span>
+      ${tags ? `<div class="tags">${tags}</div>` : ''}
+      <div class="metrics">
+        <span>评分 <b class="${cls}">${fmtNum(score, 1)}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>基础分 <b>${fmtNum(baseScore, 1)}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>热度 #<b>${e.rank || '--'}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>3日高 <b>${(Number(e.pred_max_high_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.pred_max_high_pct, 2)}%</b></span>
       </div>
-      <div class="predict-card-meta">
-        <span class="predict-card-metric">距MA20 <b>${(Number(e.dist_ma20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_ma20_pct, 2)}%</b></span>
-        <span class="predict-card-metric">距20日高 <b>${(Number(e.dist_high20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_high20_pct, 2)}%</b></span>
-        <span class="predict-card-metric">量额比20日 <b>${fmtNum(e.amount_ratio_20d, 2)}</b></span>
+      <div class="metrics">
+        <span>距MA20 <b>${(Number(e.dist_ma20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_ma20_pct, 2)}%</b></span>
+        <span class="metrics-sep">·</span>
+        <span>距20日高 <b>${(Number(e.dist_high20_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.dist_high20_pct, 2)}%</b></span>
+        <span class="metrics-sep">·</span>
+        <span>量额比20日 <b>${fmtNum(e.amount_ratio_20d, 2)}</b></span>
       </div>
-      <div class="predict-card-meta hot-ai-breakdown">
-        <span class="predict-card-metric">基础分 <b>${fmtNum(baseScore, 1)}</b></span>
-        <span class="predict-card-metric">热度分 <b>${fmtNum(e.score_breakdown?.popularity, 1)}</b></span>
-        <span class="predict-card-metric">趋势分 <b>${fmtNum(e.score_breakdown?.trend, 1)}</b></span>
-        <span class="predict-card-metric">预测分 <b>${fmtNum(e.score_breakdown?.prediction, 1)}</b></span>
-        <span class="predict-card-metric">风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
+      <div class="metrics hot-ai-breakdown">
+        <span>热度分 <b>${fmtNum(e.score_breakdown?.popularity, 1)}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>趋势分 <b>${fmtNum(e.score_breakdown?.trend, 1)}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>预测分 <b>${fmtNum(e.score_breakdown?.prediction, 1)}</b></span>
+        <span class="metrics-sep">·</span>
+        <span>风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
       </div>
-      <div class="predict-card-meta">
-        <span class="predict-card-metric">评价 <b>${evaluationText}</b></span>
-      </div>
+      <div class="metrics"><span>评价 <b>${evaluationText}</b></span></div>
       ${decisionHtml}
       ${taSummary ? `<div class="hot-ai-ta-summary">${taSummary}</div>` : ''}
       <div class="hot-ai-analysis">${e.analysis || '暂无分析摘要'}</div>
-      ${tags ? `<div class="predict-card-boards">${tags}</div>` : ''}
+      <div class="card-actions">${btns}</div>
     </div>`;
 }
 
@@ -3217,7 +3258,13 @@ function renderHotStockAI() {
       el.innerHTML = '<div class="empty-pool">暂无</div>';
       return;
     }
-    el.innerHTML = list.map(_hotAiCardHtml).join('');
+    el.innerHTML = list.map((item) => _hotAiCardHtml(item, id.split('-').pop())).join('');
+    el.querySelectorAll('button[data-hotai-pool]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        moveHotAiPool(btn.dataset.symbol, btn.dataset.hotaiPool);
+      };
+    });
   };
   renderPool('hotai-pool-candidate', pools.candidate);
   renderPool('hotai-pool-focus', pools.focus);

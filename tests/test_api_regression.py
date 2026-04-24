@@ -177,6 +177,13 @@ class TestHotStockAI:
         r2 = client.post("/api/strategy/hot-stock-ai/config", json=payload)
         assert r2.status_code == 200
 
+    def test_hot_stock_ai_pool_move_route(self, client):
+        r = client.post(
+            "/api/strategy/hot-stock-ai/pool/move",
+            json={"symbol": "NO_SUCH_SYMBOL", "target_pool": "focus"},
+        )
+        assert r.status_code == 404
+
 
 # ─────────────────────────────────────────────
 # 5. K 线缓存
