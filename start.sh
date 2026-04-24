@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
-PID_FILE="$PID_DIR/funnel.pid"
 LOG_FILE="$LOG_DIR/server.log"
 
 # 自动加载 .env（类 dotenv：行内注释用 # 开头；KEY=VALUE；支持引号；跳过空行）
@@ -16,10 +15,11 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   echo "已加载 .env"
 fi
 
-PORT="${PORT:-18888}"
+PORT=18888  # fixed; do not override via env or .env
 HOST="${HOST:-0.0.0.0}"
 RELOAD="${RELOAD:-0}"
 
+PID_FILE="$PID_DIR/funnel-${PORT}.pid"
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
 is_running() {
@@ -30,9 +30,34 @@ is_running() {
   kill -0 "$pid" >/dev/null 2>&1
 }
 
+is_service_pid() {
+  local pid="$1"
+  if ! is_running "$pid"; then
+    return 1
+  fi
+
+  local cmd
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  if [[ "$cmd" == *"uvicorn app.main:app"* ]]; then
+    return 0
+  fi
+
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -a -p "$pid" -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+listening_pid() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
+  fi
+}
+
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-  if is_running "$OLD_PID"; then
+  if is_service_pid "$OLD_PID"; then
     echo "服务已在运行: PID=$OLD_PID, PORT=$PORT"
     echo "日志: $LOG_FILE"
     exit 0
@@ -88,9 +113,9 @@ PY
 
 NEW_PID="$BOOT_PID"
 for _ in {1..20}; do
-  if command -v lsof >/dev/null 2>&1; then
-    PORT_PID="$(lsof -ti tcp:"$PORT" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "$PORT_PID" ]] && is_running "$PORT_PID"; then
+  PORT_PID="$(listening_pid)"
+  if [[ -n "$PORT_PID" ]]; then
+    if is_service_pid "$PORT_PID"; then
       NEW_PID="$PORT_PID"
       break
     fi
