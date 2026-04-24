@@ -647,6 +647,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ── Hot stocks ── */
 .hot-stock-list { display: grid; gap: 8px; }
 
+.hot-stock-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px 86px 86px;
+  gap: 8px;
+  padding: 0 12px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: right;
+}
+
 .hot-stock-item {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm); padding: 10px 12px;
@@ -703,6 +715,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   .hot-stock-side {
     width: 100%;
     grid-template-columns: 1fr 1fr 1fr;
+  }
+  .hot-stock-header {
+    grid-template-columns: 0 1fr 1fr 1fr;
+    padding-left: 12px;
   }
 }
 

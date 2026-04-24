@@ -686,8 +686,8 @@ function renderHotStocks() {
       <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
       <div class="hot-stock-side">
         <span class="hot-stock-price">${fmtNum(item.latest_price, 2)}</span>
-        <span class="${dayCls}">今日 ${daySign}${fmtNum(dayPct, 2)}%</span>
-        <span class="${tenCls}">10日 ${tenSign}${fmtNum(tenPct, 2)}%</span>
+        <span class="${dayCls}">${daySign}${fmtNum(dayPct, 2)}%</span>
+        <span class="${tenCls}">${tenSign}${fmtNum(tenPct, 2)}%</span>
       </div>
     `;
     root.appendChild(card);
