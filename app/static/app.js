@@ -832,6 +832,8 @@ function renderDcReport(report) {
   if (missingDates.length > 0) {
     if (_dcReportSortBy === 'missing') {
       missingDates.sort((a, b) => (b.missing_count || 0) - (a.missing_count || 0));
+    } else {
+      missingDates.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     }
     html += `<div class="dc-missing-header">缺失日期 (${missingDates.length} 天)</div>`;
     html += '<div class="dc-missing-list">';
