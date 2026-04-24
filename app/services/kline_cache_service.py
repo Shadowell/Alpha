@@ -480,19 +480,43 @@ class KlineCacheService:
             total_symbols=total,
             started_at=started_at,
         )
-        result = await self._concurrent_fetch(
-            symbols=missing_symbols,
-            start_date=td_fmt,
-            end_date=td_fmt,
-            task_id=task_id,
-            target_trade_date=target_trade_date,
-            state=state,
-            trigger_mode=trigger_mode,
-            total=total,
-            label="增量补缺",
-            force_remote=True,
-        )
-        completed, success_count, failed_count = result
+        completed = 0
+        success_count = 0
+        failed_count = 0
+        fallback_symbols = missing_symbols
+
+        latest_trade_date = await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        if target_trade_date == latest_trade_date:
+            batch_result = await self._batch_fill_from_spot(
+                symbols=missing_symbols,
+                trade_date=target_trade_date,
+                task_id=task_id,
+                target_trade_date=target_trade_date,
+                state=state,
+                trigger_mode=trigger_mode,
+                total=total,
+            )
+            completed += batch_result["completed"]
+            success_count += batch_result["success_count"]
+            fallback_symbols = batch_result["remaining_symbols"]
+
+        if fallback_symbols:
+            result = await self._concurrent_fetch(
+                symbols=fallback_symbols,
+                start_date=td_fmt,
+                end_date=td_fmt,
+                task_id=task_id,
+                target_trade_date=target_trade_date,
+                state=state,
+                trigger_mode=trigger_mode,
+                total=total,
+                label="增量补缺",
+                force_remote=True,
+                initial_completed=completed,
+                initial_success_count=success_count,
+                initial_failed_count=failed_count,
+            )
+            completed, success_count, failed_count = result
 
         final_status = "success" if completed > 0 else "failed"
         final_msg = (
@@ -527,9 +551,104 @@ class KlineCacheService:
             "task_id": task_id,
             "total_symbols": total,
             "synced_symbols": success_count + failed_count,
-            "missing_filled": total,
+            "missing_filled": completed,
             "mode": "incremental",
         }
+
+    async def _batch_fill_from_spot(
+        self,
+        *,
+        symbols: list[str],
+        trade_date: str,
+        task_id: str,
+        target_trade_date: str,
+        state: dict,
+        trigger_mode: str,
+        total: int,
+    ) -> dict[str, Any]:
+        t0 = pytime.time()
+        wanted = set(symbols)
+        try:
+            snapshot = await asyncio.wait_for(self.provider._fetch_spot_em(), timeout=15)
+        except Exception as exc:
+            print(f"[kline-cache] batch spot fetch failed: {exc!r}")
+            return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
+        if snapshot is None or snapshot.empty or "代码" not in snapshot.columns:
+            return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
+
+        rows: list[tuple[str, dict[str, Any]]] = []
+        valid_symbols: set[str] = set()
+        for _, item in snapshot.iterrows():
+            symbol = str(item.get("代码") or "").strip()
+            if symbol not in wanted:
+                continue
+            close = to_float(item.get("最新价"))
+            if close <= 0:
+                continue
+            open_price = to_float(item.get("今开")) or close
+            high = to_float(item.get("最高")) or max(open_price, close)
+            low = to_float(item.get("最低")) or min(open_price, close)
+            rows.append(
+                (
+                    symbol,
+                    {
+                        "trade_date": trade_date,
+                        "open": open_price,
+                        "high": high,
+                        "low": low,
+                        "close": close,
+                        "volume": to_float(item.get("成交量")),
+                        "amount": to_float(item.get("成交额")),
+                    },
+                )
+            )
+            valid_symbols.add(symbol)
+
+        if not rows:
+            print("[kline-cache] batch spot returned no usable kline rows")
+            return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
+
+        now_iso = now_cn().isoformat()
+        self.store.upsert_many_klines(rows, now_iso)
+        elapsed_ms = int((pytime.time() - t0) * 1000)
+        self.store.add_sync_task_details(
+            [
+                {
+                    "task_id": task_id,
+                    "symbol": symbol,
+                    "status": "success",
+                    "elapsed_ms": elapsed_ms,
+                    "error_message": "akshare stock_zh_a_spot_em batch",
+                    "created_at": now_iso,
+                }
+                for symbol in sorted(valid_symbols)
+            ]
+        )
+        completed = len(valid_symbols)
+        self.store.update_sync_task_progress(
+            task_id=task_id,
+            synced_symbols=completed,
+            success_symbols=completed,
+            failed_symbols=0,
+            message=f"批量行情补缺 {completed}/{total}",
+        )
+        self.store.set_sync_state(
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=completed,
+            total_symbols=total,
+            synced_symbols=completed,
+            success_symbols=completed,
+            failed_symbols=0,
+            task_id=task_id,
+            trigger_mode=trigger_mode,
+            updated_at=now_iso,
+            message=f"批量行情补缺 {completed}/{total}",
+        )
+        remaining = [s for s in symbols if s not in valid_symbols]
+        print(f"[kline-cache] batch spot filled {completed}/{total}, fallback={len(remaining)}")
+        return {"completed": completed, "success_count": completed, "remaining_symbols": remaining}
 
     async def _concurrent_fetch(
         self,
@@ -543,11 +662,14 @@ class KlineCacheService:
         total: int,
         label: str = "同步",
         force_remote: bool = False,
+        initial_completed: int = 0,
+        initial_success_count: int = 0,
+        initial_failed_count: int = 0,
     ) -> tuple[int, int, int]:
         sem = asyncio.Semaphore(_CONCURRENCY)
-        completed = 0
-        success_count = 0
-        failed_count = 0
+        completed = initial_completed
+        success_count = initial_success_count
+        failed_count = initial_failed_count
         now_iso = now_cn().isoformat()
         lock = asyncio.Lock()
 
