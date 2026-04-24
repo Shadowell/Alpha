@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import time
+from datetime import datetime, timedelta, time
 import uuid
 import time as pytime
 from typing import Any
@@ -14,6 +14,8 @@ from app.services.time_utils import now_cn
 
 
 _CONCURRENCY = 8
+_FETCH_TIMEOUT_SECONDS = 12
+_PROGRESS_UPDATE_EVERY = 10
 
 
 class KlineCacheService:
@@ -29,6 +31,110 @@ class KlineCacheService:
         self.schedule_after = schedule_after
         self.window_days = max(10, min(window_days, 365))
         self._syncing = False
+        self._queue: list[tuple[str, dict[str, Any]]] = []
+        self._queue_task: asyncio.Task | None = None
+
+    def enqueue_sync_trade_date(
+        self,
+        trade_date: str | None = None,
+        force: bool = False,
+        trigger_mode: str = "manual",
+        window_days: int | None = None,
+    ) -> dict[str, Any]:
+        return self._enqueue_job(
+            "full",
+            {
+                "trade_date": trade_date,
+                "force": force,
+                "trigger_mode": trigger_mode,
+                "window_days": window_days,
+            },
+        )
+
+    def enqueue_incremental_sync(
+        self,
+        trade_date: str | None = None,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        return self._enqueue_job(
+            "incremental",
+            {
+                "trade_date": trade_date,
+                "trigger_mode": trigger_mode,
+            },
+        )
+
+    def enqueue_incremental_range(
+        self,
+        start_date: str,
+        end_date: str,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        dates = self._weekdays_between(start_date, end_date)
+        if not dates:
+            return {
+                "success": False,
+                "accepted": False,
+                "message": "日期范围内没有可同步日期",
+                "submitted": 0,
+                "queue_size": len(self._queue),
+            }
+        for item in dates:
+            self._queue.append(("incremental", {"trade_date": item, "trigger_mode": trigger_mode}))
+        queue_size = len(self._queue)
+        if self._queue_task is None or self._queue_task.done():
+            self._queue_task = asyncio.create_task(self._run_queue())
+        return {
+            "success": True,
+            "accepted": True,
+            "status": "queued" if self._syncing or queue_size > len(dates) else "running",
+            "submitted": len(dates),
+            "start_date": dates[0],
+            "end_date": dates[-1],
+            "queue_size": queue_size,
+            "message": f"已提交{len(dates)}个日期到后台同步队列",
+        }
+
+    def _enqueue_job(self, job_type: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        self._queue.append((job_type, kwargs))
+        queue_size = len(self._queue)
+        if self._queue_task is None or self._queue_task.done():
+            self._queue_task = asyncio.create_task(self._run_queue())
+        return {
+            "success": True,
+            "accepted": True,
+            "status": "queued" if self._syncing or queue_size > 1 else "running",
+            "queue_size": queue_size,
+            "message": "同步任务已提交后台执行",
+        }
+
+    async def _run_queue(self) -> None:
+        while self._queue:
+            job_type, kwargs = self._queue.pop(0)
+            try:
+                if job_type == "incremental":
+                    await self.incremental_sync(**kwargs)
+                else:
+                    await self.sync_trade_date(**kwargs)
+            except Exception as exc:
+                print(f"[kline-cache] queued {job_type} sync failed: {exc}")
+
+    @staticmethod
+    def _weekdays_between(start_date: str, end_date: str, max_days: int = 180) -> list[str]:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            return []
+        if start > end:
+            return []
+        dates: list[str] = []
+        cur = start
+        while cur <= end and len(dates) < max_days:
+            if cur.weekday() < 5:
+                dates.append(cur.isoformat())
+            cur += timedelta(days=1)
+        return dates
 
     async def run_if_due(self) -> dict[str, Any] | None:
         """检查是否到达自动同步时间，到达则执行同步并返回结果 dict，未触发返回 None。"""
@@ -45,7 +151,7 @@ class KlineCacheService:
         if state.get("last_success_trade_date") == trade_date:
             return None
 
-        return await self.sync_trade_date(trade_date=trade_date, force=True, trigger_mode="auto")
+        return await self.incremental_sync(trade_date=trade_date, trigger_mode="auto")
 
     async def sync_trade_date(
         self,
@@ -447,9 +553,20 @@ class KlineCacheService:
 
         async def _fetch_one(symbol: str) -> None:
             nonlocal completed, success_count, failed_count
+            error_message = ""
             async with sem:
                 t0 = pytime.time()
-                hist = await self.provider.get_hist(symbol, start_date, end_date, force_remote=force_remote)
+                try:
+                    hist = await asyncio.wait_for(
+                        self.provider.get_hist(symbol, start_date, end_date, force_remote=force_remote),
+                        timeout=_FETCH_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    hist = pd.DataFrame()
+                    error_message = f"抓取超时>{_FETCH_TIMEOUT_SECONDS}s"
+                except Exception as exc:
+                    hist = pd.DataFrame()
+                    error_message = str(exc)[:200]
                 rows = self._normalize_hist(hist)
                 elapsed = int((pytime.time() - t0) * 1000)
 
@@ -466,11 +583,11 @@ class KlineCacheService:
                     failed_count += 1
                     self.store.add_sync_task_detail(
                         task_id=task_id, symbol=symbol, status="failed",
-                        elapsed_ms=elapsed, error_message="数据为空", created_at=now_cn().isoformat(),
+                        elapsed_ms=elapsed, error_message=error_message or "数据为空", created_at=now_cn().isoformat(),
                     )
 
                 synced = success_count + failed_count
-                if synced % 50 == 0 or synced == total:
+                if synced % _PROGRESS_UPDATE_EVERY == 0 or synced == total:
                     self.store.update_sync_task_progress(
                         task_id=task_id, synced_symbols=synced,
                         success_symbols=success_count, failed_symbols=failed_count,
@@ -503,7 +620,26 @@ class KlineCacheService:
         return self.store.get_kline(clean_symbol, days)
 
     def get_sync_state(self) -> dict[str, Any]:
-        return self.store.get_sync_state()
+        state = self.store.get_sync_state()
+        if state.get("status") == "running" and not self._syncing and not (
+            self._queue_task is not None and not self._queue_task.done()
+        ):
+            self.store.set_sync_state(
+                attempt_trade_date=state.get("last_attempt_trade_date") or "",
+                success_trade_date=state.get("last_success_trade_date"),
+                status="failed",
+                symbol_count=int(state.get("symbol_count") or 0),
+                total_symbols=int(state.get("total_symbols") or 0),
+                synced_symbols=int(state.get("synced_symbols") or 0),
+                success_symbols=int(state.get("success_symbols") or 0),
+                failed_symbols=int(state.get("failed_symbols") or 0),
+                task_id=state.get("task_id"),
+                trigger_mode=state.get("trigger_mode") or "manual",
+                updated_at=now_cn().isoformat(),
+                message="上次同步中断，请重新提交同步任务",
+            )
+            state = self.store.get_sync_state()
+        return state
 
     def get_sync_progress(self) -> dict[str, Any]:
         return self.store.get_sync_state()
