@@ -69,6 +69,7 @@ class HotStockItem(BaseModel):
     latest_price: float
     change_pct: float
     change_amount: float
+    cumulative_10d_pct: float = 0.0
 
 
 class HotStocksResponse(BaseModel):
