@@ -466,6 +466,16 @@ async def run_hot_stock_ai():
     return {"success": True, "message": "热门股票智能分析任务已启动", "snapshot": hot_stock_ai_service.get_snapshot()}
 
 
+@app.post("/api/strategy/hot-stock-ai/pool/move")
+async def move_hot_stock_ai_pool(req: MovePoolRequest):
+    try:
+        return hot_stock_ai_service.move_pool(req.symbol, req.target_pool)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="symbol not found in hot stock ai pools")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/strategy/hot-stock-ai/config")
 async def get_hot_stock_ai_config():
     return hot_stock_ai_service.get_config()

@@ -147,6 +147,33 @@ def test_hot_stock_ai_builds_three_pools(tmp_path: Path):
     assert "score_breakdown" in snap["entries"][0]
 
 
+def test_hot_stock_ai_move_candidate_to_focus_pool(tmp_path: Path):
+    state_path = tmp_path / "state.db"
+    service = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=FakeKronos(),
+        state_store=SQLiteStateStore(str(state_path)),
+    )
+
+    asyncio.run(service.run(trigger="manual"))
+    moved = service.move_pool("600003", "focus")
+    snap = moved["snapshot"]
+
+    assert moved["success"] is True
+    assert all(item["symbol"] != "600003" for item in snap["pools"]["candidate"])
+    assert any(item["symbol"] == "600003" for item in snap["pools"]["focus"])
+    assert next(item for item in snap["entries"] if item["symbol"] == "600003")["manual_pool"] == "focus"
+
+    reloaded = HotStockAIService(
+        provider=FakeProvider(),
+        kline_store=FakeKlineStore(),
+        kronos_service=FakeKronos(),
+        state_store=SQLiteStateStore(str(state_path)),
+    )
+    assert any(item["symbol"] == "600003" for item in reloaded.get_snapshot()["pools"]["focus"])
+
+
 def test_hot_stock_ai_applies_tradingagents_bonus_and_cache(tmp_path: Path):
     adapter = FakeTradingAgentsAdapter()
     service = HotStockAIService(

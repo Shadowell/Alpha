@@ -145,6 +145,58 @@ class HotStockAIService:
         payload["running"] = self.running
         return payload
 
+    def move_pool(self, symbol: str, target_pool: str) -> dict[str, Any]:
+        clean_symbol = normalize_symbol(symbol)
+        target = str(target_pool or "").strip()
+        if target not in {POOL_CANDIDATE, POOL_FOCUS, POOL_BUY}:
+            raise ValueError("invalid target pool")
+
+        pools = self._snapshot.setdefault(
+            "pools",
+            {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []},
+        )
+        for pool_name in (POOL_CANDIDATE, POOL_FOCUS, POOL_BUY):
+            pools.setdefault(pool_name, [])
+
+        moved: dict[str, Any] | None = None
+        for pool_name in (POOL_CANDIDATE, POOL_FOCUS, POOL_BUY):
+            remaining: list[dict[str, Any]] = []
+            for item in pools.get(pool_name, []):
+                if normalize_symbol(item.get("symbol", "")) == clean_symbol:
+                    moved = dict(item)
+                else:
+                    remaining.append(item)
+            pools[pool_name] = remaining
+
+        if moved is None:
+            for item in self._snapshot.get("entries", []):
+                if normalize_symbol(item.get("symbol", "")) == clean_symbol:
+                    moved = dict(item)
+                    break
+
+        if moved is None:
+            raise KeyError(clean_symbol)
+
+        moved["pool"] = target
+        moved["manual_pool"] = target
+        moved["manual_moved_at"] = now_cn().isoformat()
+        pools[target].append(moved)
+        pools[target].sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+
+        for item in self._snapshot.get("entries", []):
+            if normalize_symbol(item.get("symbol", "")) == clean_symbol:
+                item["pool"] = target
+                item["manual_pool"] = target
+                item["manual_moved_at"] = moved["manual_moved_at"]
+                break
+
+        self._snapshot["updated_at"] = now_cn().isoformat()
+        self._snapshot.setdefault("meta", {})["manual_pool_moves"] = int(
+            self._snapshot.get("meta", {}).get("manual_pool_moves", 0)
+        ) + 1
+        self._save_state()
+        return {"success": True, "message": "迁移成功", "snapshot": self.get_snapshot()}
+
     def is_stale(self) -> bool:
         cfg = self.get_config()
         updated_at = str(self._snapshot.get("updated_at") or "")
