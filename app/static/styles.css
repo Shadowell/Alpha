@@ -680,14 +680,31 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .hot-stock-name { font-size: 12px; font-weight: 600; }
 
 .hot-stock-side {
-  display: flex; align-items: center; gap: 8px;
+  display: grid;
+  grid-template-columns: 68px 86px 86px;
+  justify-content: end;
+  gap: 8px;
   font-size: 12px; white-space: nowrap;
   font-family: var(--font-mono);
   font-weight: 600;
+  text-align: right;
 }
 
 .hot-stock-side.up { color: var(--up); }
 .hot-stock-side.down { color: var(--down); }
+.hot-stock-price { color: var(--text); }
+
+@media (max-width: 760px) {
+  .hot-stock-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .hot-stock-side {
+    width: 100%;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
 
 /* ── Sync panel ── */
 .sync-row {

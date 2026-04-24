@@ -8,6 +8,9 @@ from app.services.time_utils import now_cn
 
 
 class EmptyConceptProvider:
+    def __init__(self):
+        self.kline_store = None
+
     async def get_all_concepts(self, cache_seconds=30):
         return pd.DataFrame()
 
@@ -23,6 +26,7 @@ class EmptyConceptProvider:
 
 class CountingHotStockProvider(EmptyConceptProvider):
     def __init__(self):
+        super().__init__()
         self.calls = 0
 
     async def get_hot_stocks(self, top_n=10, **kwargs):
@@ -39,6 +43,23 @@ class CountingHotStockProvider(EmptyConceptProvider):
                 }
             ]
         )
+
+
+class FakeKlineStore:
+    def get_kline(self, symbol: str, days: int = 12):
+        return [
+            {"close": 10.0},
+            {"close": 10.2},
+            {"close": 10.3},
+            {"close": 10.4},
+            {"close": 10.5},
+            {"close": 10.6},
+            {"close": 10.7},
+            {"close": 10.8},
+            {"close": 10.9},
+            {"close": 11.0},
+            {"close": 11.1},
+        ][-days:]
 
 
 def test_refresh_concepts_keeps_previous_hot_concepts_when_source_empty(tmp_path):
@@ -81,6 +102,7 @@ def test_get_hot_concepts_clips_legacy_snapshot_to_top10(tmp_path):
 
 def test_get_hot_stocks_refreshes_stale_snapshot_even_when_frozen(tmp_path):
     provider = CountingHotStockProvider()
+    provider.kline_store = FakeKlineStore()
     service = FunnelService(provider=provider, persist_db_path=str(tmp_path / "state.db"))
     service.frozen = True
     service.hot_stocks = [
@@ -99,6 +121,7 @@ def test_get_hot_stocks_refreshes_stale_snapshot_even_when_frozen(tmp_path):
 
     assert provider.calls == 1
     assert payload.items[0].symbol == "600111"
+    assert payload.items[0].cumulative_10d_pct == 141.0
     assert payload.updated_at == service.hot_stocks_updated_at
 
 
@@ -113,6 +136,7 @@ def test_get_hot_stocks_uses_recent_snapshot_without_refetch(tmp_path):
             "latest_price": 24.1,
             "change_pct": 0.5,
             "change_amount": 0.12,
+            "cumulative_10d_pct": 8.2,
         }
     ]
     service.hot_stocks_updated_at = now_cn().isoformat()
@@ -121,3 +145,4 @@ def test_get_hot_stocks_uses_recent_snapshot_without_refetch(tmp_path):
 
     assert provider.calls == 0
     assert payload.items[0].symbol == "600111"
+    assert payload.items[0].cumulative_10d_pct == 8.2

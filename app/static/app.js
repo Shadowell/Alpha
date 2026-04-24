@@ -673,14 +673,22 @@ function renderHotStocks() {
   root.innerHTML = '';
   const items = state.hotStocks?.items || [];
   items.forEach((item) => {
-    const cls = Number(item.change_pct || 0) >= 0 ? 'up' : 'down';
-    const sign = Number(item.change_pct || 0) >= 0 ? '+' : '';
+    const dayPct = Number(item.change_pct || 0);
+    const tenPct = Number(item.cumulative_10d_pct || 0);
+    const dayCls = dayPct >= 0 ? 'up' : 'down';
+    const tenCls = tenPct >= 0 ? 'up' : 'down';
+    const daySign = dayPct >= 0 ? '+' : '';
+    const tenSign = tenPct >= 0 ? '+' : '';
     const card = document.createElement('div');
     card.className = `hot-stock-item ${state.selectedHotSymbol === item.symbol ? 'active' : ''}`;
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
       <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
-      <div class="hot-stock-side ${cls}"><span>${fmtNum(item.latest_price, 2)}</span><span>${sign}${fmtNum(item.change_pct, 2)}%</span></div>
+      <div class="hot-stock-side">
+        <span class="hot-stock-price">${fmtNum(item.latest_price, 2)}</span>
+        <span class="${dayCls}">今日 ${daySign}${fmtNum(dayPct, 2)}%</span>
+        <span class="${tenCls}">10日 ${tenSign}${fmtNum(tenPct, 2)}%</span>
+      </div>
     `;
     root.appendChild(card);
   });

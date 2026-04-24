@@ -390,10 +390,33 @@ class FunnelService:
                     "latest_price": float(row.get("latest_price", 0.0)),
                     "change_pct": float(row.get("change_pct", 0.0)),
                     "change_amount": float(row.get("change_amount", 0.0)),
+                    "cumulative_10d_pct": self._calc_hot_stock_10d_pct(
+                        str(row.get("symbol", "")),
+                        float(row.get("latest_price", 0.0)),
+                    ),
                 }
             )
         self.hot_stocks = items
         self.hot_stocks_updated_at = now_cn().isoformat()
+
+    def _calc_hot_stock_10d_pct(self, symbol: str, latest_price: float) -> float:
+        store = getattr(self.provider, "kline_store", None)
+        if store is None:
+            return 0.0
+        try:
+            rows = store.get_kline(symbol, days=12)
+        except Exception:
+            return 0.0
+        if not rows or len(rows) < 11:
+            return 0.0
+        try:
+            base = float(rows[-11].get("close") or 0.0)
+            current = float(latest_price or rows[-1].get("close") or 0.0)
+            if base <= 0 or current <= 0:
+                return 0.0
+            return round(((current / base) - 1.0) * 100.0, 2)
+        except Exception:
+            return 0.0
 
     async def _refresh_market_panels_unlocked(self, force: bool = False) -> None:
         """Refresh market panels. Caller MUST hold self.lock."""
