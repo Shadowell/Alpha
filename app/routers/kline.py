@@ -122,8 +122,6 @@ async def get_cached_kline(symbol: str, days: int = 30):
 
 async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
     """后台循环：每 10 分钟检测是否需要自动同步 K 线，同步后自动检查数据完整性。"""
-    from app.services.feishu_notify import notify_sync_complete
-
     await asyncio.sleep(10)
     while True:
         try:
@@ -138,21 +136,7 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
                 except Exception as chk_exc:
                     print(f"[kline-cache] integrity check failed: {chk_exc}")
 
-                try:
-                    integrity_summary = ""
-                    if report:
-                        integrity_summary = f" | 完整性: {report.get('coverage_pct', 0)}% 缺失{report.get('total_missing', 0)}条"
-                    await notify_sync_complete(
-                        trade_date=result.get("trade_date", ""),
-                        success_count=result.get("success_symbols", result.get("symbol_count", 0)),
-                        failed_count=result.get("failed_symbols", 0),
-                        total=result.get("total_symbols", 0),
-                        elapsed_sec=result.get("elapsed_sec", 0),
-                        mode=f"智能补缺{integrity_summary}",
-                    )
-                    print("[kline-cache] feishu notification sent")
-                except Exception as notify_exc:
-                    print(f"[kline-cache] feishu notify failed: {notify_exc}")
+                print("[kline-cache] sync completion notification skipped")
         except Exception as exc:
             print(f"[kline-cache] error: {exc}")
         await asyncio.sleep(600)
