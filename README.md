@@ -565,7 +565,7 @@ pip3 install -r requirements.txt
 ```bash
 ./start.sh      # 启动（后台运行）
 ./stop.sh       # 停止
-./restart.sh    # 重启（代码修改后必须执行）
+./restart.sh    # 重启：先请求应用释放数据库资源并执行 SQLite checkpoint，再停止并启动固定 18888
 ```
 
 日志文件：`logs/server.log`
