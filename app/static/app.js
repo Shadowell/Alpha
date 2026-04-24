@@ -2646,27 +2646,15 @@ async function init() {
 
   document.getElementById('btnDcFullSync').onclick = async () => {
     const btn = document.getElementById('btnDcFullSync');
-    _btnStart(btn, '同步中...');
-    setStatus('全量同步（智能补缺）执行中...', 'info');
+    _btnStart(btn, '提交中...');
+    setStatus('正在提交全量补缺任务...', 'info');
     try {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
-      const filled = payload.missing_filled ?? 0;
-      const mTotal = payload.missing_total ?? 0;
-      const unfillable = payload.missing_unfillable ?? 0;
-      let extra = '';
-      if (mTotal > 0) {
-        if (unfillable > 0 && filled === 0) {
-          extra = ` · ${mTotal}条缺失均为停牌/未上市`;
-        } else if (unfillable > 0) {
-          extra = ` · 实补${filled}条，${unfillable}条停牌无数据`;
-        } else {
-          extra = ` · 实补${filled}/${mTotal}条`;
-        }
-      }
-      setStatus(`同步完成: ${payload.success_symbols || 0}/${payload.total_symbols || 0}股${extra}`, 'success');
+      const queued = Number(payload.queue_size || 0);
+      setStatus(`全量补缺任务已提交后台执行${queued > 1 ? ` · 队列${queued}个任务` : ''}`, 'success');
       await loadDataCenter();
     } catch (err) {
-      setStatus(`同步失败: ${err.message}`, 'error');
+      setStatus(`提交失败: ${err.message}`, 'error');
       await loadDataCenter();
     } finally {
       _btnEnd(btn);
@@ -2693,21 +2681,17 @@ async function init() {
     if (startVal > endVal) { setStatus('开始日期不能晚于结束日期', 'error'); return; }
     const dates = _tradeDatesBetween(startVal, endVal);
     if (!dates.length) { setStatus('所选范围内无交易日', 'error'); return; }
-    _btnStart(btn, `同步 0/${dates.length}`);
-    setStatus(`增量同步 ${startVal} ~ ${endVal} (${dates.length}天) 执行中...`, 'info');
-    let ok = 0, fail = 0;
+    _btnStart(btn, '提交中...');
+    setStatus(`正在提交增量同步任务 ${startVal} ~ ${endVal} (${dates.length}天)...`, 'info');
     try {
-      for (let i = 0; i < dates.length; i++) {
-        try {
-          await request(`/api/jobs/kline-cache/incremental-sync?trade_date=${dates[i]}&trigger_mode=manual`, { method: 'POST' });
-          ok++;
-        } catch { fail++; }
-        btn.textContent = `同步 ${i + 1}/${dates.length}`;
-      }
-      setStatus(`增量同步完成: ${startVal}~${endVal} · 成功${ok}天 / 失败${fail}天`, ok > 0 ? 'success' : 'error');
+      const qs = new URLSearchParams({ start_date: startVal, end_date: endVal, trigger_mode: 'manual' });
+      const payload = await request(`/api/jobs/kline-cache/batch-incremental-sync?${qs.toString()}`, { method: 'POST' });
+      const submitted = Number(payload.submitted || 0);
+      const queued = Number(payload.queue_size || 0);
+      setStatus(`增量同步已批量提交: ${submitted}天${queued > submitted ? ` · 队列${queued}个任务` : ''}`, submitted > 0 ? 'success' : 'error');
       await loadDataCenter();
     } catch (err) {
-      setStatus(`增量同步失败: ${err.message}`, 'error');
+      setStatus(`增量同步提交失败: ${err.message}`, 'error');
       await loadDataCenter();
     } finally {
       _btnEnd(btn);

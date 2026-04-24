@@ -27,6 +27,12 @@ is_service_pid() {
     return 1
   fi
 
+  local stat
+  stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  if [[ "$stat" == *U* ]]; then
+    return 1
+  fi
+
   local cmd
   cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   if [[ "$cmd" == *"uvicorn app.main:app"* ]]; then

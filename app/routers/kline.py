@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.kline_cache_service import KlineCacheService
@@ -32,31 +32,43 @@ def init_kline_router(
 # ── 同步任务路由 ──────────────────────────────────────────
 
 
-@router.post("/jobs/kline-cache/sync")
+@router.post("/jobs/kline-cache/sync", status_code=status.HTTP_202_ACCEPTED)
 async def run_kline_cache_sync(
     trade_date: str | None = None,
     force: bool = False,
     trigger_mode: str = "manual",
     window_days: int | None = None,
 ):
-    payload = await _kline_cache_service.sync_trade_date(
+    payload = _kline_cache_service.enqueue_sync_trade_date(
         trade_date=trade_date, force=force, trigger_mode=trigger_mode, window_days=window_days,
     )
-    if not payload.get("success"):
-        raise HTTPException(status_code=503, detail=payload.get("message", "同步失败"))
     return payload
 
 
-@router.post("/jobs/kline-cache/incremental-sync")
+@router.post("/jobs/kline-cache/incremental-sync", status_code=status.HTTP_202_ACCEPTED)
 async def run_kline_incremental_sync(
     trade_date: str | None = None,
     trigger_mode: str = "manual",
 ):
-    payload = await _kline_cache_service.incremental_sync(
+    payload = _kline_cache_service.enqueue_incremental_sync(
         trade_date=trade_date, trigger_mode=trigger_mode,
     )
+    return payload
+
+
+@router.post("/jobs/kline-cache/batch-incremental-sync", status_code=status.HTTP_202_ACCEPTED)
+async def run_kline_batch_incremental_sync(
+    start_date: str,
+    end_date: str,
+    trigger_mode: str = "manual",
+):
+    payload = _kline_cache_service.enqueue_incremental_range(
+        start_date=start_date,
+        end_date=end_date,
+        trigger_mode=trigger_mode,
+    )
     if not payload.get("success"):
-        raise HTTPException(status_code=503, detail=payload.get("message", "增量同步失败"))
+        raise HTTPException(status_code=400, detail=payload.get("message", "批量同步提交失败"))
     return payload
 
 

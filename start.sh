@@ -15,11 +15,10 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   echo "已加载 .env"
 fi
 
-PORT=18888  # fixed; do not override via env or .env
+PORT="${PORT:-18888}"
 HOST="${HOST:-0.0.0.0}"
 RELOAD="${RELOAD:-0}"
 
-PID_FILE="$PID_DIR/funnel-${PORT}.pid"
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
 is_running() {
@@ -33,6 +32,12 @@ is_running() {
 is_service_pid() {
   local pid="$1"
   if ! is_running "$pid"; then
+    return 1
+  fi
+
+  local stat
+  stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+  if [[ "$stat" == *U* ]]; then
     return 1
   fi
 
@@ -54,6 +59,25 @@ listening_pid() {
     lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
   fi
 }
+
+if command -v lsof >/dev/null 2>&1; then
+  CURRENT_LISTENER="$(listening_pid)"
+  if [[ -n "$CURRENT_LISTENER" ]] && ! is_service_pid "$CURRENT_LISTENER"; then
+    FALLBACK_PORT=""
+    for candidate in 18892 18893 18894 18895 18896 18897 18898 18899; do
+      if ! lsof -nP -tiTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
+        FALLBACK_PORT="$candidate"
+        break
+      fi
+    done
+    if [[ -n "$FALLBACK_PORT" ]]; then
+      echo "默认端口 $PORT 被不可用进程占用，改用端口 $FALLBACK_PORT"
+      PORT="$FALLBACK_PORT"
+    fi
+  fi
+fi
+
+PID_FILE="$PID_DIR/funnel-${PORT}.pid"
 
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -135,7 +159,7 @@ if is_running "$NEW_PID"; then
   echo "自动重启: $([[ "$RELOAD" == "1" ]] && echo 开启 || echo 关闭)"
   echo "日志文件: $LOG_FILE"
   for _ in {1..10}; do
-    if curl -fsS "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
+    if curl --max-time 2 -fsS "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
       break
     fi
     sleep 0.5
