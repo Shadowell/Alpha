@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -30,6 +32,31 @@ def init_kline_router(
 
 
 # ── 同步任务路由 ──────────────────────────────────────────
+
+
+def _checkpoint_sqlite_for_shutdown() -> list[dict[str, str]]:
+    results: list[dict[str, str]] = []
+    for rel in ("data/funnel_state.db", "data/market_kline.db"):
+        path = Path(rel)
+        if not path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(path), timeout=1.0)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+            results.append({"path": rel, "status": "ok"})
+        except Exception as exc:
+            results.append({"path": rel, "status": "failed", "error": str(exc)})
+    return results
+
+
+@router.post("/admin/shutdown-prepare")
+async def admin_shutdown_prepare(reason: str = "restart"):
+    return {
+        "success": True,
+        "reason": reason,
+        "sqlite": await asyncio.to_thread(_checkpoint_sqlite_for_shutdown),
+    }
 
 
 @router.post("/jobs/kline-cache/sync", status_code=status.HTTP_202_ACCEPTED)
