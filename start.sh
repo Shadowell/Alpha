@@ -15,7 +15,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   echo "已加载 .env"
 fi
 
-PORT="${PORT:-18888}"
+PORT=18888
 HOST="${HOST:-0.0.0.0}"
 RELOAD="${RELOAD:-0}"
 
@@ -63,17 +63,9 @@ listening_pid() {
 if command -v lsof >/dev/null 2>&1; then
   CURRENT_LISTENER="$(listening_pid)"
   if [[ -n "$CURRENT_LISTENER" ]] && ! is_service_pid "$CURRENT_LISTENER"; then
-    FALLBACK_PORT=""
-    for candidate in 18892 18893 18894 18895 18896 18897 18898 18899; do
-      if ! lsof -nP -tiTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
-        FALLBACK_PORT="$candidate"
-        break
-      fi
-    done
-    if [[ -n "$FALLBACK_PORT" ]]; then
-      echo "默认端口 $PORT 被不可用进程占用，改用端口 $FALLBACK_PORT"
-      PORT="$FALLBACK_PORT"
-    fi
+    echo "启动失败: 固定端口 $PORT 被不可用进程占用 PID=$CURRENT_LISTENER"
+    echo "请先释放 18888；若进程处于 UEs 状态，需要重启 Mac 后再执行 ./start.sh"
+    exit 1
   fi
 fi
 
