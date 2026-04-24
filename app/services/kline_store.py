@@ -164,6 +164,48 @@ class KlineSQLiteStore:
             conn.commit()
             return len(payload)
 
+    def upsert_many_klines(self, items: list[tuple[str, dict[str, Any]]], updated_at: str) -> int:
+        if not items:
+            return 0
+
+        payload = [
+            (
+                str(symbol),
+                str(row.get("trade_date", "")),
+                float(row.get("open", 0.0)),
+                float(row.get("high", 0.0)),
+                float(row.get("low", 0.0)),
+                float(row.get("close", 0.0)),
+                float(row.get("volume", 0.0)),
+                float(row.get("amount", 0.0)),
+                updated_at,
+            )
+            for symbol, row in items
+            if str(symbol) and str(row.get("trade_date", ""))
+        ]
+        if not payload:
+            return 0
+
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO kline_daily(symbol, trade_date, open, high, low, close, volume, amount, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    open=excluded.open,
+                    high=excluded.high,
+                    low=excluded.low,
+                    close=excluded.close,
+                    volume=excluded.volume,
+                    amount=excluded.amount,
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
     def get_kline(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
@@ -316,6 +358,34 @@ class KlineSQLiteStore:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (task_id, symbol, status, elapsed_ms, error_message, created_at),
+            )
+            conn.commit()
+
+    def add_sync_task_details(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        payload = [
+            (
+                str(r.get("task_id", "")),
+                str(r.get("symbol", "")),
+                str(r.get("status", "")),
+                int(r.get("elapsed_ms", 0)),
+                str(r.get("error_message", "")),
+                str(r.get("created_at", "")),
+            )
+            for r in rows
+            if r.get("task_id") and r.get("symbol") and r.get("status")
+        ]
+        if not payload:
+            return
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                payload,
             )
             conn.commit()
 
