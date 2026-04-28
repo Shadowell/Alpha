@@ -210,23 +210,7 @@ Hermes Agent 支持两种运行模式，自动探测并切换：
 |------|------|------|
 | **15:30** | `daily_review` | 盘后复盘：分析漏斗三池变化、评分表现，输出诊断与后续建议 |
 | **21:00** | `notice_review` | 公告复盘：审视当日公告筛选效果，输出规则观察与优化建议 |
-| **盘中每 30s** | `risk_guardian` | 监控模拟盘持仓，触发止盈/止损/冲高回落告警（可选自动平仓） |
-| **盘中每 60s** | `auto_trade` | 根据 buy 池分数自动下模拟单，到达阈值自动平仓（可开关/Dry Run） |
 | **盘中** | 智能监控 | 按间隔执行 LLM 市场分析，推送主线动态到前端 |
-| **周五 15:30** | `weekly_report` | 自动生成周报（市场+系统+模拟盘）并推送飞书 |
-
-### Hermes AI 能力扩展（6 项）
-
-前端入口：**智能监控 / 进化 → AI 能力** 子 Tab。
-
-| 代号 | 能力 | 说明 |
-|------|------|------|
-| **A** | 自动交易闭环 | buy 池分数 ≥70 自动下模拟单 + tp/sl 自动平仓，完整的"选股→决策→执行→复盘"闭环 |
-| **B** | 风险守门人 | 盘中 30s 扫描，触发止盈 (+8%)/止损 (-5%)/冲高回落规则，告警卡片可选自动平仓 |
-| **C** | 策略回测实验室 | 任意自定义策略（含 3 条内置预设）在全 A 股 × 180 天历史上回测，返回胜率/累计收益/最大回撤（示例：576 信号 / 46% 胜率 / +390% 累计 / 87 秒） |
-| **D** | 深度个股研报 | LLM 聚合"K线 + Kronos 预测 + 概念 + 公告"生成 200 字研报卡（含 verdict/confidence/利好/风险/操作建议） |
-| **F** | 消息驱动分析 | 把公告+龙虎榜+概念融合 LLM 上下文，输出"消息→标的→操作"链路（含情绪/置信度/理由） |
-| **G** | 周报生成 | 周五 15:30 自动汇总一周热门概念/漏斗/模拟盘业绩并推飞书，也可手动触发 |
 
 ### 智能监控数据采集
 
@@ -464,6 +448,7 @@ Alpha/
 │       ├── strategy_engine.py         # 三池盘中实时评分 + 迁池规则
 │       ├── strategy_rules.py          # ★ 自定义策略：12 条原子规则（注册表 + 参数 schema + 评估器）
 │       ├── custom_strategy.py         # ★ 自定义策略数据模型 + 3 条内置预设 + CustomStrategyScanner
+│       ├── backtest_lab.py            # 自定义策略历史回测
 │       ├── quiet_breakout_scanner.py  # 缩量启动扫描（兼容保留，供 legacy API / Hermes 工具复用）
 │       ├── concept_engine.py          # 概念热度评分 + 个股板块映射
 │       ├── notice_service.py          # 公告抓取 + 规则/LLM 双引擎打分
@@ -592,24 +577,6 @@ pip3 install -r requirements.txt
 | POST | `/api/strategy/first-limit-alpha/inference/run` | 对最新或指定交易日样本执行模型打分 |
 | POST | `/api/strategy/first-limit-alpha/backtest` | 基于最近一次 baseline 结果执行 TopK 回测 |
 
-### Hermes AI 扩展能力
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET  | `/api/hermes-ai/risk` | 风险守门人配置与告警快照 |
-| POST | `/api/hermes-ai/risk/config` | 更新 tp/sl/冲高回落阈值 + 自动平仓开关 |
-| POST | `/api/hermes-ai/risk/tick` | 立即扫描一次持仓 |
-| GET  | `/api/hermes-ai/auto-trade` | 自动交易配置与最近动作 |
-| POST | `/api/hermes-ai/auto-trade/config` | 开关启用/dry_run/最多持仓/每笔股数 |
-| POST | `/api/hermes-ai/auto-trade/tick` | 立即执行一次自动交易扫描 |
-| GET  | `/api/hermes-ai/backtest` | 最近一次回测结果 |
-| POST | `/api/hermes-ai/backtest/run` | 触发缩量启动策略在全 A 股 × 180 天上回测 |
-| POST | `/api/hermes-ai/research/{symbol}` | 为指定个股生成聚合研报卡 |
-| GET  | `/api/hermes-ai/news-insight` | 最近一次消息驱动分析 |
-| POST | `/api/hermes-ai/news-insight/run` | 重新生成消息驱动分析 |
-| GET  | `/api/hermes-ai/weekly-report` | 最近一次周报 |
-| POST | `/api/hermes-ai/weekly-report/run` | 立即生成周报并推飞书 |
-
 ### 公告选股
 
 | 方法 | 路径 | 说明 |
@@ -693,9 +660,8 @@ pip3 install -r requirements.txt
 | K 线缓存 | 6 | stats / status / progress / logs / report / 单股 |
 | 公告 | 2 | funnel + keywords |
 | Hermes Agent | 4 | status / tasks / 监控 |
-| Hermes AI 扩展 | 5 | risk / auto-trade / backtest / news / weekly |
 | 模拟盘 | 5 | positions / history / summary / trades / settings |
-| 已移除接口 | 8 | proposal / proposal-learner 路由应返回 404 |
+| 已移除接口 | 21 | proposal / proposal-learner / hermes-ai 路由应返回 404 |
 | 公告详情 | 1 | 容忍 200/404 |
 | 性能巡检 | 5 | 关键只读端点 < 3s |
 

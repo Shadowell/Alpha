@@ -264,33 +264,7 @@ class TestAgent:
 
 
 # ─────────────────────────────────────────────
-# 8. Hermes AI 扩展
-# ─────────────────────────────────────────────
-
-class TestHermesAI:
-    def test_risk(self, client):
-        r = client.get("/api/hermes-ai/risk")
-        assert r.status_code == 200
-
-    def test_auto_trade(self, client):
-        r = client.get("/api/hermes-ai/auto-trade")
-        assert r.status_code == 200
-
-    def test_backtest_last(self, client):
-        r = client.get("/api/hermes-ai/backtest")
-        assert r.status_code == 200
-
-    def test_news_insight_last(self, client):
-        r = client.get("/api/hermes-ai/news-insight")
-        assert r.status_code == 200
-
-    def test_weekly_report_last(self, client):
-        r = client.get("/api/hermes-ai/weekly-report")
-        assert r.status_code == 200
-
-
-# ─────────────────────────────────────────────
-# 9. 模拟盘
+# 8. 模拟盘
 # ─────────────────────────────────────────────
 
 class TestPaper:
@@ -318,7 +292,7 @@ class TestPaper:
 
 
 # ─────────────────────────────────────────────
-# 10. 已移除提案接口
+# 9. 已移除提案 / Hermes AI 能力接口
 # ─────────────────────────────────────────────
 
 class TestRemovedProposalApis:
@@ -331,6 +305,19 @@ class TestRemovedProposalApis:
         ("/api/agent/proposals/batch", "post"),
         ("/api/agent/proposals/create", "post"),
         ("/api/hermes-ai/proposal-learner", "get"),
+        ("/api/hermes-ai/risk", "get"),
+        ("/api/hermes-ai/risk/config", "post"),
+        ("/api/hermes-ai/risk/tick", "post"),
+        ("/api/hermes-ai/auto-trade", "get"),
+        ("/api/hermes-ai/auto-trade/config", "post"),
+        ("/api/hermes-ai/auto-trade/tick", "post"),
+        ("/api/hermes-ai/backtest", "get"),
+        ("/api/hermes-ai/backtest/run", "post"),
+        ("/api/hermes-ai/research/600519", "post"),
+        ("/api/hermes-ai/news-insight", "get"),
+        ("/api/hermes-ai/news-insight/run", "post"),
+        ("/api/hermes-ai/weekly-report", "get"),
+        ("/api/hermes-ai/weekly-report/run", "post"),
     ])
     def test_removed_routes_return_404(self, client, path, method):
         if method == "post":
@@ -341,7 +328,7 @@ class TestRemovedProposalApis:
 
 
 # ─────────────────────────────────────────────
-# 11. 公告详情（基础可访问性）
+# 10. 公告详情（基础可访问性）
 # ─────────────────────────────────────────────
 
 class TestNoticeDetail:
