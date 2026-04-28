@@ -2177,13 +2177,6 @@ body { color: var(--text); }
   color: #34d399; font-size: 10px; font-weight: 600;
 }
 
-.graphic-area {
-  margin-top: 18px;
-  padding: 20px 22px;
-  background: linear-gradient(180deg, rgba(14, 165, 233, 0.08) 0%, rgba(15, 23, 42, 0.58) 38%);
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 14px;
-}
 .hot-ai-area {
   margin-top: 18px;
   padding: 20px 22px;
@@ -2226,24 +2219,13 @@ body { color: var(--text); }
   letter-spacing: 0.4px;
   box-shadow: 0 2px 10px rgba(14, 165, 233, 0.28);
 }
-.graphic-area .pool-threshold {
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
-}
 .hot-ai-area .pool-threshold {
   background: rgba(251, 191, 36, 0.12);
   color: #fbbf24;
 }
-.graphic-card .card-score {
-  min-width: 74px;
-  text-align: right;
-}
 .hot-ai-card .card-score {
   min-width: 74px;
   text-align: right;
-}
-.graphic-card .predict-card-metric b {
-  color: #38bdf8;
 }
 .hot-ai-card .predict-card-metric b {
   color: #fbbf24;
@@ -2317,19 +2299,6 @@ body { color: var(--text); }
   line-height: 1.6;
   color: #e2e8f0;
 }
-.graphic-tag-lowrisk {
-  background: rgba(52, 211, 153, 0.08);
-  color: #34d399;
-}
-.graphic-tag-watch {
-  background: rgba(250, 204, 21, 0.12);
-  color: #facc15;
-}
-.graphic-tag-break {
-  background: rgba(248, 113, 113, 0.12);
-  color: #f87171;
-}
-
 /* ===== 缩量启动 · 策略卡（独立放大区块）===== */
 .quiet-breakout-area {
   margin-top: 22px; padding: 20px 22px;

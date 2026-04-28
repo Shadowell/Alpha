@@ -21,26 +21,6 @@ async def get_first_limit_alpha_status():
     return _service.get_status()
 
 
-@router.get("/strategy/first-limit-alpha/graphic")
-async def get_first_limit_alpha_graphic_snapshot():
-    return _service.get_graphic_snapshot()
-
-
-@router.post("/strategy/first-limit-alpha/graphic/run")
-async def run_first_limit_alpha_graphic_scan(trade_date: str | None = None):
-    return await _service.run_graphic_scan(trade_date=trade_date)
-
-
-@router.get("/strategy/first-limit-alpha/graphic/config")
-async def get_first_limit_alpha_graphic_config():
-    return _service.get_graphic_config()
-
-
-@router.post("/strategy/first-limit-alpha/graphic/config")
-async def update_first_limit_alpha_graphic_config(payload: dict):
-    return _service.update_graphic_config(payload)
-
-
 @router.post("/strategy/first-limit-alpha/dataset/build")
 async def build_first_limit_alpha_dataset(
     start_date: str | None = None,

@@ -29,9 +29,6 @@ const state = {
   hotStockAI: null,
   hotStockAIConfig: null,
   hotStockAIRunning: false,
-  graphicFunnel: null,
-  graphicConfig: null,
-  graphicRunning: false,
   strategyScanSnapshot: null,
 };
 
@@ -101,12 +98,6 @@ function setMeta() {
       ? ` · 讨论 ${m.tradingagents_discussed || 0}`
       : (m.tradingagents_enabled ? ' · 已跳过讨论' : '');
     const extra = m.stocks_scanned ? `分析 ${m.entries_count || 0}/${m.stocks_scanned}${modeText} · 均分 ${fmtNum(m.avg_score || 0, 1)}${taPart} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
-    meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
-  } else if (state.activeTab === 'graphic') {
-    const snap = state.graphicFunnel;
-    if (!snap) { meta.textContent = '图形选股 · 加载中…'; return; }
-    const m = snap.meta || {};
-    const extra = m.entries_count ? `命中 ${m.entries_count} · ${m.model_backend || 'baseline'} · ${m.elapsed_sec || 0}s` : (m.error || '尚未执行');
     meta.textContent = `交易日 ${snap.trade_date || '--'} · 更新 ${fmtDateTime(snap.updated_at)} · ${extra}`;
   }
 }
@@ -249,7 +240,7 @@ async function request(path, options = {}) {
 
 /* ==================== Tab switching ==================== */
 
-const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', predict: '预测选股', hotai: '热门智能', graphic: '图形选股', agent: '智能监控 / 进化', paper: '模拟盘' };
+const TAB_TITLES = { market: '大盘', data: '数据中心', funnel: '策略选股', notice: '公告选股', predict: '预测选股', hotai: '热门智能', agent: '智能监控 / 进化', paper: '模拟盘' };
 
 function switchTab(tab) {
   state.activeTab = tab;
@@ -306,12 +297,6 @@ function switchTab(tab) {
     _startHotAiPoll();
   } else {
     _stopHotAiPoll();
-  }
-  if (tab === 'graphic') {
-    loadGraphicFunnel();
-    _startGraphicPoll();
-  } else {
-    _stopGraphicPoll();
   }
   setTimeout(() => {
     if (state.chart) state.chart.resize();
@@ -2912,7 +2897,6 @@ async function init() {
   if (state.activeTab === 'paper') _startPaperPoll();
   if (state.activeTab === 'predict') { loadPredictFunnel(); _startPredictPoll(); }
   if (state.activeTab === 'hotai') { loadHotStockAI(); _startHotAiPoll(); }
-  if (state.activeTab === 'graphic') { loadGraphicFunnel(); _startGraphicPoll(); }
 
   document.addEventListener('visibilitychange', () => {
     if (state.activeTab === 'paper') {
@@ -2924,14 +2908,10 @@ async function init() {
     if (state.activeTab === 'hotai') {
       if (document.hidden) _stopHotAiPoll(); else _startHotAiPoll();
     }
-    if (state.activeTab === 'graphic') {
-      if (document.hidden) _stopGraphicPoll(); else _startGraphicPoll();
-    }
   });
 
   _bindPredictActions();
   _bindHotAiActions();
-  _bindGraphicActions();
   _bindStrategyCenterActions();
 }
 
@@ -2939,7 +2919,6 @@ async function init() {
 
 let _predictPollTimer = null;
 let _hotAiPollTimer = null;
-let _graphicPollTimer = null;
 
 function _startPredictPoll() {
   _stopPredictPoll();
@@ -3320,173 +3299,6 @@ async function loadHotStockAI() {
   }
 }
 
-function _graphicScoreCls(score) {
-  const cfg = state.graphicFunnel?.config || {};
-  if (score >= Number(cfg.threshold_buy || 14)) return 'up';
-  if (score >= Number(cfg.threshold_focus || 10)) return 'up';
-  return 'neutral';
-}
-
-function _graphicCardHtml(e) {
-  const score = Number(e.first_limit_score || 0);
-  const cls = _graphicScoreCls(score);
-  const risk = Number(e.proba_break_risk || 0) * 100;
-  const cont = Number(e.proba_continuation || 0) * 100;
-  const strong = Number(e.proba_strong_3d || 0) * 100;
-  const tags = [];
-  if (risk <= 35) tags.push('<span class="predict-card-board-tag graphic-tag-lowrisk">低破板风险</span>');
-  if (cont >= 55) tags.push('<span class="predict-card-board-tag graphic-tag-watch">次日承接强</span>');
-  if (strong >= 45) tags.push('<span class="predict-card-board-tag">3日强势</span>');
-  if (risk >= 55) tags.push('<span class="predict-card-board-tag graphic-tag-break">断板风险高</span>');
-  return `
-    <div class="pool-card graphic-card" data-symbol="${e.symbol}" onclick="openGraphicDetail('${e.symbol}')">
-      <div class="card-head">
-        <div class="card-name">
-          <span class="stock-name">${e.name || e.symbol}</span>
-          <span class="stock-code">${e.symbol}</span>
-        </div>
-        <div class="card-score ${cls}">${fmtNum(score, 1)}分</div>
-      </div>
-      <div class="predict-card-meta">
-        <span class="predict-card-metric">今收 <b>${fmtNum(e.close)}</b></span>
-        <span class="predict-card-metric">当日 ${(e.pct_change_today >= 0 ? '+' : '')}${fmtNum(e.pct_change_today, 2)}%</span>
-        <span class="predict-card-metric">承接 <b>${fmtNum(cont, 1)}%</b></span>
-        <span class="predict-card-metric">3日强势 <b>${fmtNum(strong, 1)}%</b></span>
-        <span class="predict-card-metric">断板风险 <b>${fmtNum(risk, 1)}%</b></span>
-      </div>
-      <div class="predict-card-meta">
-        <span class="predict-card-metric">开盘缺口 <b>${fmtNum(e.open_gap_pct, 2)}%</b></span>
-        <span class="predict-card-metric">距20日高 <b>${fmtNum(e.distance_to_20d_high, 2)}%</b></span>
-        <span class="predict-card-metric">量比20日 <b>${fmtNum(e.volume_ratio_20d, 2)}</b></span>
-        <span class="predict-card-metric">涨停质量 <b>${fmtNum(e.limit_quality, 2)}</b></span>
-      </div>
-      ${tags.length ? `<div class="predict-card-boards">${tags.join('')}</div>` : ''}
-    </div>`;
-}
-
-function renderGraphicFunnel() {
-  const snap = state.graphicFunnel;
-  const metaEl = document.getElementById('graphicMeta');
-  const progEl = document.getElementById('graphicProgress');
-  const btn = document.getElementById('btnGraphicRun');
-  const summary = document.getElementById('graphicPageSummary');
-  if (!snap) {
-    if (metaEl) metaEl.textContent = '无数据';
-    if (summary) summary.innerHTML = '';
-    return;
-  }
-  const cfg = snap.config || {};
-  state.graphicConfig = cfg;
-  const thC = document.getElementById('graphic-th-candidate');
-  const thF = document.getElementById('graphic-th-focus');
-  const thB = document.getElementById('graphic-th-buy');
-  if (thC) thC.textContent = `≥${cfg.threshold_candidate || 6}分`;
-  if (thF) thF.textContent = `≥${cfg.threshold_focus || 10}分`;
-  if (thB) thB.textContent = `≥${cfg.threshold_buy || 14}分`;
-
-  const pools = snap.pools || { candidate: [], focus: [], buy: [] };
-  const renderPool = (id, list) => {
-    const el = document.getElementById(id);
-    const cnt = document.getElementById(`graphic-count-${id.split('-').pop()}`);
-    if (cnt) cnt.textContent = (list || []).length;
-    if (!el) return;
-    if (!list || list.length === 0) {
-      el.innerHTML = `<div class="empty-pool">暂无</div>`;
-      return;
-    }
-    el.innerHTML = list.map(_graphicCardHtml).join('');
-  };
-  renderPool('graphic-pool-candidate', pools.candidate);
-  renderPool('graphic-pool-focus', pools.focus);
-  renderPool('graphic-pool-buy', pools.buy);
-
-  const prog = snap.progress || {};
-  const running = !!snap.running;
-  if (btn) {
-    btn.disabled = running;
-    btn.textContent = running ? '扫描中…' : '立即扫描';
-  }
-  if (progEl) {
-    if (running) {
-      progEl.textContent = `${prog.phase || '...'} ${prog.current || 0}/${prog.total || 0} ${prog.detail || ''}`;
-    } else if (prog.error) {
-      progEl.textContent = `失败：${prog.error}`;
-    } else if (snap.meta && snap.meta.elapsed_sec) {
-      progEl.textContent = `上次扫描 ${snap.meta.elapsed_sec}s · 模型 ${snap.meta.model_backend || 'baseline'}`;
-    } else {
-      progEl.textContent = '';
-    }
-  }
-  if (metaEl) {
-    const m = snap.meta || {};
-    metaEl.textContent = `交易日 ${snap.trade_date || '--'} · 命中 ${m.entries_count || 0} · ${m.model_backend || 'baseline'} · 特征 ${m.feature_count || 0}`;
-  }
-  if (summary) {
-    summary.innerHTML = [
-      _psItem('候选', (pools.candidate || []).length),
-      _psSep(),
-      _psItem('关注', (pools.focus || []).length),
-      _psSep(),
-      _psItem('买入', (pools.buy || []).length, 'warning'),
-      _psSep(),
-      _psItem('模型', snap.meta?.model_backend || 'baseline'),
-      _psSep(),
-      _psItem('耗时', `${snap.meta?.elapsed_sec || 0}s`),
-    ].join('');
-  }
-}
-
-async function loadGraphicFunnel() {
-  try {
-    const snap = await request('/api/strategy/first-limit-alpha/graphic');
-    state.graphicFunnel = snap;
-    state.graphicRunning = !!snap.running;
-    renderGraphicFunnel();
-    if (state.activeTab === 'graphic') setMeta();
-  } catch (err) {
-    const el = document.getElementById('graphicMeta');
-    if (el) el.textContent = `加载失败: ${err.message}`;
-  }
-}
-
-function _startGraphicPoll() {
-  _stopGraphicPoll();
-  const tick = async () => {
-    if (state.activeTab !== 'graphic') { _stopGraphicPoll(); return; }
-    try { await loadGraphicFunnel(); } catch (_) {}
-    const interval = state.graphicRunning ? 2500 : 15000;
-    _graphicPollTimer = setTimeout(tick, interval);
-  };
-  _graphicPollTimer = setTimeout(tick, 1000);
-}
-
-function _stopGraphicPoll() {
-  if (_graphicPollTimer) { clearTimeout(_graphicPollTimer); _graphicPollTimer = null; }
-}
-
-async function openGraphicDetail(symbol) {
-  if (!symbol) return;
-  state.selectedSymbol = symbol;
-  let detail = { name: symbol, kline: [], metrics: {} };
-  try {
-    const d = await request(`/api/stock/${symbol}/detail?kline_days=30`);
-    detail = {
-      name: d?.name || symbol,
-      kline: d?.kline || [],
-      metrics: d?.metrics || {},
-    };
-  } catch (_) {}
-  try {
-    await openPredictModal(symbol, detail, {
-      titleSuffix: '图形选股详情',
-      badge: '附带 Kronos 三日预测',
-      badgeClass: 'predict-modal-badge',
-    });
-  } catch (err) {
-    setStatus(`详情加载失败: ${err?.message || err}`, 'error');
-  }
-}
-
 async function openHotAiDetail(symbol) {
   if (!symbol) return;
   state.selectedSymbol = symbol;
@@ -3599,25 +3411,6 @@ function _bindHotAiActions() {
       }
     };
   }
-}
-
-function _bindGraphicActions() {
-  const btn = document.getElementById('btnGraphicRun');
-  if (!btn) return;
-  btn.onclick = async () => {
-    if (state.graphicRunning) return;
-    try {
-      setStatus('图形选股扫描已启动，正在读取首板候选并打分…', 'info');
-      state.graphicRunning = true;
-      renderGraphicFunnel();
-      await request('/api/strategy/first-limit-alpha/graphic/run', { method: 'POST' });
-      _startGraphicPoll();
-    } catch (err) {
-      state.graphicRunning = false;
-      renderGraphicFunnel();
-      setStatus(`启动失败: ${err.message}`, 'error');
-    }
-  };
 }
 
 /* ==================== 自定义策略中心 ==================== */
