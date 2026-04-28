@@ -185,24 +185,13 @@ async def notify_sync_complete(
     elapsed_sec: float,
     mode: str = "全量",
 ) -> dict:
-    """K 线同步完成通知 — 卡片样式。"""
-    success_rate = (success_count / total * 100) if total else 0
-    template = "green" if failed_count == 0 else ("yellow" if success_rate >= 95 else "red")
-    card = (
-        CardBuilder(title=f"📊 K 线{mode}同步完成", subtitle=f"交易日 {trade_date}", template=template)
-        .add_kv_grid(
-            [
-                ("✅ 成功", f"{success_count} 只"),
-                ("❌ 失败", f"{failed_count} 只"),
-                ("📈 总计", f"{total} 只"),
-                ("⏱ 耗时", f"{elapsed_sec:.1f}s"),
-            ],
-            cols=2,
-        )
-        .add_note(f"Alpha · {mode}同步 · 成功率 {success_rate:.1f}%")
-        .build()
-    )
-    return await send_feishu_card(card)
+    """K 线同步完成通知已停用，避免补缺任务刷屏。"""
+    return {
+        "skipped": True,
+        "reason": "kline sync completion notification disabled",
+        "trade_date": trade_date,
+        "mode": mode,
+    }
 
 
 async def notify_predict_top(
