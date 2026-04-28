@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_DIR="$ROOT_DIR/.run"
 LOG_DIR="$ROOT_DIR/logs"
-LOG_FILE="$LOG_DIR/server.log"
 
 # 自动加载 .env（类 dotenv：行内注释用 # 开头；KEY=VALUE；支持引号；跳过空行）
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -15,11 +14,35 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   echo "已加载 .env"
 fi
 
-PORT=18888
+PORT="${PORT:-18890}"
 HOST="${HOST:-0.0.0.0}"
 RELOAD="${RELOAD:-0}"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "$HOME/arm-python/python/bin/python3.11" ]]; then
+    PYTHON_BIN="$HOME/arm-python/python/bin/python3.11"
+  elif [[ -x "/opt/homebrew/bin/python3.11" ]]; then
+    PYTHON_BIN="/opt/homebrew/bin/python3.11"
+  elif [[ -x "/opt/homebrew/bin/python3" ]]; then
+    PYTHON_BIN="/opt/homebrew/bin/python3"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
+LOG_FILE="${LOG_FILE:-$LOG_DIR/server-${PORT}.log}"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
+
+PY_MACHINE="$("$PYTHON_BIN" - <<'PY'
+import platform
+print(platform.machine())
+PY
+)"
+if [[ "$PY_MACHINE" != "arm64" ]]; then
+  echo "启动失败: $PYTHON_BIN 是 $PY_MACHINE，不是 arm64。"
+  echo "数据中心补数曾因 Rosetta/x86_64 Python + 阻塞网络调用进入 UEs。"
+  echo "请安装/指定 arm64 Python 3.11+，例如: PYTHON_BIN=/Users/jie.feng/arm-python/python/bin/python3.11 ./start.sh"
+  exit 1
+fi
 
 is_running() {
   local pid="$1"
@@ -63,8 +86,8 @@ listening_pid() {
 if command -v lsof >/dev/null 2>&1; then
   CURRENT_LISTENER="$(listening_pid)"
   if [[ -n "$CURRENT_LISTENER" ]] && ! is_service_pid "$CURRENT_LISTENER"; then
-    echo "启动失败: 固定端口 $PORT 被不可用进程占用 PID=$CURRENT_LISTENER"
-    echo "请先释放 18888；若进程处于 UEs 状态，需要重启 Mac 后再执行 ./start.sh"
+    echo "启动失败: 端口 $PORT 被不可用进程占用 PID=$CURRENT_LISTENER"
+    echo "请先释放 $PORT；若进程处于 UEs 状态，需要重启 Mac 后再执行 ./start.sh"
     exit 1
   fi
 fi
@@ -103,14 +126,14 @@ fi
 UVICORN_ARGS_STR="$(printf '%s\x1f' "${UVICORN_ARGS[@]}")"
 
 BOOT_PID="$(
-ROOT_DIR="$ROOT_DIR" LOG_FILE="$LOG_FILE" UVICORN_ARGS_STR="$UVICORN_ARGS_STR" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" LOG_FILE="$LOG_FILE" UVICORN_ARGS_STR="$UVICORN_ARGS_STR" PYTHON_BIN="$PYTHON_BIN" "$PYTHON_BIN" - <<'PY'
 import os
 import subprocess
 
 root_dir = os.environ["ROOT_DIR"]
 log_file = os.environ["LOG_FILE"]
 uvicorn_args = [arg for arg in os.environ.get("UVICORN_ARGS_STR", "").split("\x1f") if arg]
-args = ["python3", "-m", "uvicorn", *uvicorn_args]
+args = [os.environ.get("PYTHON_BIN", "python3"), "-m", "uvicorn", *uvicorn_args]
 
 with open(log_file, "ab", buffering=0) as fh:
     proc = subprocess.Popen(

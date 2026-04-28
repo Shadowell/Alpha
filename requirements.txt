@@ -4,6 +4,7 @@ uvicorn[standard]>=0.30.0
 pandas>=2.2.0
 pydantic>=2.8.0
 requests>=2.31.0
+httpx>=0.27.0
 torch>=2.0.0
 einops>=0.8.1
 huggingface_hub>=0.33.0

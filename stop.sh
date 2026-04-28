@@ -16,7 +16,7 @@ pid_port() {
   if [[ "$base" =~ ^funnel-([0-9]+)\.pid$ ]]; then
     echo "${BASH_REMATCH[1]}"
   else
-    echo "18888"
+    echo "18890"
   fi
 }
 
@@ -79,6 +79,11 @@ done
 if command -v pgrep >/dev/null 2>&1; then
   PIDS="$(pgrep -f "uvicorn app.main:app" 2>/dev/null || true)"
   for pid in $PIDS; do
+    stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
+    if [[ "$stat" == *U* ]]; then
+      echo "跳过不可中断状态进程: PID=$pid STAT=${stat}（需重启 Mac 清理）"
+      continue
+    fi
     if stop_pid "$pid"; then
       echo "已停止残留进程: PID=$pid"
       STOPPED=1

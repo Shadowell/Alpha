@@ -16,6 +16,7 @@ from app.models import MovePoolRequest, RecomputeRequest
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
+from app.services.market_data_client import EastmoneyMarketDataClient
 from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.hermes_memory import HermesMemory
@@ -48,7 +49,8 @@ from app.services.kline_store import KlineSQLiteStore as _KlineSQLiteStore
 
 _kline_store = _KlineSQLiteStore()
 provider = AkshareDataProvider(kline_store=_kline_store)
-kline_cache_service = KlineCacheService(provider=provider, store=_kline_store)
+market_data_client = EastmoneyMarketDataClient(store=_kline_store)
+kline_cache_service = KlineCacheService(provider=provider, store=_kline_store, market_data_client=market_data_client)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service, provider=provider)
 hub = RealtimeHub()

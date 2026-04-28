@@ -3,7 +3,7 @@
 # 前提：后端服务已启动（./start.sh 或 ./restart.sh）
 set -euo pipefail
 
-BASE_URL="http://127.0.0.1:18888"
+BASE_URL="${ALPHA_TEST_BASE_URL:-http://127.0.0.1:18890}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPORT_FILE="${SCRIPT_DIR}/test_report.txt"

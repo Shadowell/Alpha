@@ -10,11 +10,11 @@ import pandas as pd
 
 from app.services.data_provider import AkshareDataProvider, to_float
 from app.services.kline_store import KlineSQLiteStore
+from app.services.market_data_client import EastmoneyMarketDataClient
 from app.services.time_utils import now_cn
 
 
 _CONCURRENCY = 8
-_FETCH_TIMEOUT_SECONDS = 12
 _FETCH_BATCH_SIZE = 200
 
 
@@ -23,11 +23,13 @@ class KlineCacheService:
         self,
         provider: AkshareDataProvider,
         store: KlineSQLiteStore | None = None,
+        market_data_client: EastmoneyMarketDataClient | None = None,
         schedule_after: time = time(15, 20),
         window_days: int = 180,
     ) -> None:
         self.provider = provider
         self.store = store or KlineSQLiteStore()
+        self.market_data_client = market_data_client or EastmoneyMarketDataClient(store=self.store)
         self.schedule_after = schedule_after
         self.window_days = max(10, min(window_days, 365))
         self._syncing = False
@@ -570,7 +572,7 @@ class KlineCacheService:
         t0 = pytime.time()
         wanted = set(symbols)
         try:
-            snapshot = await asyncio.wait_for(self.provider._fetch_spot_em(), timeout=15)
+            snapshot = await self.market_data_client.fetch_spot()
         except Exception as exc:
             print(f"[kline-cache] batch spot fetch failed: {exc!r}")
             return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
@@ -620,7 +622,7 @@ class KlineCacheService:
                     "symbol": symbol,
                     "status": "success",
                     "elapsed_ms": elapsed_ms,
-                    "error_message": "akshare stock_zh_a_spot_em batch",
+                    "error_message": "eastmoney spot batch",
                     "created_at": now_iso,
                 }
                 for symbol in sorted(valid_symbols)
@@ -667,13 +669,7 @@ class KlineCacheService:
             async with sem:
                 t0 = pytime.time()
                 try:
-                    hist = await asyncio.wait_for(
-                        self.provider.get_hist(symbol, start_date, end_date, force_remote=force_remote),
-                        timeout=_FETCH_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    hist = pd.DataFrame()
-                    error_message = f"抓取超时>{_FETCH_TIMEOUT_SECONDS}s"
+                    hist = await self.market_data_client.fetch_hist(symbol, start_date, end_date, adjust="qfq")
                 except Exception as exc:
                     hist = pd.DataFrame()
                     error_message = str(exc)[:200]
@@ -930,7 +926,7 @@ class KlineCacheService:
 
     async def _resolve_trade_dates(self, trade_date: str, days: int) -> list[str]:
         """返回截至 trade_date 最近 days 个交易日的 ISO 日期列表。"""
-        trade_days = await self.provider.get_trade_days(min_days=days)
+        trade_days = await self.market_data_client.fetch_trade_days(min_days=days)
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return []
         dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
@@ -939,7 +935,7 @@ class KlineCacheService:
         return [d.isoformat() for d in selected]
 
     async def _resolve_latest_trade_date(self, base_date: str) -> str:
-        trade_days = await self.provider.get_trade_days()
+        trade_days = await self.market_data_client.fetch_trade_days()
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return ""
         days = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
@@ -950,7 +946,7 @@ class KlineCacheService:
         return valid.iloc[-1].isoformat()
 
     async def _resolve_window(self, trade_date: str, days: int) -> tuple[str, str]:
-        trade_days = await self.provider.get_trade_days()
+        trade_days = await self.market_data_client.fetch_trade_days(min_days=days)
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return "", ""
         dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
@@ -969,11 +965,38 @@ class KlineCacheService:
         """
         symbols: set[str] = set()
 
+        name_map: dict[str, str] = {}
         try:
-            name_map = await self.provider.get_symbol_name_map()
-        except Exception as exc:
-            print(f"[kline_cache] get_symbol_name_map failed: {exc}")
+            if self.provider.symbol_name_cache is not None:
+                _, cached_names = self.provider.symbol_name_cache
+                name_map = dict(cached_names or {})
+        except Exception:
             name_map = {}
+
+        if not name_map:
+            try:
+                name_map = self.store.load_symbol_names()
+                if name_map:
+                    self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+            except Exception as exc:
+                print(f"[kline_cache] load_symbol_names failed: {exc}")
+                name_map = {}
+
+        if not name_map:
+            try:
+                snapshot = await self.market_data_client.fetch_spot()
+                if not snapshot.empty and "代码" in snapshot.columns and "名称" in snapshot.columns:
+                    name_map = {
+                        str(r["代码"]): str(r["名称"])
+                        for _, r in snapshot.iterrows()
+                        if r.get("代码") and r.get("名称")
+                    }
+                    if name_map:
+                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        self.store.upsert_symbol_names(name_map, now_cn().isoformat())
+            except Exception as exc:
+                print(f"[kline_cache] fetch symbol names from eastmoney failed: {exc}")
+                name_map = {}
 
         for code, name in (name_map or {}).items():
             if not code or not code.startswith(("00", "30", "60", "68")):
