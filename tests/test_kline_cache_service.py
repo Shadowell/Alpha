@@ -42,9 +42,48 @@ class FakeProvider:
         )
 
 
+class FakeMarketDataClient:
+    async def fetch_trade_days(self, min_days=0):
+        dates = pd.bdate_range("2026-02-20", "2026-04-10")
+        return pd.DataFrame({"trade_date": dates.date.astype(str)})
+
+    async def fetch_spot(self):
+        return pd.DataFrame(
+            {
+                "代码": ["000001", "600111", "300001"],
+                "名称": ["平安银行", "北方稀土", "创业测试"],
+                "最新价": [10.0, 20.0, 30.0],
+                "今开": [9.9, 19.8, 29.7],
+                "最高": [10.2, 20.5, 30.5],
+                "最低": [9.8, 19.6, 29.4],
+                "成交量": [1000, 2000, 3000],
+                "成交额": [10000, 40000, 90000],
+            }
+        )
+
+    async def fetch_hist(self, symbol, start_date, end_date, adjust="qfq"):
+        dates = pd.bdate_range("2026-03-01", "2026-04-10").date.astype(str)
+        return pd.DataFrame(
+            {
+                "日期": dates,
+                "开盘": [10.0] * len(dates),
+                "最高": [10.5] * len(dates),
+                "最低": [9.8] * len(dates),
+                "收盘": [10.2] * len(dates),
+                "成交量": [1000000] * len(dates),
+                "成交额": [10000000] * len(dates),
+            }
+        )
+
+
 def test_kline_cache_service_sync_trade_date(tmp_path):
     store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
-    service = KlineCacheService(provider=FakeProvider(), store=store, window_days=30)
+    service = KlineCacheService(
+        provider=FakeProvider(),
+        store=store,
+        market_data_client=FakeMarketDataClient(),
+        window_days=30,
+    )
     result = asyncio.run(service.sync_trade_date(trade_date="2026-04-09", force=True))
     assert result["success"] is True
     assert result["symbol_count"] == 3
@@ -70,7 +109,12 @@ def test_kline_cache_service_sync_trade_date(tmp_path):
 
 def test_kline_cache_service_marks_interrupted_tasks_failed(tmp_path):
     store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
-    service = KlineCacheService(provider=FakeProvider(), store=store, window_days=30)
+    service = KlineCacheService(
+        provider=FakeProvider(),
+        store=store,
+        market_data_client=FakeMarketDataClient(),
+        window_days=30,
+    )
     store.start_sync_task(
         task_id="stale-task",
         trigger_mode="manual",

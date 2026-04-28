@@ -13,7 +13,7 @@ import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-ALPHA_API_BASE = os.environ.get("ALPHA_API_BASE", "http://127.0.0.1:18888")
+ALPHA_API_BASE = os.environ.get("ALPHA_API_BASE", "http://127.0.0.1:18890")
 
 mcp = FastMCP(
     name="alpha-quant",

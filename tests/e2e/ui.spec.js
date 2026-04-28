@@ -4,7 +4,7 @@ const { test, expect } = require('@playwright/test');
 /**
  * 全站 E2E 测试 — 覆盖全部 7 个 tab + 缩量启动点击 bug 回归
  *
- * 前提：后端必须已启动在 127.0.0.1:18888
+ * 前提：后端必须已启动在 127.0.0.1:18890
  */
 
 const TABS = [

@@ -7,7 +7,7 @@ module.exports = defineConfig({
   retries: 1,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:18888',
+    baseURL: process.env.ALPHA_TEST_BASE_URL || 'http://127.0.0.1:18890',
     headless: true,
     actionTimeout: 12_000,
     navigationTimeout: 30_000,

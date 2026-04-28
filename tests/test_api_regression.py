@@ -4,7 +4,7 @@
     cd Alpha
     python3 -m pytest tests/test_api_regression.py -v --tb=short
 
-前提：后端必须已启动在 127.0.0.1:18888。
+前提：后端必须已启动在 127.0.0.1:18890。
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import httpx
 os.environ["no_proxy"] = "*"
 os.environ["NO_PROXY"] = "*"
 
-BASE_URL = os.environ.get("ALPHA_TEST_BASE_URL", "http://127.0.0.1:18888")
+BASE_URL = os.environ.get("ALPHA_TEST_BASE_URL", "http://127.0.0.1:18890")
 TEST_SYMBOL = "600519"  # 贵州茅台，主板大盘股
 
 
