@@ -223,20 +223,6 @@ async def list_agent_tasks(limit: int = 10) -> str:
 
 
 @mcp.tool()
-async def trigger_eod_screen(trade_date: str | None = None) -> str:
-    """触发盘后筛选：从全 A 股中筛选调整期候选个股。
-
-    Args:
-        trade_date: 交易日期，缺省为最新交易日
-    """
-    body = {}
-    if trade_date:
-        body["trade_date"] = trade_date
-    data = await _post("/api/jobs/eod-screen", body)
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
 async def trigger_notice_screen(
     notice_date: str | None = None,
     limit: int = 10,

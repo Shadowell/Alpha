@@ -7,27 +7,7 @@ from zoneinfo import ZoneInfo
 
 @dataclass
 class StrategyConfig:
-    """策略参数配置 — 所有参数均可通过 API 动态调整。"""
-
-    # ── 选股宇宙预筛 ──
-    close_price_threshold: float = 5.0
-    market_capital_low: float = 30e8
-    market_capital_high: float = 160e8
-    exclude_st: bool = True
-    exclude_gem: bool = True          # 创业板 30x
-    exclude_star: bool = True         # 科创板 688x
-    universe_top_n: int = 500
-
-    # ── 调整期形态识别 ──
-    period_days: int = 20
-    box_range_threshold: float = 0.18
-    amp_ratio_threshold: float = 0.95
-    volume_shrink_threshold: float = 0.75
-    volume_recover_threshold: float = 0.85
-    pre_breakout_buffer: float = 0.995
-    shadow_support_threshold: float = 0.005
-    chase_risk_return: float = 0.07
-    chase_risk_vol_ratio: float = 2.3
+    """策略参数配置 — 仅保留三池盘中评分与迁池参数。"""
 
     # ── 盘中评分权重 ──
     score_weight_breakout: float = 35.0

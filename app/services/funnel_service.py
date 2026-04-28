@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,13 +24,7 @@ from app.services.concept_engine import (
     map_stock_concepts,
 )
 from app.services.data_provider import AkshareDataProvider
-from app.services.strategy_engine import (
-    analyze_adjustment_candidate,
-    apply_transition_rules,
-    compute_intraday_score,
-    get_last_n_trade_window,
-    prefilter_universe,
-)
+from app.services.strategy_engine import apply_transition_rules, compute_intraday_score, get_last_n_trade_window
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn
 
@@ -100,7 +93,7 @@ class FunnelService:
             saved_config = profile.get("config", {})
             if saved_config:
                 self.config = self.config.merge(saved_config)
-            return profile
+            return {**profile, "config": self.config.to_dict()}
         config_payload = self.config.to_dict()
         return self.state_store.upsert_single_active_strategy_profile(
             name="alpha_rule_engine",
@@ -209,97 +202,6 @@ class FunnelService:
         if filled > 0:
             self._save_state()
         return filled
-
-    async def run_eod_screen(self, trade_date: str | None = None) -> dict[str, Any]:
-        started = time.time()
-
-        await self._warmup_name_cache()
-
-        async with self.lock:
-            await self.ensure_trade_date(trade_date)
-            current_trade_date = self.trade_date
-            config = self.config
-
-        snapshot, source_used = await self._pick_screen_snapshot()
-        if snapshot.empty:
-            raise RuntimeError("实时行情数据获取失败，请稍后重试")
-
-        trade_days = await self.provider.get_trade_days()
-        try:
-            start_date, end_date = get_last_n_trade_window(trade_days, current_trade_date, config.period_days)
-        except ValueError:
-            raise RuntimeError("交易日历不可用，无法执行盘后筛选")
-
-        universe = prefilter_universe(snapshot, config)
-        universe.sort(key=lambda x: x.get("amount", 0), reverse=True)
-        universe = universe[:config.universe_top_n]
-
-        entries: dict[str, dict[str, Any]] = {}
-        for stock in universe:
-            symbol = stock["symbol"]
-            try:
-                hist = await self.provider.get_hist(symbol, start_date, end_date)
-            except Exception:
-                continue
-
-            passed, reasons, metrics = analyze_adjustment_candidate(stock, hist, config)
-            if not passed:
-                continue
-
-            entries[symbol] = {
-                "symbol": symbol,
-                "name": stock["name"],
-                "pool": POOL_CANDIDATE,
-                "recommended_pool": None,
-                "score": 0.0,
-                "prev_score": 0.0,
-                "score_breakdown": {
-                    "breakout_strength": 0,
-                    "volume_quality": 0,
-                    "intraday_structure": 0,
-                    "risk_penalty": 0,
-                    "total": 0,
-                },
-                "metrics": {},
-                "warnings": [],
-                "reasons": reasons,
-                "transitions": {
-                    "above60_count": 0,
-                    "breakout_confirm_count": 0,
-                    "below65_count": 0,
-                },
-                "breakout_level": float(metrics.get("breakout_level", 0)),
-                "avg_amount20": float(metrics.get("avg_amount20", 0)),
-                "concept_tags": [],
-                "concept_candidates": [],
-                "trigger_log": [
-                    {
-                        "time": now_cn().isoformat(),
-                        "level": "info",
-                        "note": "盘后进入调整期候选池",
-                    }
-                ],
-                "updated_at": now_cn().isoformat(),
-            }
-
-        async with self.lock:
-            self.entries = entries
-            if self.entries:
-                await self._refresh_scores_unlocked(symbol=None, force_concept_refresh=True)
-            else:
-                await self._refresh_market_panels_unlocked(force=True)
-            self.updated_at = now_cn().isoformat()
-            self.frozen = is_after_close(now_cn())
-            self._save_state()
-
-        candidate_count = len(entries)
-        elapsed_ms = int((time.time() - started) * 1000)
-        return {
-            "candidate_count": candidate_count,
-            "source_used": source_used,
-            "elapsed_ms": elapsed_ms,
-            "message": f"筛选完成，候选池{candidate_count}只",
-        }
 
     async def _refresh_scores_unlocked(self, symbol: str | None = None, force_concept_refresh: bool = False) -> None:
         """Refresh scores. Caller MUST hold self.lock."""
