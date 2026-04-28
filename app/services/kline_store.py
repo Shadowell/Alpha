@@ -389,6 +389,150 @@ class KlineSQLiteStore:
             )
             conn.commit()
 
+    def record_sync_batch(
+        self,
+        *,
+        kline_items: list[tuple[str, dict[str, Any]]],
+        detail_rows: list[dict[str, Any]],
+        updated_at: str,
+        task_id: str,
+        synced_symbols: int,
+        success_symbols: int,
+        failed_symbols: int,
+        attempt_trade_date: str,
+        success_trade_date: str | None,
+        status: str,
+        symbol_count: int,
+        total_symbols: int,
+        trigger_mode: str,
+        message: str,
+    ) -> int:
+        """Persist one sync batch in a single transaction."""
+        kline_payload = [
+            (
+                str(symbol),
+                str(row.get("trade_date", "")),
+                float(row.get("open", 0.0)),
+                float(row.get("high", 0.0)),
+                float(row.get("low", 0.0)),
+                float(row.get("close", 0.0)),
+                float(row.get("volume", 0.0)),
+                float(row.get("amount", 0.0)),
+                updated_at,
+            )
+            for symbol, row in kline_items
+            if str(symbol) and str(row.get("trade_date", ""))
+        ]
+        detail_payload = [
+            (
+                str(r.get("task_id", "")),
+                str(r.get("symbol", "")),
+                str(r.get("status", "")),
+                int(r.get("elapsed_ms", 0)),
+                str(r.get("error_message", "")),
+                str(r.get("created_at", "")),
+            )
+            for r in detail_rows
+            if r.get("task_id") and r.get("symbol") and r.get("status")
+        ]
+
+        with self._connect() as conn:
+            self._init_schema(conn)
+            if kline_payload:
+                conn.executemany(
+                    """
+                    INSERT INTO kline_daily(symbol, trade_date, open, high, low, close, volume, amount, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                        open=excluded.open,
+                        high=excluded.high,
+                        low=excluded.low,
+                        close=excluded.close,
+                        volume=excluded.volume,
+                        amount=excluded.amount,
+                        updated_at=excluded.updated_at
+                    """,
+                    kline_payload,
+                )
+            if detail_payload:
+                conn.executemany(
+                    """
+                    INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    detail_payload,
+                )
+            conn.execute(
+                """
+                UPDATE kline_sync_tasks
+                SET synced_symbols = ?, success_symbols = ?, failed_symbols = ?, message = ?
+                WHERE task_id = ?
+                """,
+                (synced_symbols, success_symbols, failed_symbols, message, task_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO kline_sync_state (
+                    id, last_attempt_trade_date, last_success_trade_date, status, symbol_count,
+                    total_symbols, synced_symbols, success_symbols, failed_symbols, task_id, trigger_mode,
+                    updated_at, message
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_attempt_trade_date=excluded.last_attempt_trade_date,
+                    last_success_trade_date=excluded.last_success_trade_date,
+                    status=excluded.status,
+                    symbol_count=excluded.symbol_count,
+                    total_symbols=excluded.total_symbols,
+                    synced_symbols=excluded.synced_symbols,
+                    success_symbols=excluded.success_symbols,
+                    failed_symbols=excluded.failed_symbols,
+                    task_id=excluded.task_id,
+                    trigger_mode=excluded.trigger_mode,
+                    updated_at=excluded.updated_at,
+                    message=excluded.message
+                """,
+                (
+                    attempt_trade_date,
+                    success_trade_date,
+                    status,
+                    symbol_count,
+                    total_symbols,
+                    synced_symbols,
+                    success_symbols,
+                    failed_symbols,
+                    task_id,
+                    trigger_mode,
+                    updated_at,
+                    message,
+                ),
+            )
+            conn.commit()
+        return len(kline_payload)
+
+    def fail_running_sync_tasks(self, *, finished_at: str, message: str, task_id: str | None = None) -> int:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            if task_id:
+                cur = conn.execute(
+                    """
+                    UPDATE kline_sync_tasks
+                    SET status = 'failed', finished_at = ?, message = ?
+                    WHERE status = 'running' AND task_id = ?
+                    """,
+                    (finished_at, message, task_id),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    UPDATE kline_sync_tasks
+                    SET status = 'failed', finished_at = ?, message = ?
+                    WHERE status = 'running'
+                    """,
+                    (finished_at, message),
+                )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
     def get_sync_state(self) -> dict[str, Any]:
         with self._connect() as conn:
             self._init_schema(conn)

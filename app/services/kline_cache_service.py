@@ -15,7 +15,7 @@ from app.services.time_utils import now_cn
 
 _CONCURRENCY = 8
 _FETCH_TIMEOUT_SECONDS = 12
-_PROGRESS_UPDATE_EVERY = 10
+_FETCH_BATCH_SIZE = 200
 
 
 class KlineCacheService:
@@ -118,6 +118,7 @@ class KlineCacheService:
                     await self.sync_trade_date(**kwargs)
             except Exception as exc:
                 print(f"[kline-cache] queued {job_type} sync failed: {exc}")
+                self._fail_stale_running_tasks(f"同步异常中断: {str(exc)[:160]}")
 
     @staticmethod
     def _weekdays_between(start_date: str, end_date: str, max_days: int = 180) -> list[str]:
@@ -609,10 +610,11 @@ class KlineCacheService:
             return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
 
         now_iso = now_cn().isoformat()
-        self.store.upsert_many_klines(rows, now_iso)
         elapsed_ms = int((pytime.time() - t0) * 1000)
-        self.store.add_sync_task_details(
-            [
+        completed = len(valid_symbols)
+        self.store.record_sync_batch(
+            kline_items=rows,
+            detail_rows=[
                 {
                     "task_id": task_id,
                     "symbol": symbol,
@@ -622,28 +624,18 @@ class KlineCacheService:
                     "created_at": now_iso,
                 }
                 for symbol in sorted(valid_symbols)
-            ]
-        )
-        completed = len(valid_symbols)
-        self.store.update_sync_task_progress(
+            ],
+            updated_at=now_iso,
             task_id=task_id,
             synced_symbols=completed,
             success_symbols=completed,
             failed_symbols=0,
-            message=f"批量行情补缺 {completed}/{total}",
-        )
-        self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
             success_trade_date=state.get("last_success_trade_date"),
             status="running",
             symbol_count=completed,
             total_symbols=total,
-            synced_symbols=completed,
-            success_symbols=completed,
-            failed_symbols=0,
-            task_id=task_id,
             trigger_mode=trigger_mode,
-            updated_at=now_iso,
             message=f"批量行情补缺 {completed}/{total}",
         )
         remaining = [s for s in symbols if s not in valid_symbols]
@@ -670,11 +662,7 @@ class KlineCacheService:
         completed = initial_completed
         success_count = initial_success_count
         failed_count = initial_failed_count
-        now_iso = now_cn().isoformat()
-        lock = asyncio.Lock()
-
-        async def _fetch_one(symbol: str) -> None:
-            nonlocal completed, success_count, failed_count
+        async def _fetch_one(symbol: str) -> dict[str, Any]:
             error_message = ""
             async with sem:
                 t0 = pytime.time()
@@ -692,48 +680,60 @@ class KlineCacheService:
                 rows = self._normalize_hist(hist)
                 elapsed = int((pytime.time() - t0) * 1000)
 
-            async with lock:
+            return {
+                "symbol": symbol,
+                "rows": rows,
+                "elapsed_ms": elapsed,
+                "error_message": error_message,
+            }
+
+        for i in range(0, len(symbols), _FETCH_BATCH_SIZE):
+            batch = symbols[i : i + _FETCH_BATCH_SIZE]
+            results = await asyncio.gather(*[_fetch_one(s) for s in batch])
+            now_iso = now_cn().isoformat()
+            kline_items: list[tuple[str, dict[str, Any]]] = []
+            detail_rows: list[dict[str, Any]] = []
+            for item in results:
+                symbol = str(item["symbol"])
+                rows = item["rows"]
                 if rows:
-                    self.store.upsert_symbol_klines(symbol, rows, now_iso)
                     completed += 1
                     success_count += 1
-                    self.store.add_sync_task_detail(
-                        task_id=task_id, symbol=symbol, status="success",
-                        elapsed_ms=elapsed, error_message="", created_at=now_cn().isoformat(),
-                    )
+                    kline_items.extend((symbol, row) for row in rows)
+                    status = "success"
+                    error_message = ""
                 else:
                     failed_count += 1
-                    self.store.add_sync_task_detail(
-                        task_id=task_id, symbol=symbol, status="failed",
-                        elapsed_ms=elapsed, error_message=error_message or "数据为空", created_at=now_cn().isoformat(),
-                    )
+                    status = "failed"
+                    error_message = item["error_message"] or "数据为空"
+                detail_rows.append(
+                    {
+                        "task_id": task_id,
+                        "symbol": symbol,
+                        "status": status,
+                        "elapsed_ms": int(item["elapsed_ms"] or 0),
+                        "error_message": error_message,
+                        "created_at": now_iso,
+                    }
+                )
 
-                synced = success_count + failed_count
-                if synced % _PROGRESS_UPDATE_EVERY == 0 or synced == total:
-                    self.store.update_sync_task_progress(
-                        task_id=task_id, synced_symbols=synced,
-                        success_symbols=success_count, failed_symbols=failed_count,
-                        message=f"{label} {synced}/{total}",
-                    )
-                    self.store.set_sync_state(
-                        attempt_trade_date=target_trade_date,
-                        success_trade_date=state.get("last_success_trade_date"),
-                        status="running",
-                        symbol_count=completed,
-                        total_symbols=total,
-                        synced_symbols=synced,
-                        success_symbols=success_count,
-                        failed_symbols=failed_count,
-                        task_id=task_id,
-                        trigger_mode=trigger_mode,
-                        updated_at=now_cn().isoformat(),
-                        message=f"{label} {synced}/{total}",
-                    )
-
-        batch_size = 200
-        for i in range(0, len(symbols), batch_size):
-            batch = symbols[i : i + batch_size]
-            await asyncio.gather(*[_fetch_one(s) for s in batch])
+            synced = success_count + failed_count
+            self.store.record_sync_batch(
+                kline_items=kline_items,
+                detail_rows=detail_rows,
+                updated_at=now_iso,
+                task_id=task_id,
+                synced_symbols=synced,
+                success_symbols=success_count,
+                failed_symbols=failed_count,
+                attempt_trade_date=target_trade_date,
+                success_trade_date=state.get("last_success_trade_date"),
+                status="running",
+                symbol_count=completed,
+                total_symbols=total,
+                trigger_mode=trigger_mode,
+                message=f"{label} {synced}/{total}",
+            )
 
         return completed, success_count, failed_count
 
@@ -743,9 +743,11 @@ class KlineCacheService:
 
     def get_sync_state(self) -> dict[str, Any]:
         state = self.store.get_sync_state()
-        if state.get("status") == "running" and not self._syncing and not (
-            self._queue_task is not None and not self._queue_task.done()
-        ):
+        if state.get("status") == "running" and not self._has_active_work():
+            self.store.fail_running_sync_tasks(
+                finished_at=now_cn().isoformat(),
+                message="上次同步中断，请重新提交同步任务",
+            )
             self.store.set_sync_state(
                 attempt_trade_date=state.get("last_attempt_trade_date") or "",
                 success_trade_date=state.get("last_success_trade_date"),
@@ -762,6 +764,30 @@ class KlineCacheService:
             )
             state = self.store.get_sync_state()
         return state
+
+    def _has_active_work(self) -> bool:
+        return self._syncing or (self._queue_task is not None and not self._queue_task.done())
+
+    def _fail_stale_running_tasks(self, message: str) -> None:
+        state = self.store.get_sync_state()
+        if state.get("status") != "running":
+            return
+        now_iso = now_cn().isoformat()
+        self.store.fail_running_sync_tasks(finished_at=now_iso, message=message)
+        self.store.set_sync_state(
+            attempt_trade_date=state.get("last_attempt_trade_date") or "",
+            success_trade_date=state.get("last_success_trade_date"),
+            status="failed",
+            symbol_count=int(state.get("symbol_count") or 0),
+            total_symbols=int(state.get("total_symbols") or 0),
+            synced_symbols=int(state.get("synced_symbols") or 0),
+            success_symbols=int(state.get("success_symbols") or 0),
+            failed_symbols=int(state.get("failed_symbols") or 0),
+            task_id=state.get("task_id"),
+            trigger_mode=state.get("trigger_mode") or "manual",
+            updated_at=now_iso,
+            message=message,
+        )
 
     def get_sync_progress(self) -> dict[str, Any]:
         return self.store.get_sync_state()
