@@ -41,10 +41,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/><path d="M12 7v5"/><path d="M12 16h.01"/></svg>
         <span>热门智能</span>
       </a>
-      <a class="sidebar-item" data-tab="graphic" title="图形选股">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l4-5 4 2 8-9"/><path d="M4 6h16"/><path d="M4 18h16"/></svg>
-        <span>图形选股</span>
-      </a>
       <a class="sidebar-item" data-tab="agent" title="智能监控 / 进化">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M8 12c0-2.2 1.8-4 4-4s4 1.8 4 4-1.8 4-4 4"/><circle cx="12" cy="12" r="1.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
         <span>智能进化</span>
@@ -349,44 +345,6 @@
               <div class="pool-column highlight-buy">
                 <div class="pool-header">买入候选池 <span id="hotai-count-buy" class="pool-count">0</span><span class="pool-threshold" id="hotai-th-buy">≥14.5分</span></div>
                 <div id="hotai-pool-buy" class="pool-list"></div>
-              </div>
-            </div>
-          </section>
-        </section>
-
-        <!-- ========== 图形选股 ========== -->
-        <section id="tab-graphic" class="tab-content">
-          <div id="graphicPageSummary" class="page-summary"></div>
-          <div class="tab-toolbar">
-            <div class="filter-line">
-              <span class="predict-meta" id="graphicMeta">加载中…</span>
-              <span id="graphicProgress" class="filter-hint"></span>
-            </div>
-            <div class="predict-actions">
-              <button id="btnGraphicRun" class="btn-action">立即扫描</button>
-            </div>
-          </div>
-
-          <section class="funnel-area graphic-area">
-            <div class="graphic-header">
-              <div class="graphic-title">
-                <span class="graphic-badge">FirstLimit Alpha</span>
-                <h3>首板图形选股</h3>
-                <span class="graphic-hint">围绕首板图形、承接概率和断板风险做三池分层</span>
-              </div>
-            </div>
-            <div class="funnel-grid">
-              <div class="pool-column">
-                <div class="pool-header">候选池 <span id="graphic-count-candidate" class="pool-count">0</span><span class="pool-threshold" id="graphic-th-candidate">≥6分</span></div>
-                <div id="graphic-pool-candidate" class="pool-list"></div>
-              </div>
-              <div class="pool-column highlight-focus">
-                <div class="pool-header">重点关注池 <span id="graphic-count-focus" class="pool-count">0</span><span class="pool-threshold" id="graphic-th-focus">≥10分</span></div>
-                <div id="graphic-pool-focus" class="pool-list"></div>
-              </div>
-              <div class="pool-column highlight-buy">
-                <div class="pool-header">买入候选池 <span id="graphic-count-buy" class="pool-count">0</span><span class="pool-threshold" id="graphic-th-buy">≥14分</span></div>
-                <div id="graphic-pool-buy" class="pool-list"></div>
               </div>
             </div>
           </section>
