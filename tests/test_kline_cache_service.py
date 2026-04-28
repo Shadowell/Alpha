@@ -9,7 +9,7 @@ from app.services.kline_store import KlineSQLiteStore
 class FakeProvider:
     symbol_name_cache = None
 
-    async def get_trade_days(self):
+    async def get_trade_days(self, min_days=0):
         dates = pd.bdate_range("2026-02-20", "2026-04-10")
         return pd.DataFrame({"trade_date": dates.date.astype(str)})
 
@@ -27,7 +27,7 @@ class FakeProvider:
     async def get_snapshot_spot(self, **kwargs):
         return pd.DataFrame()
 
-    async def get_hist(self, symbol, start_date, end_date, adjust="qfq"):
+    async def get_hist(self, symbol, start_date, end_date, adjust="qfq", force_remote=False):
         dates = pd.bdate_range("2026-03-01", "2026-04-10").date.astype(str)
         return pd.DataFrame(
             {
@@ -47,7 +47,7 @@ def test_kline_cache_service_sync_trade_date(tmp_path):
     service = KlineCacheService(provider=FakeProvider(), store=store, window_days=30)
     result = asyncio.run(service.sync_trade_date(trade_date="2026-04-09", force=True))
     assert result["success"] is True
-    assert result["symbol_count"] == 2
+    assert result["symbol_count"] == 3
 
     rows = service.get_kline("000001", 30)
     assert len(rows) == 30
@@ -66,3 +66,38 @@ def test_kline_cache_service_sync_trade_date(tmp_path):
     detail = service.get_sync_log_detail(task_id)
     assert detail is not None
     assert detail["task"]["task_id"] == task_id
+
+
+def test_kline_cache_service_marks_interrupted_tasks_failed(tmp_path):
+    store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
+    service = KlineCacheService(provider=FakeProvider(), store=store, window_days=30)
+    store.start_sync_task(
+        task_id="stale-task",
+        trigger_mode="manual",
+        trade_date="2026-04-09",
+        total_symbols=3,
+        started_at="2026-04-09T15:00:00+08:00",
+    )
+    store.set_sync_state(
+        attempt_trade_date="2026-04-09",
+        success_trade_date=None,
+        status="running",
+        symbol_count=1,
+        total_symbols=3,
+        synced_symbols=1,
+        success_symbols=1,
+        failed_symbols=0,
+        task_id="stale-task",
+        trigger_mode="manual",
+        updated_at="2026-04-09T15:00:01+08:00",
+        message="补缺同步 1/3",
+    )
+
+    status = service.get_sync_state()
+    assert status["status"] == "failed"
+    assert status["message"] == "上次同步中断，请重新提交同步任务"
+
+    detail = service.get_sync_log_detail("stale-task")
+    assert detail is not None
+    assert detail["task"]["status"] == "failed"
+    assert detail["task"]["finished_at"]
