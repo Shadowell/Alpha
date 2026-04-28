@@ -377,16 +377,6 @@ async def recompute(req: RecomputeRequest):
     return {"success": True}
 
 
-@app.post("/api/jobs/eod-screen")
-async def run_eod_screen(trade_date: str | None = None):
-    try:
-        result = await service.run_eod_screen(trade_date)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"盘后筛选执行失败: {exc}")
-    await _broadcast_snapshot()
-    return {"success": True, **result}
-
-
 @app.get("/api/stock/{symbol}/realtime")
 async def get_stock_realtime(symbol: str):
     """盘中实时行情（当天 OHLCV），从全市场 snapshot 中过滤。"""

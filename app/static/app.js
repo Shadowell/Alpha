@@ -466,7 +466,7 @@ function renderPool(poolName, list) {
   if (!filtered.length) {
     const hint = state.selectedConcept
       ? `当前概念「${state.selectedConcept}」下无匹配股票`
-      : '尚未运行筛选，点击上方「盘后筛选」开始';
+      : '当前暂无系统候选';
     root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
   }
 }
@@ -586,7 +586,7 @@ function renderCompositeCandidatePool(root, systemCandidates) {
   } else {
     const hint = state.selectedConcept
       ? `当前概念「${state.selectedConcept}」下无系统候选`
-      : '尚未运行筛选，点击上方「盘后筛选」开始';
+      : '当前暂无系统候选';
     parts.push(_renderCompositeSection(
       '系统候选',
       '来自系统漏斗的调整期候选',
@@ -2708,21 +2708,6 @@ async function init() {
     state.selectedConcept = null;
     renderHotConcepts();
     renderFunnel();
-  };
-
-  document.getElementById('btnEodScreen').onclick = async () => {
-    const btn = document.getElementById('btnEodScreen');
-    _btnStart(btn, '执行中...');
-    setStatus('盘后筛选执行中...', 'info');
-    try {
-      const payload = await request('/api/jobs/eod-screen', { method: 'POST' });
-      await reloadFunnel();
-      setStatus(`盘后筛选完成: 候选${payload.candidate_count || 0}只`, 'success');
-    } catch (err) {
-      setStatus(`盘后筛选失败: ${err.message}`, 'error');
-    } finally {
-      _btnEnd(btn);
-    }
   };
 
   document.getElementById('btnNoticeScreen').onclick = async () => {

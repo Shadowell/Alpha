@@ -328,7 +328,7 @@ Hermes 运行诊断逻辑判断问题类型：
 | 候选池过满 | `candidate_count > 50` | 参数过松？需要提高门槛 |
 | 转化率过低 | `focus→buy` 转化率 < 5% 持续一周 | 买入条件过严？评分权重偏差？ |
 | 公告高分低效 | 高分公告股次日跌幅 > 3% 超过 30% | 关键词权重偏差？利好已兑现？ |
-| 追高信号过多 | `penalty_gap_up` 触发率 > 40% | `chase_risk_return` 阈值过高？ |
+| 追高信号过多 | `penalty_gap_up` 触发率 > 40% | 高开惩罚或买入阈值是否需要复核？ |
 | 同步异常 | 失败率 > 5% 或耗时 > 300s | 网络问题？接口限流？ |
 
 ### 5.4 Propose — 生成提案
@@ -338,11 +338,11 @@ Hermes 运行诊断逻辑判断问题类型：
 ```json
 {
   "type": "rule_patch",
-  "title": "建议放宽箱体振幅上限",
+  "title": "建议调整买入评分阈值",
   "risk_level": "medium",
-  "reasoning": "过去 5 个交易日候选池为空，当前 box_range_threshold=0.18 可能过严。同期市场波动率上升，建议适度放宽。",
+  "reasoning": "过去 5 个交易日候选池为空，当前 buy_score_threshold=78 可能过严。同期市场波动率上升，建议适度下调后观察。",
   "diff": {
-    "box_range_threshold": { "from": 0.18, "to": 0.22 }
+    "buy_score_threshold": { "from": 78, "to": 74 }
   },
   "expected_impact": "候选池预计增加 5-10 只",
   "confidence": 0.72,
@@ -553,12 +553,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_feedback_proposal ON agent_feedback(proposa
   "proposals": [
     {
       "type": "rule_patch",
-      "title": "建议降低追高涨幅阈值",
+      "title": "建议提高高开惩罚权重",
       "risk_level": "medium",
       "diff": {
-        "chase_risk_return": { "from": 0.07, "to": 0.05 }
+        "penalty_gap_up": { "from": 8, "to": 10 }
       },
-      "reasoning": "当前追高涨幅阈值 0.07 导致过多候选被惩罚...",
+      "reasoning": "当前高开惩罚不足以过滤追高候选...",
       "expected_impact": "减少 ~15% 的惩罚触发",
       "confidence": 0.68,
       "evidence": ["连续 3 日惩罚率 > 40%", "同期大盘涨幅温和"]

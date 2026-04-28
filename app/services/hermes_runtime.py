@@ -323,7 +323,6 @@ class HermesRuntime:
 
 ## 诊断参考
 - 候选池健康范围: 5-30 只（0=过严, >50=过松）
-- box_range_threshold 默认 0.18，正常范围 0.14-0.24
 - buy_score_threshold 默认 78，不低于 70
 - 公告分池: ≥80→buy, ≥65→focus, 其余→candidate
 
@@ -490,16 +489,16 @@ class HermesRuntime:
             diagnosis.append({
                 "issue": "候选池为空",
                 "severity": "medium",
-                "detail": "当日盘后筛选未产出任何候选股票",
+                "detail": "当前策略候选池为空",
             })
-            recommendations.append("候选池为空，优先检查 box_range_threshold、volume_shrink_threshold 和交易日数据完整性。")
+            recommendations.append("候选池为空，优先检查自定义策略规则、盘中评分阈值和交易日数据完整性。")
         elif cc > 50:
             diagnosis.append({
                 "issue": "候选池过满",
                 "severity": "low",
                 "detail": f"候选池 {cc} 只，可能参数过松",
             })
-            recommendations.append("候选池过满，建议复核缩量和箱体阈值，避免噪声样本过多。")
+            recommendations.append("候选池过满，建议复核自定义策略规则和买入阈值，避免噪声样本过多。")
 
         return {"summary": "规则化诊断完成", "diagnosis": diagnosis, "recommendations": recommendations}
 

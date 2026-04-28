@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS, StrategyConfig
 from app.services.data_provider import to_float
+from app.services.time_utils import parse_trade_date
 
 
 def clamp(value: float, min_v: float, max_v: float) -> float:
@@ -14,8 +14,7 @@ def clamp(value: float, min_v: float, max_v: float) -> float:
 
 
 def get_last_n_trade_window(trade_days_df: pd.DataFrame, base_date: str, n: int) -> tuple[str, str]:
-    date_format = "%Y-%m-%d"
-    target = datetime.strptime(base_date, date_format)
+    target = pd.Timestamp(parse_trade_date(base_date))
 
     days = trade_days_df.copy()
     days["trade_date"] = pd.to_datetime(days["trade_date"])
@@ -24,138 +23,6 @@ def get_last_n_trade_window(trade_days_df: pd.DataFrame, base_date: str, n: int)
         raise ValueError("Not enough trade days to calculate lookback window")
 
     return selected[0].strftime("%Y%m%d"), selected[-1].strftime("%Y%m%d")
-
-
-def is_main_board_stock(code: str, name: str, config: StrategyConfig) -> bool:
-    code = str(code)
-    name = str(name)
-    if config.exclude_st and "ST" in name.upper():
-        return False
-    if config.exclude_gem and code.startswith("30"):
-        return False
-    if config.exclude_star and code.startswith("688"):
-        return False
-    if code.startswith(("43", "8", "9")):
-        return False
-    return code.startswith(("00", "60", "30", "688"))
-
-
-def prefilter_universe(snapshot: pd.DataFrame, config: StrategyConfig) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    if snapshot.empty:
-        return result
-
-    for _, row in snapshot.iterrows():
-        code = str(row.get("代码", "")).strip()
-        name = str(row.get("名称", "")).strip()
-        if not code or not is_main_board_stock(code, name, config):
-            continue
-
-        price = to_float(row.get("最新价"))
-        market_cap_raw = row.get("总市值")
-        market_cap = to_float(market_cap_raw, default=-1)
-        if price <= config.close_price_threshold:
-            continue
-        has_market_cap = market_cap_raw is not None and str(market_cap_raw).strip() not in {"", "nan", "NaN", "<NA>"}
-        if has_market_cap and (market_cap <= config.market_capital_low or market_cap > config.market_capital_high):
-            continue
-
-        result.append(
-            {
-                "symbol": code,
-                "name": name,
-                "price": price,
-                "open": to_float(row.get("今开")),
-                "pre_close": to_float(row.get("昨收")),
-                "volume": to_float(row.get("成交量")),
-                "amount": to_float(row.get("成交额")),
-                "market_cap": market_cap,
-            }
-        )
-    return result
-
-
-def analyze_adjustment_candidate(
-    stock: dict[str, Any],
-    history: pd.DataFrame,
-    config: StrategyConfig,
-) -> tuple[bool, list[str], dict[str, Any]]:
-    if history.empty or len(history) < config.period_days:
-        return False, [], {}
-
-    recent = history.tail(config.period_days).copy()
-
-    highs = recent["最高"].astype(float)
-    lows = recent["最低"].astype(float)
-    closes = recent["收盘"].astype(float)
-    opens = recent["开盘"].astype(float)
-    volumes = recent["成交量"].astype(float)
-    amounts = recent["成交额"].astype(float) if "成交额" in recent.columns else volumes * closes
-
-    hhv20 = float(highs.max())
-    llv20 = float(lows.min())
-    close = float(closes.iloc[-1])
-    open_ = float(opens.iloc[-1])
-
-    box_range = (hhv20 - llv20) / max(llv20, 0.01)
-    amp5 = ((highs.tail(5) - lows.tail(5)) / lows.tail(5).replace(0, 0.01)).fillna(0.0)
-    amp20 = ((highs - lows) / lows.replace(0, 0.01)).fillna(0.0)
-    amp_ratio = float(amp5.mean() / max(float(amp20.mean()), 0.001))
-
-    vol_ma5 = float(volumes.tail(5).mean())
-    vol_ma10 = float(volumes.tail(10).mean())
-    vol_ma20 = float(volumes.mean())
-    avg_amount20 = float(amounts.mean())
-    vol_shrink_ratio = vol_ma5 / max(vol_ma20, 1)
-    vol_recover_ratio = vol_ma5 / max(vol_ma10, 1)
-
-    not_breakout = close <= hhv20 * config.pre_breakout_buffer
-    close_ge_open = close >= open_
-    shadow_support = float(min(open_, close) - float(lows.iloc[-1])) / max(close, 0.01)
-
-    last_ret = (close / max(float(closes.iloc[-2]), 0.01)) - 1 if len(closes) >= 2 else 0.0
-    last_vol_ratio = float(volumes.iloc[-1]) / max(vol_ma20, 1)
-    chase_risk = bool(last_ret >= config.chase_risk_return and last_vol_ratio >= config.chase_risk_vol_ratio)
-
-    pass_rules = (
-        box_range <= config.box_range_threshold
-        and amp_ratio <= config.amp_ratio_threshold
-        and vol_shrink_ratio <= config.volume_shrink_threshold
-        and vol_recover_ratio >= config.volume_recover_threshold
-        and not_breakout
-        and close_ge_open
-        and shadow_support >= config.shadow_support_threshold
-        and (not chase_risk)
-    )
-
-    reasons = []
-    if box_range <= config.box_range_threshold:
-        reasons.append("缩量横盘收敛")
-    if amp_ratio <= config.amp_ratio_threshold:
-        reasons.append("近5日振幅收敛")
-    if vol_shrink_ratio <= config.volume_shrink_threshold:
-        reasons.append("成交量低于中期均量")
-    if vol_recover_ratio >= config.volume_recover_threshold:
-        reasons.append("量能出现温和恢复")
-    if close_ge_open and shadow_support >= config.shadow_support_threshold:
-        reasons.append("止跌企稳，下影承接")
-    if not_breakout:
-        reasons.append("临近前高但未突破")
-    if chase_risk:
-        reasons.append("末端爆量长阳，追高风险")
-
-    metrics = {
-        "box_range": box_range,
-        "amp_ratio": amp_ratio,
-        "vol_shrink_ratio": vol_shrink_ratio,
-        "vol_recover_ratio": vol_recover_ratio,
-        "breakout_level": hhv20,
-        "avg_amount20": avg_amount20,
-        "close": close,
-        "open": open_,
-        "chase_risk": chase_risk,
-    }
-    return pass_rules, reasons, metrics
 
 
 def compute_intraday_score(
