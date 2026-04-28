@@ -34,14 +34,7 @@ from app.services.custom_strategy import (
     StrategyRuleRef,
 )
 from app.services.strategy_rules import RULE_REGISTRY, list_rules as list_strategy_rules
-from app.services.hermes_ai_extensions import (
-    AutoTradeLoop,
-    BacktestLab,
-    NewsInsightExtractor,
-    ResearchCardGenerator,
-    WeeklyReportBuilder,
-)
-from app.services.risk_guardian import RiskGuardian, risk_guardian_loop
+from app.services.backtest_lab import BacktestLab
 
 from app.routers.kline import init_kline_router, kline_cache_loop
 from app.routers.first_limit_alpha import init_first_limit_alpha_router
@@ -133,44 +126,9 @@ hermes_runtime = HermesRuntime(
     kline_cache_service=kline_cache_service,
 )
 
-risk_guardian = RiskGuardian(
-    paper_trading=paper_trading,
-    get_realtime_price=lambda sym: _get_realtime_price(sym),
-    is_market_open=lambda: _is_a_market_open(),
-)
-
-auto_trade_loop = AutoTradeLoop(
-    paper_trading=paper_trading,
-    funnel_service=service,
-    hermes_memory=hermes_memory,
-    get_realtime_price=lambda sym: _get_realtime_price(sym),
-    is_market_open=lambda: _is_a_market_open(),
-)
-
 backtest_lab = BacktestLab(
     kline_store=_kline_store,
     name_lookup=_qb_name_lookup,
-)
-
-research_card_gen = ResearchCardGenerator(
-    runtime=hermes_runtime,
-    kronos_service=kronos_service,
-    kline_store=_kline_store,
-    data_provider=provider,
-    notice_service=notice_service,
-)
-
-news_insight = NewsInsightExtractor(
-    runtime=hermes_runtime,
-    notice_service=notice_service,
-    funnel_service=service,
-)
-
-weekly_report = WeeklyReportBuilder(
-    runtime=hermes_runtime,
-    funnel_service=service,
-    notice_service=notice_service,
-    paper_trading=paper_trading,
 )
 
 
@@ -198,39 +156,6 @@ async def _ticker_loop() -> None:
         except Exception as exc:
             print(f"[ticker] error: {exc}")
         await asyncio.sleep(60)
-
-
-async def _auto_trade_loop() -> None:
-    """盘中每 60s 执行一次 auto_trade.tick（enabled=False 时快速返回）。"""
-    await asyncio.sleep(30)
-    while True:
-        try:
-            await auto_trade_loop.tick()
-        except Exception as exc:
-            print(f"[auto_trade] loop error: {exc}")
-        await asyncio.sleep(60)
-
-
-async def _weekly_report_scheduler() -> None:
-    """周五 15:30 后自动生成周报并推飞书（每周一次）。"""
-    from app.services.time_utils import now_cn
-    await asyncio.sleep(120)
-    last_run_week: str | None = None
-    while True:
-        try:
-            n = now_cn()
-            if n.weekday() == 4 and n.hour == 15 and n.minute >= 30:
-                wk = n.strftime("%Y-W%W")
-                if last_run_week != wk:
-                    print(f"[weekly_report] scheduled run at {n.isoformat()}")
-                    try:
-                        await weekly_report.generate()
-                        last_run_week = wk
-                    except Exception as exc:
-                        print(f"[weekly_report] run failed: {exc}")
-        except Exception as exc:
-            print(f"[weekly_report] scheduler error: {exc}")
-        await asyncio.sleep(600)
 
 
 async def _predict_funnel_scheduler_loop() -> None:
@@ -298,13 +223,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
     app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
     app.state.hot_stock_ai_task = asyncio.create_task(_hot_stock_ai_scheduler_loop())
-    app.state.risk_guardian_task = asyncio.create_task(risk_guardian_loop(risk_guardian, interval_seconds=30))
-    app.state.auto_trade_task = asyncio.create_task(_auto_trade_loop())
-    app.state.weekly_report_task = asyncio.create_task(_weekly_report_scheduler())
     yield
     for key in [
         "backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task",
-        "predict_funnel_task", "hot_stock_ai_task", "risk_guardian_task", "auto_trade_task", "weekly_report_task",
+        "predict_funnel_task", "hot_stock_ai_task",
     ]:
         task = getattr(app.state, key, None)
         if task:
@@ -633,123 +555,6 @@ async def backtest_custom_strategy(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"回测失败: {exc}")
-
-
-# ============ Hermes AI 扩展能力 ============
-
-@app.get("/api/hermes-ai/risk")
-async def get_risk_snapshot():
-    return risk_guardian.get_snapshot()
-
-
-@app.post("/api/hermes-ai/risk/config")
-async def update_risk_config(payload: dict):
-    risk_guardian.set_config(payload or {})
-    return {"success": True, "snapshot": risk_guardian.get_snapshot()}
-
-
-@app.post("/api/hermes-ai/risk/tick")
-async def trigger_risk_tick():
-    result = await risk_guardian.tick()
-    return {"success": True, "result": result, "snapshot": risk_guardian.get_snapshot()}
-
-
-@app.get("/api/hermes-ai/auto-trade")
-async def get_auto_trade():
-    return auto_trade_loop.get_snapshot()
-
-
-@app.post("/api/hermes-ai/auto-trade/config")
-async def update_auto_trade_config(payload: dict):
-    auto_trade_loop.set_config(payload or {})
-    return {"success": True, "snapshot": auto_trade_loop.get_snapshot()}
-
-
-@app.post("/api/hermes-ai/auto-trade/tick")
-async def trigger_auto_trade_tick():
-    result = await auto_trade_loop.tick()
-    return {"success": True, "result": result, "snapshot": auto_trade_loop.get_snapshot()}
-
-
-@app.get("/api/hermes-ai/backtest")
-async def get_backtest():
-    snap = backtest_lab.get_snapshot()
-    if not snap:
-        return {"generated_at": None, "message": "尚未执行过回测"}
-    return snap
-
-
-@app.post("/api/hermes-ai/backtest/run")
-async def run_backtest(
-    lookback_days: int = 25,
-    hold_days: int = 3,
-    tp_pct: float = 8.0,
-    sl_pct: float = -5.0,
-    amp_threshold: float = 0.20,
-    vol_cv_threshold: float = 0.40,
-    vol_spike_ratio: float = 3.0,
-    require_limit_up: bool = True,
-    limit: int | None = None,
-):
-    if backtest_lab._running:
-        raise HTTPException(409, "回测正在运行中")
-    try:
-        return await backtest_lab.run(
-            lookback_days=lookback_days,
-            hold_days=hold_days,
-            tp_pct=tp_pct,
-            sl_pct=sl_pct,
-            amp_threshold=amp_threshold,
-            vol_cv_threshold=vol_cv_threshold,
-            vol_spike_ratio=vol_spike_ratio,
-            require_limit_up=require_limit_up,
-            limit=limit,
-        )
-    except Exception as exc:
-        raise HTTPException(500, f"回测失败: {exc}")
-
-
-@app.post("/api/hermes-ai/research/{symbol}")
-async def gen_research_card(symbol: str, name: str = ""):
-    cached = research_card_gen.get_cached(symbol)
-    if cached:
-        return cached
-    try:
-        return await research_card_gen.generate(symbol, name)
-    except Exception as exc:
-        raise HTTPException(500, f"研报生成失败: {exc}")
-
-
-@app.get("/api/hermes-ai/news-insight")
-async def get_news_insight():
-    snap = news_insight.get_snapshot()
-    if not snap:
-        return {"message": "尚未生成", "generated_at": None}
-    return snap
-
-
-@app.post("/api/hermes-ai/news-insight/run")
-async def run_news_insight(trade_date: str | None = None):
-    try:
-        return await news_insight.generate(trade_date=trade_date)
-    except Exception as exc:
-        raise HTTPException(500, f"消息分析失败: {exc}")
-
-
-@app.get("/api/hermes-ai/weekly-report")
-async def get_weekly_report():
-    snap = weekly_report.get_snapshot()
-    if not snap:
-        return {"message": "尚未生成", "generated_at": None}
-    return snap
-
-
-@app.post("/api/hermes-ai/weekly-report/run")
-async def run_weekly_report():
-    try:
-        return await weekly_report.generate()
-    except Exception as exc:
-        raise HTTPException(500, f"周报生成失败: {exc}")
 
 
 @app.get("/api/notice/funnel")
