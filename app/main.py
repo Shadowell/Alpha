@@ -155,6 +155,16 @@ async def _ticker_loop() -> None:
             changed = await service.tick()
             if changed:
                 await _broadcast_snapshot()
+            # 实时更新模拟盘持仓价格（复用已缓存的 snapshot）
+            try:
+                _snap = provider.realtime_snapshot_cache
+                if _snap is not None:
+                    _, _df = _snap
+                    if not _df.empty and "代码" in _df.columns and "最新价" in _df.columns:
+                        _price_map = dict(zip(_df["代码"].astype(str), _df["最新价"].astype(float)))
+                        paper_trading.update_prices(_price_map)
+            except Exception as _pe:
+                print(f"[ticker] price update failed: {_pe}")
         except Exception as exc:
             print(f"[ticker] error: {exc}")
         await asyncio.sleep(60)
@@ -208,6 +218,27 @@ async def _hot_stock_ai_scheduler_loop() -> None:
         await asyncio.sleep(60)
 
 
+def _checkpoint_all_sqlite() -> None:
+    """在 lifespan shutdown 的任务取消之前，对所有 SQLite 库执行 WAL checkpoint。
+
+    原因：若任务取消时某连接正在 fsync（WAL checkpoint），macOS 会让进程
+    卡在内核不可中断睡眠（UEs），SIGKILL 也无法清除。
+    提前在单独线程里 checkpoint 并关闭，可避免这种情况。
+    """
+    import sqlite3 as _sqlite3
+    db_paths = [
+        "data/funnel_state.db",
+        "data/market_kline.db",
+    ]
+    for path in db_paths:
+        try:
+            conn = _sqlite3.connect(path, timeout=5)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception as exc:
+            print(f"[shutdown] checkpoint {path} failed (non-fatal): {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async def _startup_backfill() -> None:
@@ -226,6 +257,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
     app.state.hot_stock_ai_task = asyncio.create_task(_hot_stock_ai_scheduler_loop())
     yield
+    # 先 checkpoint 所有 SQLite WAL，再取消任务，避免进程卡在内核 fsync 的 UEs 状态
+    await asyncio.to_thread(_checkpoint_all_sqlite)
     for key in [
         "backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task",
         "predict_funnel_task", "hot_stock_ai_task",
