@@ -2542,3 +2542,7 @@ body { color: var(--text); }
   background: rgba(59, 130, 246, 0.15);
   color: #93c5fd; font-size: 10px;
 }
+
+.paper-item-header { display: flex; align-items: center; gap: 8px; }
+.paper-item-detail { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.pnl-badge { margin-left: auto; font-weight: 700; font-size: 13px; }
