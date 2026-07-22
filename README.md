@@ -4,6 +4,11 @@
   <strong>A 股量化选股 · Kronos K线预测模型 · Hermes Agent 自进化闭环</strong>
 </p>
 
+<p align="center">
+  <a href="https://github.com/Shadowell/Alpha/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Shadowell/Alpha"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+</p>
+
 Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只是一个筛选工具——通过集成 **[Kronos](https://arxiv.org/abs/2508.02739) 金融 K 线基础模型**和 **Hermes Agent 自进化智能体**，Alpha 能够自主观察市场、分析主线、输出结构化诊断与交易建议，形成**观察 → 思考 → 校验 → 进化**的持续优化闭环。
 
 ---
@@ -137,7 +142,7 @@ Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只�
 
 - **实时输入**：直接复用 `/api/market/hot-stocks` 的实时热门股接口，默认取前 20
 - **逐股分析**：结合热度排名、当日涨幅、趋势位置、20 日量额比和 `Kronos` 三日预测
-- **深度讨论**：对命中的热门股调用本地 [TradingAgents](</Users/jie.feng/work/github/TradingAgents/README.md>) 项目，通过 `DeepSeek API` 产出多代理讨论结论，再映射为加减分
+- **深度讨论**：对命中的热门股调用 [TradingAgents](https://github.com/Shadowell/TradingAgents) 项目，通过 `DeepSeek API` 产出多代理讨论结论，再映射为加减分
 - **命令行调用方式**：Alpha 通过 `uv run python -m cli.main analyze --ticker ... --date ... --provider deepseek --quick-model deepseek-chat --deep-model deepseek-reasoner` 调用 `TradingAgents`，不再直接 import 图对象
 - **解释性评分**：每只股票都输出分数组成、风险扣分、标签和一段摘要分析
 - **候选池评价**：`TradingAgents` 返回结果会落到第一池候选池展示，并明确给出 `买入 / 卖出 / 观望` 评价
@@ -710,3 +715,5 @@ npx playwright test
 ## License
 
 本项目采用 [MIT License](LICENSE) 开源许可。
+
+版本发布与持续维护记录见 [GitHub Releases](https://github.com/Shadowell/Alpha/releases) 和 [CHANGELOG.md](CHANGELOG.md)。
