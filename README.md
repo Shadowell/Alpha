@@ -709,4 +709,4 @@ npx playwright test
 
 ## License
 
-MIT
+本项目采用 [MIT License](LICENSE) 开源许可。
