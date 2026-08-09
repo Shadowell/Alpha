@@ -9,7 +9,7 @@ LOG_DIR="$ROOT_DIR/logs"
 if [[ -f "$ROOT_DIR/.env" ]]; then
   set -o allexport
   # shellcheck disable=SC1090
-  source <(grep -Ev '^\s*(#|$)' "$ROOT_DIR/.env")
+  source "$ROOT_DIR/.env"
   set +o allexport
   echo "已加载 .env"
 fi

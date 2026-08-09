@@ -22,8 +22,8 @@ Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只�
 │  ┌─────────────┐    ┌─────────────────────────────────────────────┐  │
 │  │  数据层      │    │                 服务层                       │  │
 │  │             │    │                                             │  │
-│  │  东财HTTP   │───▶│  KlineCacheService    K线并发同步            │  │
-│  │  新浪财经   │───▶│  MarketDataClient     交易日历/实时行情      │  │
+│  │  Tushare Pro│───▶│  KlineCacheService    K线并发同步            │  │
+│  │  东财/新浪  │───▶│  MarketDataClient     主源降级/实时行情      │  │
 │  │  同花顺     │───▶│  ConceptEngine        概念热度评分           │  │
 │  │  AkShare    │───▶│  StrategyEngine       盘中实时评分           │  │
 │  │             │    │  NoticeService        公告抓取+双引擎打分     │  │
@@ -97,7 +97,19 @@ Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只�
 - **同步操作**：全量补缺（日期×股票交叉补全）· 增量同步（日期范围一次提交批量队列）· 完整性检查
 - **任务历史**：分页展示，支持按状态筛选（全部/成功/失败/运行中）
 - **完整性报告**：按日期展示缺失分布，最差个股排名
-- **自动同步**：每日 15:20 自动补最新交易日缺口，数据中心补数链路使用直连东财 / 新浪的 async HTTP 客户端，所有外部请求都有硬超时与有限重试；历史全量补缺仅由手动按钮触发，单股抓取失败写入失败明细并继续批次
+- **自动同步**：每日 15:20 自动补最新交易日缺口；配置 Token 时以 Tushare 提供股票主数据、交易日历和日线，未配置或调用失败时显式降级东财 / 新浪；实时行情固定走东财，历史全量补缺仅由手动按钮触发
+- **来源可追溯**：K 线与同步明细持久化 `source` / `fallback_reason`，可区分 `tushare`、`eastmoney`、`sina`、`sqlite` 与具体降级原因
+
+### 数据源与格式
+
+| 场景 | 主源 | 降级源 | Alpha 内部格式 |
+|------|------|--------|----------------|
+| 股票主数据 | Tushare `stock_basic` | 东方财富全市场 spot | `symbol -> name`，股票代码统一为 6 位字符串 |
+| 交易日历 | Tushare `trade_cal` | Sina，最后使用新鲜 SQLite 日期 | `YYYY-MM-DD` |
+| 历史/日线 | Tushare `daily` / `pro_bar` | 东方财富 K 线 | SQLite：`symbol, trade_date, open, high, low, close, volume, amount, source, fallback_reason` |
+| 实时行情 | 东方财富 spot | 业务层既有降级路径 | Pandas DataFrame 中文列名；FastAPI 对外返回 JSON |
+
+Tushare `daily.vol` 以“手”为单位，直接映射为 `volume`；`daily.amount` 以“千元”为单位，写入 Alpha 前乘以 1000，统一为人民币“元”。策略产物仍按各模块使用 CSV / JSON，Kronos 输入使用英文 OHLCVA DataFrame。
 
 ### 3. 策略选股
 
@@ -424,8 +436,8 @@ K 线同步完成类消息只写入服务日志，`notify_sync_complete()` 在�
 | **预测模型** | [Kronos-base](https://huggingface.co/NeoQuasar/Kronos-base) 102.3M · PyTorch · HuggingFace Hub |
 | **策略建模** | FirstLimit Alpha · LightGBM · scikit-learn · GRU |
 | **智能体** | Hermes Agent（CLI `hermes chat -q` / HTTP API）· MCP 协议 · OpenAI 兼容 LLM |
-| **数据源** | 东财 async HTTP（数据中心 K 线 / 全市场 spot）· 新浪（交易日历）· AkShare（公告等非补数路径）· 同花顺（热门概念/个股） |
-| **存储** | SQLite × 2：`market_kline.db`（K 线缓存）+ `funnel_state.db`（漏斗/持仓/Agent 记忆） |
+| **数据源** | Tushare Pro（股票主数据 / 交易日历 / 日线主源）· 东财 async HTTP（实时行情与降级 K 线）· 新浪（交易日历降级）· AkShare / 同花顺（公告、概念等业务路径） |
+| **存储** | SQLite × 2：`market_kline.db`（含来源元数据的 K 线缓存）+ `funnel_state.db`（漏斗/持仓/Agent 记忆） |
 | **前端** | 原生 HTML/CSS/JS · ECharts 5 · Glassmorphism 暗色主题 · WebSocket 实时推送 |
 | **通知** | 飞书 Webhook **交互式卡片**（K 线同步 / 预测选股 / 周报） |
 
@@ -462,6 +474,7 @@ Alpha/
 │       ├── kline_cache_service.py     # K 线并发同步调度（缺失矩阵·批量写库·失败快跳过）
 │       ├── kline_store.py             # K 线 SQLite 存储
 │       ├── market_data_client.py      # 东财/新浪 async HTTP 客户端（硬超时·有限重试）
+│       ├── tushare_market_data_client.py # Tushare 主源 + 显式东财/新浪降级与格式规范化
 │       ├── data_provider.py           # 多数据源适配（同花顺/新浪/AkShare）
 │       ├── realtime.py                # WebSocket 广播（snapshot + monitor_update）
 │       ├── time_utils.py              # 交易日/时段/CST 时间工具
@@ -513,11 +526,15 @@ pip3 install -r requirements.txt
 
 ### 环境变量
 
+建议先复制示例文件：`cp .env.example .env`。`.env` 已被 Git 忽略，真实 Token 不应写入 README、Issue、日志或提交历史。
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `18890` | 服务端口，可通过环境变量覆盖 |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `RELOAD` | `0` | 热重载（开发模式设为 `1`） |
+| `ENABLE_TUSHARE` | `true` | 是否启用 Tushare 主源；设为 `false` 可强制使用既有降级链路 |
+| `TUSHARE_TOKEN` | — | 可选 Tushare Pro Token；留空时系统仍可通过东财 / 新浪运行 |
 | `PYTHON_BIN` | 自动探测 arm64 Python | 启动服务使用的 Python 可执行文件，必须是 arm64 Python 3.11+；默认优先 `$HOME/arm-python/python/bin/python3.11`、`/opt/homebrew/bin/python3.11` |
 | `OPENAI_API_KEY` | — | 启用 LLM 打分 + 智能监控 + Agent 降级模式 |
 | `OPENAI_BASE_URL` | — | 自定义 LLM API 端点 |
@@ -616,6 +633,7 @@ pip3 install -r requirements.txt
 | POST | `/api/jobs/kline-cache/check` | 完整性检查 |
 | GET | `/api/jobs/kline-cache/stats` | 数据库统计 |
 | GET | `/api/jobs/kline-cache/status` | 同步状态 |
+| GET | `/api/jobs/kline-cache/data-source` | 数据源配置、主/降级关系与最近一次实际来源 |
 | GET | `/api/jobs/kline-cache/progress` | 同步进度 |
 | GET | `/api/jobs/kline-cache/report` | 完整性报告 |
 | GET | `/api/jobs/kline-cache/logs` | 同步日志（分页） |

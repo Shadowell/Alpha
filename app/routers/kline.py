@@ -104,6 +104,11 @@ async def get_kline_cache_status():
     return _kline_cache_service.get_sync_state()
 
 
+@router.get("/jobs/kline-cache/data-source")
+async def get_kline_data_source_status():
+    return _kline_cache_service.get_data_source_status()
+
+
 @router.get("/jobs/kline-cache/progress")
 async def get_kline_cache_progress():
     return _kline_cache_service.get_sync_progress()

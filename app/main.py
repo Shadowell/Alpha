@@ -17,6 +17,7 @@ from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
 from app.services.market_data_client import EastmoneyMarketDataClient
+from app.services.tushare_market_data_client import TushareFirstMarketDataClient
 from app.services.notice_service import NoticeService
 from app.services.realtime import RealtimeHub
 from app.services.hermes_memory import HermesMemory
@@ -49,7 +50,8 @@ from app.services.kline_store import KlineSQLiteStore as _KlineSQLiteStore
 
 _kline_store = _KlineSQLiteStore()
 provider = AkshareDataProvider(kline_store=_kline_store)
-market_data_client = EastmoneyMarketDataClient(store=_kline_store)
+eastmoney_market_data_client = EastmoneyMarketDataClient(store=_kline_store)
+market_data_client = TushareFirstMarketDataClient(fallback=eastmoney_market_data_client)
 kline_cache_service = KlineCacheService(provider=provider, store=_kline_store, market_data_client=market_data_client)
 service = FunnelService(provider=provider, kline_cache_service=kline_cache_service)
 notice_service = NoticeService(state_store=service.state_store, kline_cache_service=kline_cache_service, provider=provider)
@@ -368,6 +370,8 @@ async def predict_kronos(symbol: str, lookback: int = 180, horizon: int = 3):
         return await kronos_service.predict(clean, lookback, horizon)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"Kronos 运行环境未就绪: {exc}")
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
