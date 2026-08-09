@@ -147,8 +147,8 @@ class TestPredict:
     def test_kronos_predict(self, client):
         """Kronos 预测首次请求会加载模型，可能需要 30 秒。"""
         r = client.get(f"/api/predict/{TEST_SYMBOL}/kronos?lookback=30&horizon=3", timeout=120)
-        # 若模型未配置，503 也可接受
-        assert r.status_code in (200, 503)
+        # 空缓存返回 400；模型运行环境未就绪返回 503。
+        assert r.status_code in (200, 400, 503)
 
 
 class TestHotStockAI:

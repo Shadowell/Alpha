@@ -3,11 +3,18 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
+import os
 import re
 from typing import Any
 
 import akshare as ak
 import pandas as pd
+
+
+def _live_market_data_enabled() -> bool:
+    return os.getenv("ENABLE_LIVE_MARKET_DATA", "true").strip().lower() not in {
+        "0", "false", "no", "off"
+    }
 
 
 def _is_trading_hours(dt: datetime | None = None) -> bool:
@@ -456,6 +463,12 @@ class AkshareDataProvider:
             if age <= cache_ttl_seconds and not cached.empty:
                 return cached.head(top_n).copy()
 
+        if not _live_market_data_enabled():
+            df = self._hot_stocks_from_snapshot(self._snapshot_from_db())
+            if not df.empty:
+                self.hot_stocks_cache = (datetime.now(), df)
+            return df.head(top_n).copy()
+
         last_exc: Exception | None = None
         for idx in range(retries + 1):
             try:
@@ -532,6 +545,26 @@ class AkshareDataProvider:
 
         print("[data_provider] _fetch_hot_stocks_from_spot: no data")
         return pd.DataFrame()
+
+    @staticmethod
+    def _hot_stocks_from_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
+        columns = ["rank", "symbol", "name", "latest_price", "change_amount", "change_pct"]
+        if snapshot is None or snapshot.empty:
+            return pd.DataFrame(columns=columns)
+        frame = snapshot.copy()
+        frame = frame[pd.to_numeric(frame.get("最新价"), errors="coerce").fillna(0.0) > 0]
+        if "名称" in frame.columns:
+            frame = frame[~frame["名称"].astype(str).str.upper().str.contains("ST", na=False)]
+        frame = frame[frame["代码"].astype(str).str[:2].isin(["00", "30", "60", "68"])]
+        frame = frame.sort_values("涨跌幅", ascending=False).reset_index(drop=True)
+        result = pd.DataFrame()
+        result["rank"] = range(1, len(frame) + 1)
+        result["symbol"] = frame["代码"].astype(str).values
+        result["name"] = frame["名称"].astype(str).values
+        result["latest_price"] = pd.to_numeric(frame["最新价"], errors="coerce").fillna(0.0).values
+        result["change_amount"] = pd.to_numeric(frame.get("涨跌额", 0), errors="coerce").fillna(0.0).values
+        result["change_pct"] = pd.to_numeric(frame["涨跌幅"], errors="coerce").fillna(0.0).values
+        return result[columns]
 
     async def get_symbol_name_map(self, cache_ttl_seconds: int = 3600) -> dict[str, str]:
         """获取全市场 symbol -> name 映射（冷启动自动拉取）。

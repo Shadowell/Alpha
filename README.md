@@ -535,6 +535,7 @@ pip3 install -r requirements.txt
 | `RELOAD` | `0` | 热重载（开发模式设为 `1`） |
 | `ENABLE_TUSHARE` | `true` | 是否启用 Tushare 主源；设为 `false` 可强制使用既有降级链路 |
 | `TUSHARE_TOKEN` | — | 可选 Tushare Pro Token；留空时系统仍可通过东财 / 新浪运行 |
+| `ENABLE_LIVE_MARKET_DATA` | `true` | 是否允许实时外部行情请求；CI / 离线环境设为 `false` 时快速使用本地缓存 |
 | `PYTHON_BIN` | 自动探测 arm64 Python | 启动服务使用的 Python 可执行文件，必须是 arm64 Python 3.11+；默认优先 `$HOME/arm-python/python/bin/python3.11`、`/opt/homebrew/bin/python3.11` |
 | `OPENAI_API_KEY` | — | 启用 LLM 打分 + 智能监控 + Agent 降级模式 |
 | `OPENAI_BASE_URL` | — | 自定义 LLM API 端点 |

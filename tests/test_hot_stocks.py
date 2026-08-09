@@ -52,3 +52,21 @@ def test_fetch_hot_stocks_prefers_live_interface_without_db_fallback():
     assert called["live"] == 1
     assert called["snapshot"] == 0
     assert list(out["symbol"][:2]) == ["300540", "688811"]
+
+
+def test_hot_stocks_offline_mode_returns_without_live_request(monkeypatch):
+    provider = AkshareDataProvider()
+    monkeypatch.setenv("ENABLE_LIVE_MARKET_DATA", "false")
+    monkeypatch.setattr(provider, "_snapshot_from_db", lambda: pd.DataFrame())
+
+    async def should_not_run():
+        raise AssertionError("live provider must not run in offline mode")
+
+    monkeypatch.setattr(provider, "_fetch_hot_stocks_from_spot", should_not_run)
+
+    result = asyncio.run(provider.get_hot_stocks())
+
+    assert result.empty
+    assert list(result.columns) == [
+        "rank", "symbol", "name", "latest_price", "change_amount", "change_pct"
+    ]
