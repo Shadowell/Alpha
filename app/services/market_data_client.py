@@ -179,12 +179,17 @@ class EastmoneyMarketDataClient:
         out["成交量"] = pd.to_numeric(df[5], errors="coerce").fillna(0.0)
         out["成交额"] = pd.to_numeric(df[6], errors="coerce").fillna(0.0)
         out = out[out["日期"].ne("NaT")]
-        return out.reset_index(drop=True)
+        out = out.reset_index(drop=True)
+        out.attrs["data_source"] = "eastmoney"
+        out.attrs["fallback_reason"] = ""
+        return out
 
     async def fetch_spot(self) -> pd.DataFrame:
         for url in self.SPOT_URLS:
             result = await self._fetch_spot_from_url(url)
             if not result.empty:
+                result.attrs["data_source"] = "eastmoney"
+                result.attrs["fallback_reason"] = ""
                 return result
         return pd.DataFrame()
 
@@ -260,22 +265,45 @@ class EastmoneyMarketDataClient:
                 db_dates = self.store.get_trade_dates_from_db() or []
             except Exception:
                 db_dates = []
-        if db_dates and (min_days <= 0 or len(db_dates) >= min_days):
-            return pd.DataFrame({"trade_date": db_dates})
+        if self._calendar_cache_is_fresh(db_dates) and (min_days <= 0 or len(db_dates) >= min_days):
+            frame = pd.DataFrame({"trade_date": db_dates})
+            frame.attrs["data_source"] = "sqlite"
+            frame.attrs["fallback_reason"] = ""
+            return frame
 
         async with self._client() as client:
             text = await self._get_text(client, self.TRADE_DAYS_URL)
         dates = self._parse_sina_trade_days(text)
         if dates:
-            return pd.DataFrame({"trade_date": dates})
-        if db_dates:
-            return pd.DataFrame({"trade_date": db_dates})
+            frame = pd.DataFrame({"trade_date": dates})
+            frame.attrs["data_source"] = "sina"
+            frame.attrs["fallback_reason"] = ""
+            return frame
+        if self._calendar_cache_is_fresh(db_dates):
+            frame = pd.DataFrame({"trade_date": db_dates})
+            frame.attrs["data_source"] = "sqlite"
+            frame.attrs["fallback_reason"] = "sina_empty_response"
+            return frame
         return pd.DataFrame(columns=["trade_date"])
+
+    @staticmethod
+    def _calendar_cache_is_fresh(dates: list[str]) -> bool:
+        parsed = pd.to_datetime(pd.Series(dates, dtype="object"), errors="coerce").dropna()
+        if parsed.empty:
+            return False
+        latest = parsed.max().date()
+        today = _dt.date.today()
+        return today - _dt.timedelta(days=14) <= latest <= today + _dt.timedelta(days=7)
 
     @staticmethod
     def _parse_sina_trade_days(text: str) -> list[str]:
         if not text:
             return []
+        matches = re.findall(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{8}", text)
+        plain_dates = sorted({d for d in (_iso_date(item) for item in matches) if d})
+        if plain_dates:
+            return plain_dates
+
         dates: list[str] = []
         try:
             from akshare.stock.cons import hk_js_decode
@@ -287,9 +315,6 @@ class EastmoneyMarketDataClient:
             decoded = js_code.call("d", encoded)
             dates = [_iso_date(str(item)) for item in decoded]
         except Exception:
-            matches = re.findall(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{8}", text)
-            dates = [_iso_date(item) for item in matches]
+            return []
 
-        parsed = sorted({d for d in dates if d})
-        parsed.append(_dt.date(1992, 5, 4).isoformat())
-        return sorted(set(parsed))
+        return sorted({d for d in dates if d})

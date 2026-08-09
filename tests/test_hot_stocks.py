@@ -52,3 +52,41 @@ def test_fetch_hot_stocks_prefers_live_interface_without_db_fallback():
     assert called["live"] == 1
     assert called["snapshot"] == 0
     assert list(out["symbol"][:2]) == ["300540", "688811"]
+
+
+def test_hot_stocks_offline_mode_returns_without_live_request(monkeypatch):
+    provider = AkshareDataProvider()
+    monkeypatch.setenv("ENABLE_LIVE_MARKET_DATA", "false")
+    monkeypatch.setattr(provider, "_snapshot_from_db", lambda: pd.DataFrame())
+
+    async def should_not_run():
+        raise AssertionError("live provider must not run in offline mode")
+
+    monkeypatch.setattr(provider, "_fetch_hot_stocks_from_spot", should_not_run)
+
+    result = asyncio.run(provider.get_hot_stocks())
+
+    assert result.empty
+    assert list(result.columns) == [
+        "rank", "symbol", "name", "latest_price", "change_amount", "change_pct"
+    ]
+
+
+def test_offline_mode_short_circuits_market_data_fallbacks(monkeypatch):
+    provider = AkshareDataProvider()
+    monkeypatch.setenv("ENABLE_LIVE_MARKET_DATA", "false")
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("live provider must not run in offline mode")
+
+    monkeypatch.setattr("app.services.data_provider.ak.tool_trade_date_hist_sina", should_not_run)
+    monkeypatch.setattr("app.services.data_provider.ak.stock_zh_a_hist", should_not_run)
+    monkeypatch.setattr(provider, "_fetch_spot_em", should_not_run)
+
+    trade_days = asyncio.run(provider.get_trade_days())
+    history = asyncio.run(provider.get_hist("600519", "20260101", "20260131"))
+    names = asyncio.run(provider.get_symbol_name_map())
+
+    assert trade_days.empty
+    assert history.empty
+    assert names == {}
