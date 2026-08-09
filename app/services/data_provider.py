@@ -259,6 +259,8 @@ class AkshareDataProvider:
                 db_dates = []
         if db_dates and (min_days <= 0 or len(db_dates) >= min_days):
             return pd.DataFrame({"trade_date": db_dates})
+        if not _live_market_data_enabled():
+            return pd.DataFrame({"trade_date": db_dates}) if db_dates else pd.DataFrame(columns=["trade_date"])
         try:
             df = await asyncio.to_thread(ak.tool_trade_date_hist_sina)
             if df is None or df.empty:
@@ -303,6 +305,9 @@ class AkshareDataProvider:
                     return pd.DataFrame(items)
             except Exception as exc:
                 print(f"[data_provider] get_hist DB read failed for {symbol}: {exc}")
+
+        if not _live_market_data_enabled():
+            return pd.DataFrame()
 
         try:
             df = await asyncio.to_thread(
@@ -588,6 +593,12 @@ class AkshareDataProvider:
                     return dict(persisted)
             except Exception as exc:
                 print(f"[data_provider] load_symbol_names from DB failed: {exc}")
+
+        if not _live_market_data_enabled():
+            if self.symbol_name_cache is not None:
+                _, payload = self.symbol_name_cache
+                return dict(payload)
+            return {}
 
         # 冷启动：统一走 _fetch_spot_em（含 sina 兜底），最多 3 次
         for attempt in range(3):
