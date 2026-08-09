@@ -28,6 +28,7 @@ jobs:
       - name: Start API for regression tests
         env:
           ENABLE_TUSHARE: "false"
+          ENABLE_LIVE_MARKET_DATA: "false"
         run: |
           nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 18890 > /tmp/alpha-api.log 2>&1 &
           echo $! > /tmp/alpha-api.pid
