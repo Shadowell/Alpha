@@ -32,11 +32,15 @@ class KlineSQLiteStore:
                 close REAL NOT NULL,
                 volume REAL NOT NULL,
                 amount REAL NOT NULL,
+                source TEXT NOT NULL DEFAULT 'unknown',
+                fallback_reason TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (symbol, trade_date)
             )
             """
         )
+        self._ensure_column(conn, "kline_daily", "source", "TEXT NOT NULL DEFAULT 'unknown'")
+        self._ensure_column(conn, "kline_daily", "fallback_reason", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS kline_sync_state (
@@ -88,10 +92,14 @@ class KlineSQLiteStore:
                 status TEXT NOT NULL,
                 elapsed_ms INTEGER NOT NULL DEFAULT 0,
                 error_message TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT '',
+                fallback_reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )
             """
         )
+        self._ensure_column(conn, "kline_sync_task_details", "data_source", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column(conn, "kline_sync_task_details", "fallback_reason", "TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_sync_tasks_started_at ON kline_sync_tasks(started_at DESC)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_kline_sync_task_details_task_id ON kline_sync_task_details(task_id, id DESC)"
@@ -141,6 +149,8 @@ class KlineSQLiteStore:
                     float(r.get("close", 0.0)),
                     float(r.get("volume", 0.0)),
                     float(r.get("amount", 0.0)),
+                    str(r.get("source") or "unknown"),
+                    str(r.get("fallback_reason") or ""),
                     updated_at,
                 )
                 for r in rows
@@ -148,8 +158,10 @@ class KlineSQLiteStore:
             ]
             conn.executemany(
                 """
-                INSERT INTO kline_daily(symbol, trade_date, open, high, low, close, volume, amount, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO kline_daily(
+                    symbol, trade_date, open, high, low, close, volume, amount,
+                    source, fallback_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, trade_date) DO UPDATE SET
                     open=excluded.open,
                     high=excluded.high,
@@ -157,6 +169,8 @@ class KlineSQLiteStore:
                     close=excluded.close,
                     volume=excluded.volume,
                     amount=excluded.amount,
+                    source=excluded.source,
+                    fallback_reason=excluded.fallback_reason,
                     updated_at=excluded.updated_at
                 """,
                 payload,
@@ -178,6 +192,8 @@ class KlineSQLiteStore:
                 float(row.get("close", 0.0)),
                 float(row.get("volume", 0.0)),
                 float(row.get("amount", 0.0)),
+                str(row.get("source") or "unknown"),
+                str(row.get("fallback_reason") or ""),
                 updated_at,
             )
             for symbol, row in items
@@ -190,8 +206,10 @@ class KlineSQLiteStore:
             self._init_schema(conn)
             conn.executemany(
                 """
-                INSERT INTO kline_daily(symbol, trade_date, open, high, low, close, volume, amount, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO kline_daily(
+                    symbol, trade_date, open, high, low, close, volume, amount,
+                    source, fallback_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, trade_date) DO UPDATE SET
                     open=excluded.open,
                     high=excluded.high,
@@ -199,6 +217,8 @@ class KlineSQLiteStore:
                     close=excluded.close,
                     volume=excluded.volume,
                     amount=excluded.amount,
+                    source=excluded.source,
+                    fallback_reason=excluded.fallback_reason,
                     updated_at=excluded.updated_at
                 """,
                 payload,
@@ -212,7 +232,7 @@ class KlineSQLiteStore:
             self._init_schema(conn)
             rows = conn.execute(
                 """
-                SELECT trade_date, open, high, low, close, volume, amount
+                SELECT trade_date, open, high, low, close, volume, amount, source, fallback_reason
                 FROM kline_daily
                 WHERE symbol = ?
                 ORDER BY trade_date DESC
@@ -232,6 +252,8 @@ class KlineSQLiteStore:
                     "close": float(row["close"]),
                     "volume": float(row["volume"]),
                     "amount": float(row["amount"]),
+                    "source": str(row["source"] or "unknown"),
+                    "fallback_reason": str(row["fallback_reason"] or ""),
                 }
             )
         return items
@@ -348,16 +370,20 @@ class KlineSQLiteStore:
         status: str,
         elapsed_ms: int,
         error_message: str,
+        data_source: str = "",
+        fallback_reason: str = "",
         created_at: str,
     ) -> None:
         with self._connect() as conn:
             self._init_schema(conn)
             conn.execute(
                 """
-                INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO kline_sync_task_details(
+                    task_id, symbol, status, elapsed_ms, error_message,
+                    data_source, fallback_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, symbol, status, elapsed_ms, error_message, created_at),
+                (task_id, symbol, status, elapsed_ms, error_message, data_source, fallback_reason, created_at),
             )
             conn.commit()
 
@@ -371,6 +397,8 @@ class KlineSQLiteStore:
                 str(r.get("status", "")),
                 int(r.get("elapsed_ms", 0)),
                 str(r.get("error_message", "")),
+                str(r.get("data_source", "")),
+                str(r.get("fallback_reason", "")),
                 str(r.get("created_at", "")),
             )
             for r in rows
@@ -382,8 +410,10 @@ class KlineSQLiteStore:
             self._init_schema(conn)
             conn.executemany(
                 """
-                INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO kline_sync_task_details(
+                    task_id, symbol, status, elapsed_ms, error_message,
+                    data_source, fallback_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )
@@ -418,6 +448,8 @@ class KlineSQLiteStore:
                 float(row.get("close", 0.0)),
                 float(row.get("volume", 0.0)),
                 float(row.get("amount", 0.0)),
+                str(row.get("source") or "unknown"),
+                str(row.get("fallback_reason") or ""),
                 updated_at,
             )
             for symbol, row in kline_items
@@ -430,6 +462,8 @@ class KlineSQLiteStore:
                 str(r.get("status", "")),
                 int(r.get("elapsed_ms", 0)),
                 str(r.get("error_message", "")),
+                str(r.get("data_source", "")),
+                str(r.get("fallback_reason", "")),
                 str(r.get("created_at", "")),
             )
             for r in detail_rows
@@ -441,8 +475,10 @@ class KlineSQLiteStore:
             if kline_payload:
                 conn.executemany(
                     """
-                    INSERT INTO kline_daily(symbol, trade_date, open, high, low, close, volume, amount, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO kline_daily(
+                        symbol, trade_date, open, high, low, close, volume, amount,
+                        source, fallback_reason, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, trade_date) DO UPDATE SET
                         open=excluded.open,
                         high=excluded.high,
@@ -450,6 +486,8 @@ class KlineSQLiteStore:
                         close=excluded.close,
                         volume=excluded.volume,
                         amount=excluded.amount,
+                        source=excluded.source,
+                        fallback_reason=excluded.fallback_reason,
                         updated_at=excluded.updated_at
                     """,
                     kline_payload,
@@ -457,8 +495,10 @@ class KlineSQLiteStore:
             if detail_payload:
                 conn.executemany(
                     """
-                    INSERT INTO kline_sync_task_details(task_id, symbol, status, elapsed_ms, error_message, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO kline_sync_task_details(
+                        task_id, symbol, status, elapsed_ms, error_message,
+                        data_source, fallback_reason, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     detail_payload,
                 )

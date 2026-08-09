@@ -93,6 +93,13 @@ def test_fetch_trade_days_parses_plain_text_fallback():
 
     assert "2026-04-09" in set(out["trade_date"])
     assert "2026-04-10" in set(out["trade_date"])
+    assert "1992-05-04" not in set(out["trade_date"])
+
+
+def test_parse_sina_trade_days_never_injects_synthetic_date():
+    parsed = EastmoneyMarketDataClient._parse_sina_trade_days('var dummy="2026-04-09";')
+
+    assert parsed == ["2026-04-09"]
 
 
 def test_timeout_returns_empty_frame_without_blocking():

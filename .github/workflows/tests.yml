@@ -25,5 +25,25 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      - name: Start API for regression tests
+        env:
+          ENABLE_TUSHARE: "false"
+          ENABLE_LIVE_MARKET_DATA: "false"
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 18890 > /tmp/alpha-api.log 2>&1 &
+          echo $! > /tmp/alpha-api.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18890/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/alpha-api.log
+          exit 1
+
       - name: Run tests
         run: python -m pytest -q
+
+      - name: Show API log on failure
+        if: failure()
+        run: tail -n 200 /tmp/alpha-api.log || true

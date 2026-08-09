@@ -23,7 +23,7 @@ class KlineCacheService:
         self,
         provider: AkshareDataProvider,
         store: KlineSQLiteStore | None = None,
-        market_data_client: EastmoneyMarketDataClient | None = None,
+        market_data_client: Any | None = None,
         schedule_after: time = time(15, 20),
         window_days: int = 180,
     ) -> None:
@@ -503,6 +503,22 @@ class KlineCacheService:
             success_count += batch_result["success_count"]
             fallback_symbols = batch_result["remaining_symbols"]
 
+        if fallback_symbols and hasattr(self.market_data_client, "fetch_daily_by_trade_date"):
+            batch_result = await self._batch_fill_from_market_daily(
+                symbols=fallback_symbols,
+                trade_date=target_trade_date,
+                task_id=task_id,
+                target_trade_date=target_trade_date,
+                state=state,
+                trigger_mode=trigger_mode,
+                total=total,
+                initial_completed=completed,
+                initial_success_count=success_count,
+            )
+            completed = batch_result["completed"]
+            success_count = batch_result["success_count"]
+            fallback_symbols = batch_result["remaining_symbols"]
+
         if fallback_symbols:
             result = await self._concurrent_fetch(
                 symbols=fallback_symbols,
@@ -558,6 +574,99 @@ class KlineCacheService:
             "mode": "incremental",
         }
 
+    async def _batch_fill_from_market_daily(
+        self,
+        *,
+        symbols: list[str],
+        trade_date: str,
+        task_id: str,
+        target_trade_date: str,
+        state: dict,
+        trigger_mode: str,
+        total: int,
+        initial_completed: int,
+        initial_success_count: int,
+    ) -> dict[str, Any]:
+        t0 = pytime.time()
+        wanted = set(symbols)
+        try:
+            snapshot = await self.market_data_client.fetch_daily_by_trade_date(trade_date)
+        except Exception as exc:
+            print(f"[kline-cache] market daily batch failed: {exc!r}")
+            return {
+                "completed": initial_completed,
+                "success_count": initial_success_count,
+                "remaining_symbols": symbols,
+            }
+        if snapshot is None or snapshot.empty or "代码" not in snapshot.columns:
+            return {
+                "completed": initial_completed,
+                "success_count": initial_success_count,
+                "remaining_symbols": symbols,
+            }
+
+        source = str(snapshot.attrs.get("data_source") or "tushare")
+        fallback_reason = str(snapshot.attrs.get("fallback_reason") or "")
+        rows: list[tuple[str, dict[str, Any]]] = []
+        valid_symbols: set[str] = set()
+        for _, item in snapshot.iterrows():
+            symbol = str(item.get("代码") or "").strip()
+            if symbol not in wanted:
+                continue
+            normalized = self._normalize_hist(pd.DataFrame([item]))
+            if not normalized or normalized[0]["close"] <= 0:
+                continue
+            normalized[0]["source"] = source
+            normalized[0]["fallback_reason"] = fallback_reason
+            rows.append((symbol, normalized[0]))
+            valid_symbols.add(symbol)
+
+        if not rows:
+            return {
+                "completed": initial_completed,
+                "success_count": initial_success_count,
+                "remaining_symbols": symbols,
+            }
+
+        now_iso = now_cn().isoformat()
+        elapsed_ms = int((pytime.time() - t0) * 1000)
+        completed = initial_completed + len(valid_symbols)
+        success_count = initial_success_count + len(valid_symbols)
+        self.store.record_sync_batch(
+            kline_items=rows,
+            detail_rows=[
+                {
+                    "task_id": task_id,
+                    "symbol": symbol,
+                    "status": "success",
+                    "elapsed_ms": elapsed_ms,
+                    "error_message": "",
+                    "data_source": source,
+                    "fallback_reason": fallback_reason,
+                    "created_at": now_iso,
+                }
+                for symbol in sorted(valid_symbols)
+            ],
+            updated_at=now_iso,
+            task_id=task_id,
+            synced_symbols=success_count,
+            success_symbols=success_count,
+            failed_symbols=0,
+            attempt_trade_date=target_trade_date,
+            success_trade_date=state.get("last_success_trade_date"),
+            status="running",
+            symbol_count=completed,
+            total_symbols=total,
+            trigger_mode=trigger_mode,
+            message=f"Tushare 日线批量补缺 {completed}/{total}",
+        )
+        remaining = [s for s in symbols if s not in valid_symbols]
+        return {
+            "completed": completed,
+            "success_count": success_count,
+            "remaining_symbols": remaining,
+        }
+
     async def _batch_fill_from_spot(
         self,
         *,
@@ -579,6 +688,8 @@ class KlineCacheService:
         if snapshot is None or snapshot.empty or "代码" not in snapshot.columns:
             return {"completed": 0, "success_count": 0, "remaining_symbols": symbols}
 
+        source = str(snapshot.attrs.get("data_source") or "eastmoney")
+        fallback_reason = str(snapshot.attrs.get("fallback_reason") or "")
         rows: list[tuple[str, dict[str, Any]]] = []
         valid_symbols: set[str] = set()
         for _, item in snapshot.iterrows():
@@ -602,6 +713,8 @@ class KlineCacheService:
                         "close": close,
                         "volume": to_float(item.get("成交量")),
                         "amount": to_float(item.get("成交额")),
+                        "source": source,
+                        "fallback_reason": fallback_reason,
                     },
                 )
             )
@@ -622,7 +735,9 @@ class KlineCacheService:
                     "symbol": symbol,
                     "status": "success",
                     "elapsed_ms": elapsed_ms,
-                    "error_message": "eastmoney spot batch",
+                    "error_message": "",
+                    "data_source": source,
+                    "fallback_reason": fallback_reason,
                     "created_at": now_iso,
                 }
                 for symbol in sorted(valid_symbols)
@@ -674,6 +789,8 @@ class KlineCacheService:
                     hist = pd.DataFrame()
                     error_message = str(exc)[:200]
                 rows = self._normalize_hist(hist)
+                source = str(hist.attrs.get("data_source") or "unknown")
+                fallback_reason = str(hist.attrs.get("fallback_reason") or "")
                 elapsed = int((pytime.time() - t0) * 1000)
 
             return {
@@ -681,6 +798,8 @@ class KlineCacheService:
                 "rows": rows,
                 "elapsed_ms": elapsed,
                 "error_message": error_message,
+                "data_source": source,
+                "fallback_reason": fallback_reason,
             }
 
         for i in range(0, len(symbols), _FETCH_BATCH_SIZE):
@@ -709,6 +828,8 @@ class KlineCacheService:
                         "status": status,
                         "elapsed_ms": int(item["elapsed_ms"] or 0),
                         "error_message": error_message,
+                        "data_source": item["data_source"],
+                        "fallback_reason": item["fallback_reason"],
                         "created_at": now_iso,
                     }
                 )
@@ -983,6 +1104,17 @@ class KlineCacheService:
                 name_map = {}
 
         if not name_map:
+            fetch_symbol_names = getattr(self.market_data_client, "fetch_symbol_names", None)
+            if fetch_symbol_names is not None:
+                try:
+                    name_map = await fetch_symbol_names()
+                    if name_map:
+                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        self.store.upsert_symbol_names(name_map, now_cn().isoformat())
+                except Exception as exc:
+                    print(f"[kline_cache] fetch symbol names from primary source failed: {exc}")
+
+        if not name_map:
             try:
                 snapshot = await self.market_data_client.fetch_spot()
                 if not snapshot.empty and "代码" in snapshot.columns and "名称" in snapshot.columns:
@@ -1033,6 +1165,8 @@ class KlineCacheService:
         if hist is None or hist.empty:
             return []
 
+        source = str(hist.attrs.get("data_source") or "unknown")
+        fallback_reason = str(hist.attrs.get("fallback_reason") or "")
         rows: list[dict[str, Any]] = []
         for _, row in hist.iterrows():
             trade_date = str(row.get("日期", "")).strip()
@@ -1047,6 +1181,22 @@ class KlineCacheService:
                     "close": to_float(row.get("收盘")),
                     "volume": to_float(row.get("成交量")),
                     "amount": to_float(row.get("成交额")),
+                    "source": source,
+                    "fallback_reason": fallback_reason,
                 }
             )
         return rows
+
+    def get_data_source_status(self) -> dict[str, Any]:
+        describe = getattr(self.market_data_client, "describe", None)
+        if describe is not None:
+            return describe()
+        return {
+            "primary": "eastmoney",
+            "fallback": "sina/sqlite",
+            "realtime": "eastmoney",
+            "enabled": True,
+            "configured": True,
+            "ready": True,
+            "last_operation": {},
+        }
