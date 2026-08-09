@@ -38,7 +38,7 @@ print(platform.machine())
 PY
 )"
 if [[ "$PY_MACHINE" != "arm64" ]]; then
-  echo "启动失败: $PYTHON_BIN 是 $PY_MACHINE，不是 arm64。"
+  echo "启动失败: ${PYTHON_BIN} 是 ${PY_MACHINE}，不是 arm64。"
   echo "数据中心补数曾因 Rosetta/x86_64 Python + 阻塞网络调用进入 UEs。"
   echo "请安装/指定 arm64 Python 3.11+，例如: PYTHON_BIN=/Users/jie.feng/arm-python/python/bin/python3.11 ./start.sh"
   exit 1
@@ -87,7 +87,7 @@ if command -v lsof >/dev/null 2>&1; then
   CURRENT_LISTENER="$(listening_pid)"
   if [[ -n "$CURRENT_LISTENER" ]] && ! is_service_pid "$CURRENT_LISTENER"; then
     echo "启动失败: 端口 $PORT 被不可用进程占用 PID=$CURRENT_LISTENER"
-    echo "请先释放 $PORT；若进程处于 UEs 状态，需要重启 Mac 后再执行 ./start.sh"
+    echo "请先释放 ${PORT}；若进程处于 UEs 状态，需要重启 Mac 后再执行 ./start.sh"
     exit 1
   fi
 fi
