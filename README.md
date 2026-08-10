@@ -553,6 +553,24 @@ pip3 install -r requirements.txt
 
 日志文件：默认 `logs/server-18890.log`，随 `PORT` 变化。
 
+
+### 行情缓存维护
+
+历史解析缺陷或错误补数可能污染 `data/market_kline.db`。维护命令默认只做只读预检；只有显式传入 `--apply` 才会先通过 SQLite backup API 创建并验证完整备份，再用单一事务清理早于 2000 年或无法解析的交易日期及其关联同步状态。
+
+```bash
+# 1. 只读预检，不改数据库
+python3 scripts/repair_market_cache.py
+
+# 2. 停服并完成 WAL checkpoint 后执行；备份默认写入 data/backups/
+python3 scripts/repair_market_cache.py --apply
+
+# 3. 重复 dry-run，确认 total_affected_rows 为 0 且 integrity_check 为 ok
+python3 scripts/repair_market_cache.py
+```
+
+恢复时先停服并保留当前损坏文件，再将输出中的 `backup_path` 复制回 `data/market_kline.db`，执行 `sqlite3 data/market_kline.db 'PRAGMA integrity_check;'`，确认输出 `ok` 后再启动服务。`data/` 已被 Git 忽略，数据库、备份和 Token 均不得提交。
+
 ---
 
 ## API 接口
