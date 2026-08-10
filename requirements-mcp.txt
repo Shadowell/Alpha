@@ -1,0 +1,2 @@
+# Optional standalone MCP server runtime.
+mcp>=1.27.0
