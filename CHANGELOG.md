@@ -2,6 +2,13 @@
 
 本文件记录 Alpha 的重要版本变化。版本号遵循 [Semantic Versioning](https://semver.org/)。
 
+## [Unreleased]
+
+### Added
+
+- Bilingual README overview (English + 中文) with contribution / security entry points.
+- CONTRIBUTING.md, SECURITY.md, GitHub Issue templates, and PR template for OSS maintainership.
+
 ## [0.1.0] - 2026-07-22
 
 ### Added

@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a feature or improvement for Alpha
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature ideas that fit A-share screening, Kronos, Hermes Agent, or maintainability are most likely to be accepted.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What user or maintainer pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior and any API / UI touchpoints.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about (optional).
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary area
+      options:
+        - Screening / funnel
+        - Kronos prediction
+        - Hermes Agent / MCP
+        - Data pipeline / cache
+        - Paper trading
+        - Frontend / UX
+        - Docs / DX / CI
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This is in scope for an open-source A-share research toolkit (not a request for private trading signals)
+          required: true
+        - label: I am willing to help implement or test if accepted
+          required: false
