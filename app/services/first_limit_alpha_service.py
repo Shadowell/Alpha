@@ -25,7 +25,6 @@ from strategy.first_limit_alpha import (
     TrainingConfig,
 )
 from strategy.first_limit_alpha.feature_store import build_version_dir, latest_child, read_dataframe, read_json, write_json
-from strategy.first_limit_alpha.train_sequence import FirstLimitSequenceTrainer
 
 DEFAULT_GRAPHIC_CONFIG: dict[str, Any] = {
     "threshold_candidate": 6.0,
@@ -168,6 +167,10 @@ class FirstLimitAlphaService:
         return result
 
     def train_sequence(self, sequence_cfg: SequenceConfig | None = None) -> dict[str, Any]:
+        # Keep the core API usable without the optional Torch profile. Sequence
+        # training imports its backend only when this endpoint is invoked.
+        from strategy.first_limit_alpha.train_sequence import FirstLimitSequenceTrainer
+
         samples = self._load_latest_samples()
         out_dir = build_version_dir(self.root, "sequence_models", prefix="gru")
         baseline_meta: dict[str, Any] = {}
