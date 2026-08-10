@@ -513,8 +513,21 @@ Alpha/
 ### 安装依赖
 
 ```bash
+# 完整安装：基础 API / 数据源 + Kronos + MCP + 训练后端
 pip3 install -r requirements.txt
 ```
+
+也可以按部署角色选择更小的依赖档位：
+
+| 安装档位 | 命令 | 用途 |
+|----------|------|------|
+| 基础运行 | `pip3 install -r requirements-base.txt` | FastAPI、行情数据、策略与本地缓存；Kronos / MCP 保持惰性可选 |
+| Kronos | `pip3 install -r requirements-base.txt -r requirements-kronos.txt` | 增加 Torch、Hugging Face 与 Kronos 推理能力 |
+| MCP | `pip3 install -r requirements-base.txt -r requirements-mcp.txt` | 增加独立 MCP Server |
+| 策略训练 | `pip3 install -r requirements-base.txt -r requirements-training.txt` | 增加 FirstLimit Alpha 首选的 LightGBM 训练后端；未安装时自动使用 RandomForest |
+| 完整功能 | `pip3 install -r requirements.txt` | 安装上述全部能力 |
+
+CI 使用 `requirements-ci.txt` 执行基础单元/API 回归；只有模型代码或模型依赖变化时，才运行独立的 Kronos 导入与 Torch 序列训练测试。模型权重仍在第一次真实预测时按需下载，不进入仓库或 CI 缓存。
 
 ### 启动服务
 
@@ -552,7 +565,6 @@ pip3 install -r requirements.txt
 ```
 
 日志文件：默认 `logs/server-18890.log`，随 `PORT` 变化。
-
 
 ### 行情缓存维护
 
