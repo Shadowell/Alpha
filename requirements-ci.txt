@@ -1,0 +1,3 @@
+# Deterministic unit/API regression environment; optional model/MCP imports stay lazy.
+-r requirements-base.txt
+pytest>=8.0.0

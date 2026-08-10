@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from app.services.first_limit_alpha_service import FirstLimitAlphaService
 from app.services.kline_store import KlineSQLiteStore
@@ -10,7 +11,6 @@ from strategy.first_limit_alpha.data_builder import FirstLimitAlphaDataBuilder
 from strategy.first_limit_alpha.features import FirstLimitFeatureBuilder
 from strategy.first_limit_alpha.modeling import FirstLimitBaselineTrainer
 from strategy.first_limit_alpha.schema import LabelConfig, SampleBuildConfig, SequenceConfig, TrainingConfig
-from strategy.first_limit_alpha.train_sequence import FirstLimitSequenceTrainer
 
 
 def _symbol_rows(base_close: float, event_mode: str, start: str = "2026-01-01") -> list[dict]:
@@ -181,6 +181,9 @@ def test_baseline_trainer_excludes_future_columns(tmp_path: Path):
 
 
 def test_sequence_trainer_small_sample_returns_graceful_result(tmp_path: Path):
+    pytest.importorskip("torch")
+    from strategy.first_limit_alpha.train_sequence import FirstLimitSequenceTrainer
+
     store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
     store.upsert_symbol_klines("600001", _symbol_rows(10.0, "strong"), "2026-04-22T11:00:00+08:00")
     samples = pd.DataFrame(
@@ -200,6 +203,9 @@ def test_sequence_trainer_small_sample_returns_graceful_result(tmp_path: Path):
 
 
 def test_sequence_trainer_outputs_metrics_and_predictions(tmp_path: Path):
+    pytest.importorskip("torch")
+    from strategy.first_limit_alpha.train_sequence import FirstLimitSequenceTrainer
+
     store = KlineSQLiteStore(str(tmp_path / "market_kline.db"))
     name_map = {}
     for idx in range(40):

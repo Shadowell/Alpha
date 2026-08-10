@@ -1,0 +1,2 @@
+# Optional preferred backend for FirstLimit Alpha training.
+lightgbm>=4.3.0
