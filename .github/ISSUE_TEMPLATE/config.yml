@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation / README
+    url: https://github.com/Shadowell/Alpha#english-overview
+    about: Check Quick Start, architecture, and API docs before filing an issue.
+  - name: Security vulnerability
+    url: https://github.com/Shadowell/Alpha/security/advisories/new
+    about: Privately report security issues (do not file a public issue).

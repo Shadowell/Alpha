@@ -1,15 +1,57 @@
-# Alpha — 自进化量化选股系统
+# Alpha — Self-Evolving Quantitative Stock Screening
 
 <p align="center">
-  <strong>A 股量化选股 · Kronos K线预测模型 · Hermes Agent 自进化闭环</strong>
+  <strong>A-share quant screening · Kronos K-line foundation model · Hermes Agent self-evolution loop</strong><br>
+  <em>A 股量化选股 · Kronos K线预测模型 · Hermes Agent 自进化闭环</em>
 </p>
 
 <p align="center">
+  <a href="https://github.com/Shadowell/Alpha/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Shadowell/Alpha?style=social"></a>
+  <a href="https://github.com/Shadowell/Alpha/network/members"><img alt="GitHub Forks" src="https://img.shields.io/github/forks/Shadowell/Alpha?style=social"></a>
+  <a href="https://github.com/Shadowell/Alpha/actions/workflows/tests.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Shadowell/Alpha/tests.yml?branch=main&label=CI"></a>
   <a href="https://github.com/Shadowell/Alpha/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Shadowell/Alpha"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
 </p>
 
+<p align="center">
+  <a href="#english-overview">English</a> ·
+  <a href="#中文简介">中文</a> ·
+  <a href="#快速开始">Quick Start</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="https://github.com/Shadowell/Alpha/issues/new/choose">Report Issue</a>
+</p>
+
+## English Overview
+
+**Alpha** is an open-source, self-evolving quantitative stock screening system for the Chinese A-share market. It combines the **[Kronos](https://arxiv.org/abs/2508.02739) financial K-line foundation model** with a **Hermes Agent** loop so the system can observe the market, reason about themes, validate signals, and improve over time.
+
+| Capability | What you get |
+|---|---|
+| Three-pool funnel screening | Intraday scoring + promotion / demotion rules for candidate stocks |
+| Kronos prediction | K-line forecast inference integrated into the research UI and APIs |
+| Hermes Agent + MCP | Scheduled post-market review, announcement review, and live monitoring |
+| Paper trading | Simulated execution for strategy validation without live capital |
+| FastAPI + Web UI | 50+ REST endpoints, WebSocket snapshots, and an 8-tab dark dashboard |
+
+**Why it matters for the OSS ecosystem:** most open quant stacks are US/crypto-centric. Alpha fills a practical gap for A-share research—local data pipelines, LLM-agent workflows, and reproducible screening loops that researchers and builders can fork, audit, and extend under MIT.
+
+```bash
+# Quick start (API / data runtime)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-base.txt
+cp .env.example .env   # add Tushare / LLM keys as needed
+./start.sh             # http://127.0.0.1:18888
+```
+
+Full install options, API map, and architecture details are below. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## 中文简介
+
 Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只是一个筛选工具——通过集成 **[Kronos](https://arxiv.org/abs/2508.02739) 金融 K 线基础模型**和 **Hermes Agent 自进化智能体**，Alpha 能够自主观察市场、分析主线、输出结构化诊断与交易建议，形成**观察 → 思考 → 校验 → 进化**的持续优化闭环。
+
+欢迎通过 [Issue](https://github.com/Shadowell/Alpha/issues/new/choose) / [PR](https://github.com/Shadowell/Alpha/pulls) 参与贡献，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
@@ -765,4 +807,11 @@ npx playwright test
 
 本项目采用 [MIT License](LICENSE) 开源许可。
 
-版本发布与持续维护记录见 [GitHub Releases](https://github.com/Shadowell/Alpha/releases) 和 [CHANGELOG.md](CHANGELOG.md)。
+- 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 安全报告：[SECURITY.md](SECURITY.md)
+- 版本发布与维护记录：[GitHub Releases](https://github.com/Shadowell/Alpha/releases) · [CHANGELOG.md](CHANGELOG.md)
+
+## Maintainers
+
+- Primary maintainer: [@Shadowell](https://github.com/Shadowell) (Jie Feng)
+

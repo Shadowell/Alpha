@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible bug in Alpha
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Alpha. Please fill in as much as you can.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps starting from a clean checkout if possible.
+      placeholder: |
+        1. cp .env.example .env
+        2. ./start.sh
+        3. Call GET /api/...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include logs / traceback snippets (redact secrets).
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS / Python version / install profile (base, ci, full)
+      placeholder: macOS 15, Python 3.12, requirements-base.txt
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate
+          required: true
+        - label: I redacted tokens / `.env` secrets from logs
+          required: true
