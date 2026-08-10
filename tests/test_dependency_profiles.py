@@ -48,6 +48,7 @@ def test_model_workflow_tracks_model_paths_and_dependencies():
     assert "app/services/kronos_predict_service.py" in workflow
     assert "strategy/first_limit_alpha/train_sequence.py" in workflow
     assert "requirements*.txt" in workflow
+    assert "requirements-ci.txt" in workflow
     assert "requirements-kronos.txt" in workflow
     assert "from app.services.kronos_model import" in workflow
     assert "-k sequence" in workflow
