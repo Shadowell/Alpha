@@ -597,6 +597,8 @@ CI 使用 `requirements-ci.txt` 执行基础单元/API 回归；只有模型代�
 | `HERMES_MODEL` | — | LLM 模型名称 |
 | `HERMES_AGENT_URL` | `http://127.0.0.1:8642/v1` | Hermes Agent HTTP 端点 |
 | `FEISHU_WEBHOOK_URL` | — | 飞书群通知 Webhook |
+| `FEISHU_APP_ID` | — | 飞书图片上传应用 ID，仅通过环境变量配置 |
+| `FEISHU_APP_SECRET` | — | 飞书图片上传应用密钥，仅通过环境变量配置，禁止提交到 Git |
 
 ### 服务管理
 
@@ -814,4 +816,3 @@ npx playwright test
 ## Maintainers
 
 - Primary maintainer: [@Shadowell](https://github.com/Shadowell) (Jie Feng)
-

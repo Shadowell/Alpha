@@ -1,10 +1,11 @@
 import akshare as ak
+import os
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 飞书机器人的Webhook URL
-feishu_webhook_url = 'https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID'
+# 飞书机器人的 Webhook URL。真实地址只能放在本机环境变量中。
+feishu_webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
 period_days = 20
 close_price_threshold = 5.0
 volume_threshold = 1.75
@@ -23,6 +24,8 @@ print(f"昨日的日期: {yesterday_date}")
 
 def send_feishu_message(content):
     """发送消息到飞书"""
+    if not feishu_webhook_url:
+        return {"ok": False, "skipped": True, "error": "FEISHU_WEBHOOK_URL is not configured"}
     headers = {
         'Content-Type': 'application/json'
     }

@@ -112,13 +112,13 @@ def should_filter_concept(concept_name):
             return True
     return False
 
-# 飞书机器人的Webhook URL
-feishu_webhook_url = 'https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID'
+# 飞书凭据。真实值只能放在本机环境变量中。
+feishu_webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
 
 # 飞书应用凭证（需要创建飞书应用并开通上传图片权限）
 # 注意：这些需要在飞书开放平台创建应用后获取
-FEISHU_APP_ID = "cli_a37c6ffbdxxxxxxx"  # 请替换为实际的app_id
-FEISHU_APP_SECRET = "mLstZkv0C4d1sxxxxxxxxxxxxxxx"  # 请替换为实际的app_secret
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "").strip()
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "").strip()
 
 period_days = 20
 close_price_threshold = 5.0
@@ -142,14 +142,16 @@ _concept_stocks_cache = {}
 
 def get_tenant_access_token():
     """获取飞书应用的tenant_access_token"""
+    if not FEISHU_APP_ID or not FEISHU_APP_SECRET:
+        return None
     try:
         url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
         headers = {
             "Content-Type": "application/json; charset=utf-8",
         }
         payload_data = {
-            "app_id": "YOUR_FEISHU_APP_ID",
-            "app_secret": "YOUR_FEISHU_APP_SECRET"
+            "app_id": FEISHU_APP_ID,
+            "app_secret": FEISHU_APP_SECRET,
         }
         response = requests.post(url=url, json=payload_data, headers=headers)
         result = response.json()
@@ -197,6 +199,8 @@ def upload_image_to_feishu(image_path):
 
 def send_feishu_message(content):
     """发送消息到飞书"""
+    if not feishu_webhook_url:
+        return {"ok": False, "skipped": True, "error": "FEISHU_WEBHOOK_URL is not configured"}
     headers = {
         'Content-Type': 'application/json'
     }
@@ -211,6 +215,8 @@ def send_feishu_message(content):
 
 def send_feishu_image(image_key):
     """发送图片到飞书群"""
+    if not feishu_webhook_url:
+        return {"ok": False, "skipped": True, "error": "FEISHU_WEBHOOK_URL is not configured"}
     try:
         headers = {
             'Content-Type': 'application/json'

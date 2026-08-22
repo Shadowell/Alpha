@@ -22,14 +22,8 @@ from typing import Iterable
 
 import httpx
 
-_DEFAULT_WEBHOOK = (
-    "https://open.feishu.cn/open-apis/bot/v2/hook/"
-    "186eaf03-826f-4793-ab8f-c9f2d9149482"
-)
-
-
 def _webhook_url() -> str:
-    return os.environ.get("FEISHU_WEBHOOK_URL") or os.environ.get("FEISHU_WEBHOOK") or _DEFAULT_WEBHOOK
+    return (os.environ.get("FEISHU_WEBHOOK_URL") or os.environ.get("FEISHU_WEBHOOK") or "").strip()
 
 
 _client: httpx.AsyncClient | None = None
@@ -44,9 +38,12 @@ def _get_client() -> httpx.AsyncClient:
 
 async def send_feishu_text(text: str) -> dict:
     """通过 Webhook 发送纯文本消息（保留用于极简场景）。"""
+    webhook_url = _webhook_url()
+    if not webhook_url:
+        return {"ok": False, "skipped": True, "error": "FEISHU_WEBHOOK_URL is not configured"}
     payload = {"msg_type": "text", "content": {"text": text}}
     try:
-        resp = await _get_client().post(_webhook_url(), json=payload)
+        resp = await _get_client().post(webhook_url, json=payload)
         return resp.json()
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -58,9 +55,12 @@ async def send_feishu_card(card: dict) -> dict:
     `card` 为完整的飞书卡片 JSON（i18n_elements 或 elements 结构），
     建议使用 `CardBuilder` 构建以保持视觉统一。
     """
+    webhook_url = _webhook_url()
+    if not webhook_url:
+        return {"ok": False, "skipped": True, "error": "FEISHU_WEBHOOK_URL is not configured"}
     payload = {"msg_type": "interactive", "card": card}
     try:
-        resp = await _get_client().post(_webhook_url(), json=payload)
+        resp = await _get_client().post(webhook_url, json=payload)
         return resp.json()
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
