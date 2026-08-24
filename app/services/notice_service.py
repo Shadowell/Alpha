@@ -219,10 +219,18 @@ class NoticeService:
 
     async def get_notice_funnel(self, trade_date: str | None = None) -> NoticeFunnelResponse:
         if trade_date and trade_date != self.trade_date:
-            self.trade_date = trade_date
-            self.entries = {}
-            self.updated_at = now_cn().isoformat()
-            self._save_state()
+            # 只读查询历史日期：不销毁当前内存状态。
+            # 旧实现会把 self.entries 清空并持久化，任何一次带历史日期的查询
+            # （包括 MCP 工具）都会毁掉当日公告池，导致晚间定时复盘读到空数据。
+            empty_pools: dict[str, list[NoticeItem]] = {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []}
+            return NoticeFunnelResponse(
+                trade_date=trade_date,
+                updated_at=self.updated_at,
+                pools=empty_pools,
+                stats={"candidate": 0, "focus": 0, "buy": 0},
+                llm_enabled=self.llm_enabled,
+                source=self.source,
+            )
 
         pools_raw = {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []}
         for entry in self.entries.values():

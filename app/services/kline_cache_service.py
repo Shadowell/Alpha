@@ -17,6 +17,14 @@ from app.services.time_utils import now_cn
 _CONCURRENCY = 8
 _FETCH_BATCH_SIZE = 200
 
+# D1：当日日K收盘定型时刻——此前盘中把未完成行情写成正式 bar 且永不修复
+_EOD_SETTLE_TIME = time(15, 5)
+# D2：封账（写入 last_success_trade_date）所需的最低补缺比例；
+#     未达标记为 partial，次日自动补缺可自愈，不再被"部分成功即封账"卡死
+_FILL_SUCCESS_RATIO = 0.9
+# D2：同一交易日未封账时的自动重试节流，防止调度循环高频重试打爆上游
+_ATTEMPT_RETRY_COOLDOWN_SEC = 1800
+
 
 class KlineCacheService:
     def __init__(
@@ -162,6 +170,19 @@ class KlineCacheService:
             cur += timedelta(days=1)
         return dates
 
+    @staticmethod
+    def _date_settled(trade_date: str, now: datetime | None = None) -> bool:
+        """D1：目标交易日的日K是否已收盘定型。
+
+        目标日早于今天 → 历史已定型；目标日为当天时，需上海本地时间 ≥ 15:05。
+        盘中/盘前 spot 与分时K均为未完成数据，落库会被 (symbol, trade_date)
+        唯一键永久固化，故一律拒绝。
+        """
+        now = now or now_cn()
+        if str(trade_date) < now.date().isoformat():
+            return True
+        return now.timetz().replace(tzinfo=None) >= _EOD_SETTLE_TIME
+
     async def run_if_due(self) -> dict[str, Any] | None:
         """检查是否到达自动同步时间，到达则执行同步并返回结果 dict，未触发返回 None。"""
         now = now_cn()
@@ -175,6 +196,22 @@ class KlineCacheService:
 
         state = self.store.get_sync_state()
         if state.get("last_success_trade_date") == trade_date:
+            return None
+
+        # D2：当日已尝试且未封账（partial/failed）时按冷却节流，避免调度循环高频重试；
+        # 手动 force 路径不经过这里，不受影响。
+        if state.get("attempt_trade_date") == trade_date:
+            updated_raw = str(state.get("updated_at") or "")
+            try:
+                last_attempt = datetime.fromisoformat(updated_raw)
+                elapsed = (now - last_attempt).total_seconds()
+                if 0 <= elapsed < _ATTEMPT_RETRY_COOLDOWN_SEC:
+                    return None
+            except ValueError:
+                pass
+
+        # D1：未收盘定型时不发起自动同步
+        if not self._date_settled(trade_date, now):
             return None
 
         return await self.incremental_sync(trade_date=trade_date, trigger_mode="auto")
@@ -269,12 +306,19 @@ class KlineCacheService:
             )
             return {"success": False, "message": "交易窗口计算失败", "trade_date": target_trade_date, "symbol_count": 0}
 
-        existing_pairs = self.store.get_existing_pairs(trade_dates_list)
+        # P3：全市场×窗口的既有对查询可能返回数十万行，放线程避免阻塞事件循环
+        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, trade_dates_list)
+        # D1：未收盘定型的日期不参与本轮落库，留给盘后自动同步
+        unsettled_dates = {td for td in trade_dates_list if not self._date_settled(td)}
         missing_by_date: dict[str, list[str]] = {}
         for td in trade_dates_list:
+            if td in unsettled_dates:
+                continue
             missing_symbols = [s for s in symbols if (s, td) not in existing_pairs]
             if missing_symbols:
                 missing_by_date[td] = missing_symbols
+
+        unsettled_skipped = len(unsettled_dates)
 
         total_missing = sum(len(v) for v in missing_by_date.values())
         if total_missing == 0:
@@ -347,17 +391,26 @@ class KlineCacheService:
         )
         completed, success_count, failed_count = result
 
-        filled = self._count_filled(existing_pairs, missing_by_date)
+        filled = await self._count_filled(existing_pairs, missing_by_date)
         unfillable = total_missing - filled
-        final_status = "success" if completed > 0 else "failed"
-        if completed > 0:
+        # D2：按补缺比例封账——completed>0 就封账会让大面积失败被永久固化，
+        # 自动补缺从此失效。未达 90% 记 partial，不写 last_success_trade_date。
+        final_status, sealed = self._seal_decision(completed, total)
+        if sealed:
+            final_status = "success"
             parts = [f"补缺同步完成(补入{filled}/{total_missing}条)"]
             if unfillable > 0 and filled == 0:
                 parts = [f"补缺同步完成({total_missing}条缺失均为停牌/未上市)"]
             elif unfillable > 0:
                 parts.append(f" {unfillable}条停牌/未上市无数据")
+            if unsettled_skipped:
+                parts.append(f"；跳过未收盘 {unsettled_skipped} 天")
             final_msg = "".join(parts)
+        elif completed > 0:
+            final_status = "partial"
+            final_msg = f"补缺部分成功(补入{filled}/{total_missing}条，未达{int(_FILL_SUCCESS_RATIO * 100)}%封账线)，将自动重试"
         else:
+            final_status = "failed"
             final_msg = "补缺同步失败"
         self.store.finish_sync_task(
             task_id=task_id,
@@ -367,7 +420,7 @@ class KlineCacheService:
         )
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
-            success_trade_date=target_trade_date if completed > 0 else state.get("last_success_trade_date"),
+            success_trade_date=target_trade_date if sealed else state.get("last_success_trade_date"),
             status=final_status,
             symbol_count=completed,
             total_symbols=total,
@@ -381,6 +434,7 @@ class KlineCacheService:
         )
         return {
             "success": completed > 0,
+            "sealed": sealed,
             "message": final_msg,
             "trade_date": target_trade_date,
             "symbol_count": completed,
@@ -409,6 +463,21 @@ class KlineCacheService:
         finally:
             self._syncing = False
 
+    @staticmethod
+    def _seal_decision(completed: int, total: int) -> tuple[str, bool]:
+        """D2：按补缺比例决定任务终态与是否封账。
+
+        返回 (status, sealed)。completed>0 但未达线记 partial——旧逻辑
+        completed>0 即 success 并写 last_success_trade_date，导致大面积
+        失败被永久固化、自动补缺从此失效。
+        """
+        sealed = total > 0 and (completed / total) >= _FILL_SUCCESS_RATIO
+        if sealed:
+            return "success", True
+        if completed > 0:
+            return "partial", False
+        return "failed", False
+
     async def _do_incremental_sync(
         self,
         trade_date: str | None = None,
@@ -417,6 +486,18 @@ class KlineCacheService:
         target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
             return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
+
+        # D1：目标日未收盘定型（盘中/盘前）时拒绝增量落库——
+        # spot 最新价、当日分时K都是未完成数据，写进 (symbol, trade_date)
+        # 唯一键后会被后续"已存在即跳过"逻辑永久固化。
+        if not self._date_settled(target_trade_date):
+            return {
+                "success": False,
+                "skipped_intraday": True,
+                "message": f"{target_trade_date} 尚未收盘定型(需≥15:05)，盘中不写当日K线，盘后自动同步",
+                "trade_date": target_trade_date,
+                "symbol_count": 0,
+            }
 
         state = self.store.get_sync_state()
         self.store.set_sync_state(
@@ -452,7 +533,8 @@ class KlineCacheService:
             )
             return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
-        existing_pairs = self.store.get_existing_pairs([target_trade_date])
+        # P3：全市场 symbol×日期对查询放线程执行
+        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, [target_trade_date])
         missing_symbols = [s for s in symbols if (s, target_trade_date) not in existing_pairs]
 
         if not missing_symbols:
@@ -560,11 +642,14 @@ class KlineCacheService:
             )
             completed, success_count, failed_count = result
 
-        final_status = "success" if completed > 0 else "failed"
-        final_msg = (
-            f"增量补缺完成 {target_trade_date} 补缺{completed}只(原缺失{total}只)"
-            if completed > 0 else f"增量同步失败 {target_trade_date}"
-        )
+        # D2：比例封账（同全量同步路径，见 _seal_decision）
+        final_status, sealed = self._seal_decision(completed, total)
+        if sealed:
+            final_msg = f"增量补缺完成 {target_trade_date} 补缺{completed}只(原缺失{total}只)"
+        elif final_status == "partial":
+            final_msg = f"增量补缺部分成功 {target_trade_date} 补缺{completed}/{total}只(未达{int(_FILL_SUCCESS_RATIO * 100)}%封账线)，将自动重试"
+        else:
+            final_msg = f"增量同步失败 {target_trade_date}"
         self.store.finish_sync_task(
             task_id=task_id,
             status=final_status,
@@ -573,7 +658,7 @@ class KlineCacheService:
         )
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
-            success_trade_date=target_trade_date if completed > 0 else state.get("last_success_trade_date"),
+            success_trade_date=target_trade_date if sealed else state.get("last_success_trade_date"),
             status=final_status,
             symbol_count=completed,
             total_symbols=total,
@@ -587,6 +672,7 @@ class KlineCacheService:
         )
         return {
             "success": completed > 0,
+            "sealed": sealed,
             "message": final_msg,
             "trade_date": target_trade_date,
             "symbol_count": completed,
@@ -637,7 +723,12 @@ class KlineCacheService:
             if symbol not in wanted:
                 continue
             normalized = self._normalize_hist(pd.DataFrame([item]))
-            if not normalized or normalized[0]["close"] <= 0:
+            if (
+                not normalized
+                or normalized[0]["close"] <= 0
+                or normalized[0]["open"] <= 0
+                or normalized[0]["high"] <= 0
+            ):
                 continue
             normalized[0]["source"] = source
             normalized[0]["fallback_reason"] = fallback_reason
@@ -655,7 +746,8 @@ class KlineCacheService:
         elapsed_ms = int((pytime.time() - t0) * 1000)
         completed = initial_completed + len(valid_symbols)
         success_count = initial_success_count + len(valid_symbols)
-        self.store.record_sync_batch(
+        await asyncio.to_thread(
+            self.store.record_sync_batch,
             kline_items=rows,
             detail_rows=[
                 {
@@ -750,7 +842,8 @@ class KlineCacheService:
         now_iso = now_cn().isoformat()
         elapsed_ms = int((pytime.time() - t0) * 1000)
         completed = len(valid_symbols)
-        self.store.record_sync_batch(
+        await asyncio.to_thread(
+            self.store.record_sync_batch,
             kline_items=rows,
             detail_rows=[
                 {
@@ -858,7 +951,8 @@ class KlineCacheService:
                 )
 
             synced = success_count + failed_count
-            self.store.record_sync_batch(
+            await asyncio.to_thread(
+                self.store.record_sync_batch,
                 kline_items=kline_items,
                 detail_rows=detail_rows,
                 updated_at=now_iso,
@@ -1020,7 +1114,7 @@ class KlineCacheService:
 
         symbol_set = set(symbols)
         total_expected = len(trade_dates_list) * len(symbols)
-        existing_pairs = self.store.get_existing_pairs(trade_dates_list)
+        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, trade_dates_list)
         total_actual = len(existing_pairs)
         total_missing = total_expected - total_actual
 
@@ -1168,14 +1262,14 @@ class KlineCacheService:
 
         return sorted(symbols)
 
-    def _count_filled(
+    async def _count_filled(
         self,
         old_existing: set[tuple[str, str]],
         missing_by_date: dict[str, list[str]],
     ) -> int:
         """补缺后复验：统计 missing_by_date 中实际被填上的条数。"""
         check_dates = sorted(missing_by_date.keys())
-        new_existing = self.store.get_existing_pairs(check_dates)
+        new_existing = await asyncio.to_thread(self.store.get_existing_pairs, check_dates)
         filled = 0
         for td, syms in missing_by_date.items():
             for s in syms:
@@ -1195,13 +1289,21 @@ class KlineCacheService:
             trade_date = str(row.get("日期", "")).strip()
             if not trade_date:
                 continue
+            # D3：上游对停牌股返回 "-" 占位，经 to_float 变 0.0；
+            # 合法日K四价必为正数，全零/负值行直接丢弃
+            o = to_float(row.get("开盘"))
+            h = to_float(row.get("最高"))
+            l = to_float(row.get("最低"))
+            c = to_float(row.get("收盘"))
+            if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+                continue
             rows.append(
                 {
                     "trade_date": trade_date,
-                    "open": to_float(row.get("开盘")),
-                    "high": to_float(row.get("最高")),
-                    "low": to_float(row.get("最低")),
-                    "close": to_float(row.get("收盘")),
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
                     "volume": to_float(row.get("成交量")),
                     "amount": to_float(row.get("成交额")),
                     "source": source,

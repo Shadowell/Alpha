@@ -720,8 +720,8 @@ function _dcHealthLevel(coverage) {
 function renderDcStats(stats, syncStatus, report) {
   const cov = report?.coverage_pct;
   const health = _dcHealthLevel(cov);
-  const syncLabel = { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[syncStatus.status] || '--';
-  const syncCls = syncStatus.status === 'running' ? 'warning' : (syncStatus.status === 'success' ? 'success' : (syncStatus.status === 'failed' ? 'error' : 'brand'));
+  const syncLabel = { idle: '空闲', running: '同步中', success: '已完成', partial: '部分成功', failed: '失败' }[syncStatus.status] || '--';
+  const syncCls = syncStatus.status === 'running' ? 'warning' : (syncStatus.status === 'success' ? 'success' : (syncStatus.status === 'partial' ? 'warning' : (syncStatus.status === 'failed' ? 'error' : 'brand')));
   const missing = report?.total_missing || 0;
 
   // 冷启动引导：库为空时展示一键初始化卡片；同步进行中禁用按钮

@@ -147,3 +147,109 @@ class TestEnqueueRangeHolidayFilter:
         # 日历不可用 → 退化为仅排周末，工作日全部入队
         assert payload["success"] is True
         assert payload["submitted"] == 5
+
+
+# ── D1：收盘定型判定 ──────────────────────────────────────────
+
+class TestDateSettled:
+    def test_past_date_always_settled(self):
+        from datetime import datetime
+
+        from app.services.kline_cache_service import KlineCacheService
+
+        # 历史交易日无论当前几点都已定型（含盘前）
+        assert KlineCacheService._date_settled("2026-08-21", datetime(2026, 8, 24, 8, 0)) is True
+
+    def test_today_intraday_not_settled(self):
+        from datetime import datetime
+
+        from app.services.kline_cache_service import KlineCacheService
+
+        assert KlineCacheService._date_settled("2026-08-24", datetime(2026, 8, 24, 9, 30)) is False
+        assert KlineCacheService._date_settled("2026-08-24", datetime(2026, 8, 24, 15, 4)) is False
+
+    def test_today_after_eod_settled(self):
+        from datetime import datetime
+
+        from app.services.kline_cache_service import KlineCacheService
+
+        assert KlineCacheService._date_settled("2026-08-24", datetime(2026, 8, 24, 15, 5)) is True
+        assert KlineCacheService._date_settled("2026-08-24", datetime(2026, 8, 24, 22, 0)) is True
+
+
+# ── D2：比例封账判定 ──────────────────────────────────────────
+
+class TestSealDecision:
+    def test_full_success_sealed(self):
+        from app.services.kline_cache_service import KlineCacheService
+
+        assert KlineCacheService._seal_decision(100, 100) == ("success", True)
+        assert KlineCacheService._seal_decision(95, 100) == ("success", True)
+
+    def test_partial_not_sealed(self):
+        from app.services.kline_cache_service import KlineCacheService
+
+        assert KlineCacheService._seal_decision(50, 100) == ("partial", False)
+        assert KlineCacheService._seal_decision(1, 5000) == ("partial", False)
+
+    def test_total_failure(self):
+        from app.services.kline_cache_service import KlineCacheService
+
+        assert KlineCacheService._seal_decision(0, 100) == ("failed", False)
+        assert KlineCacheService._seal_decision(0, 0) == ("failed", False)
+
+
+# ── D2：run_if_due 未封账重试节流 ─────────────────────────────
+
+class TestRunIfDueThrottle:
+    @staticmethod
+    def _svc_with_state(state: dict):
+        from datetime import time as dtime
+
+        from app.services.kline_cache_service import KlineCacheService
+
+        provider = type("P", (), {})()
+
+        async def _resolve(date_iso: str):
+            return "2026-08-21"
+
+        store = type("S", (), {})()
+        store.get_sync_state = lambda: dict(state)
+        svc = KlineCacheService(provider=provider, store=store, schedule_after=dtime(0, 0))
+        svc._resolve_latest_trade_date = _resolve
+        return svc
+
+    def test_recent_attempt_throttled(self, monkeypatch):
+        from app.services.time_utils import now_cn
+
+        svc = self._svc_with_state(
+            {"attempt_trade_date": "2026-08-21", "last_success_trade_date": None,
+             "updated_at": now_cn().isoformat(), "status": "partial"}
+        )
+        assert asyncio.run(svc.run_if_due()) is None
+
+    def test_stale_attempt_proceeds(self, monkeypatch):
+        from datetime import timedelta
+
+        from app.services.time_utils import now_cn
+
+        calls: list[str] = []
+
+        async def _fake_incremental(trade_date=None, trigger_mode="auto"):
+            calls.append(trade_date)
+            return {"success": True}
+
+        svc = self._svc_with_state(
+            {"attempt_trade_date": "2026-08-21", "last_success_trade_date": None,
+             "updated_at": (now_cn() - timedelta(hours=2)).isoformat(), "status": "partial"}
+        )
+        svc.incremental_sync = _fake_incremental
+        result = asyncio.run(svc.run_if_due())
+        assert result == {"success": True} and calls == ["2026-08-21"]
+
+    def test_already_sealed_skipped(self):
+        svc = self._svc_with_state(
+            {"attempt_trade_date": "2026-08-21", "last_success_trade_date": "2026-08-21",
+             "updated_at": "", "status": "success"}
+        )
+        assert asyncio.run(svc.run_if_due()) is None

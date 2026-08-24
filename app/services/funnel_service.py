@@ -160,7 +160,9 @@ class FunnelService:
             return pd.DataFrame()
 
     async def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
-        cache_df = self._build_cache_snapshot(self.trade_date)
+        # P3：build_snapshot_for_screen 会全表扫描数十万行并做 Python 循环，
+        # 放线程执行避免阻塞事件循环（此前所有 API/WS 在漏斗刷新时卡顿数秒）
+        cache_df = await asyncio.to_thread(self._build_cache_snapshot, self.trade_date)
         if not cache_df.empty:
             return cache_df, "history_cache"
         snapshot_df = await self.provider.get_realtime_snapshot()
