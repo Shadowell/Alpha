@@ -89,7 +89,7 @@ async def run_kline_batch_incremental_sync(
     end_date: str,
     trigger_mode: str = "manual",
 ):
-    payload = _kline_cache_service.enqueue_incremental_range(
+    payload = await _kline_cache_service.enqueue_incremental_range(
         start_date=start_date,
         end_date=end_date,
         trigger_mode=trigger_mode,

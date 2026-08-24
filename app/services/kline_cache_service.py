@@ -66,7 +66,7 @@ class KlineCacheService:
             },
         )
 
-    def enqueue_incremental_range(
+    async def enqueue_incremental_range(
         self,
         start_date: str,
         end_date: str,
@@ -81,6 +81,28 @@ class KlineCacheService:
                 "submitted": 0,
                 "queue_size": len(self._queue),
             }
+        # D5：入队前按交易日历过滤法定节假日/临时休市日，
+        # 避免为节假日整轮抓取全市场、全部失败并污染任务统计。
+        # 日历不可用时降级为原行为（仅排周末）。
+        skipped_holidays = 0
+        try:
+            cal_df = await self.provider.get_trade_days(min_days=1)
+            raw_days = cal_df["trade_date"].tolist() if cal_df is not None and not cal_df.empty else []
+            trade_days = {str(v)[:10] for v in raw_days}
+            if trade_days:
+                filtered = [d for d in dates if d in trade_days]
+                skipped_holidays = len(dates) - len(filtered)
+                if not filtered:
+                    return {
+                        "success": False,
+                        "accepted": False,
+                        "message": f"范围内 {len(dates)} 个工作日均非交易日（节假日/休市）",
+                        "submitted": 0,
+                        "queue_size": len(self._queue),
+                    }
+                dates = filtered
+        except Exception as exc:
+            print(f"[kline-cache] trade calendar unavailable, fallback to weekdays only: {exc}")
         for item in dates:
             self._queue.append(("incremental", {"trade_date": item, "trigger_mode": trigger_mode}))
         queue_size = len(self._queue)
@@ -91,6 +113,7 @@ class KlineCacheService:
             "accepted": True,
             "status": "queued" if self._syncing or queue_size > len(dates) else "running",
             "submitted": len(dates),
+            "skipped_holidays": skipped_holidays,
             "start_date": dates[0],
             "end_date": dates[-1],
             "queue_size": queue_size,

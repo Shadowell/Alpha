@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
 from app.models import MovePoolRequest, RecomputeRequest
+from app.services.access_guard import write_access_decision
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.funnel_service import FunnelService
 from app.services.kline_cache_service import KlineCacheService
@@ -128,6 +130,7 @@ hermes_runtime = HermesRuntime(
     funnel_service=service,
     notice_service=notice_service,
     kline_cache_service=kline_cache_service,
+    kronos_service=kronos_service,
 )
 
 backtest_lab = BacktestLab(
@@ -214,18 +217,18 @@ async def _hot_stock_ai_scheduler_loop() -> None:
                     except Exception as exc:
                         print(f"[hot_stock_ai] scheduled run failed: {exc}")
 
-                asyncio.create_task(_run_hot_stock_ai_auto())
+                _spawn_tracked(_run_hot_stock_ai_auto())
         except Exception as exc:
             print(f"[hot_stock_ai] scheduler error: {exc}")
         await asyncio.sleep(60)
 
 
 def _checkpoint_all_sqlite() -> None:
-    """在 lifespan shutdown 的任务取消之前，对所有 SQLite 库执行 WAL checkpoint。
+    """对所有 SQLite 库执行 WAL checkpoint 并关闭连接。
 
-    原因：若任务取消时某连接正在 fsync（WAL checkpoint），macOS 会让进程
-    卡在内核不可中断睡眠（UEs），SIGKILL 也无法清除。
-    提前在单独线程里 checkpoint 并关闭，可避免这种情况。
+    必须在 lifespan 已取消并等待完全部后台任务之后调用：
+    若仍有活跃写入，TRUNCATE checkpoint 会因读写竞争静默失败，
+    WAL 不截断，进程可能在退出 fsync 时卡入 macOS 内核不可中断状态（UEs）。
     """
     import sqlite3 as _sqlite3
     db_paths = [
@@ -239,6 +242,27 @@ def _checkpoint_all_sqlite() -> None:
             conn.close()
         except Exception as exc:
             print(f"[shutdown] checkpoint {path} failed (non-fatal): {exc}")
+
+
+# ── 后台散任务注册表（P4）───────────────────────────────────────
+# 手动触发类 create_task 若不持引用，可能被 GC 中途回收且 shutdown 无法等待，
+# 是 AGENTS.md 记载的 UEs 卡死风险源。所有非循环类后台任务统一经此派生。
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_tracked(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                print(f"[background-task] failed: {exc}")
+
+    _background_tasks.add(task)
+    task.add_done_callback(_done)
+    return task
 
 
 @asynccontextmanager
@@ -259,8 +283,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
     app.state.hot_stock_ai_task = asyncio.create_task(_hot_stock_ai_scheduler_loop())
     yield
-    # 先 checkpoint 所有 SQLite WAL，再取消任务，避免进程卡在内核 fsync 的 UEs 状态
-    await asyncio.to_thread(_checkpoint_all_sqlite)
+    # P4 顺序修正：先取消并等待全部后台任务（循环 + 散任务），
+    # 再执行 WAL checkpoint —— 否则 checkpoint 与活跃写入竞态会静默失败，
+    # WAL 不截断，进程可能在退出 fsync 时卡入 UEs。
     for key in [
         "backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task",
         "predict_funnel_task", "hot_stock_ai_task",
@@ -270,13 +295,57 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+    if _background_tasks:
+        for t in list(_background_tasks):
+            t.cancel()
+        await asyncio.wait(list(_background_tasks), timeout=20)
+        _background_tasks.clear()
+    await asyncio.to_thread(_checkpoint_all_sqlite)
 
 
 app = FastAPI(title="Alpha", version="1.0.0", lifespan=lifespan)
+
+# ── 写操作防护（S2）────────────────────────────────────────────
+# 判定逻辑在 app/services/access_guard.py（纯函数，可独立单测）：
+#   1) 配置了 ALPHA_WRITE_TOKEN → 写请求必须携带匹配的 X-Alpha-Token 头；
+#   2) 未配置 token → 仅允许本机回环来源发起写请求，局域网/外网 403。
+@app.middleware("http")
+async def write_access_guard(request: Request, call_next):
+    decision = write_access_decision(
+        method=request.method,
+        client_host=request.client.host if request.client else None,
+        header_token=request.headers.get("X-Alpha-Token"),
+    )
+    if decision == "token_mismatch":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "写操作被拒绝：X-Alpha-Token 缺失或不匹配"},
+        )
+    if decision == "non_loopback_without_token":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "写操作仅允许本机访问；如需远程写入请配置 ALPHA_WRITE_TOKEN 并携带 X-Alpha-Token 头"},
+        )
+    return await call_next(request)
+
+
+# ── CORS 收敛（S3）：默认仅本机前端来源，可用 ALPHA_CORS_ORIGINS 扩展 ──
+def _cors_origins() -> list[str]:
+    raw = os.getenv("ALPHA_CORS_ORIGINS", "").strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        "http://localhost:18888",
+        "http://127.0.0.1:18888",
+        "http://localhost:18890",
+        "http://127.0.0.1:18890",
+    ]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -398,7 +467,7 @@ async def get_predict_funnel():
 async def trigger_predict_funnel():
     if predict_funnel_service.running:
         raise HTTPException(status_code=409, detail="预测任务已在执行中")
-    asyncio.create_task(predict_funnel_service.run(trigger="manual"))
+    _spawn_tracked(predict_funnel_service.run(trigger="manual"))
     return {"success": True, "message": "预测任务已启动，请查看进度", "snapshot": predict_funnel_service.get_snapshot()}
 
 
@@ -422,7 +491,7 @@ async def get_hot_stock_ai_snapshot():
 async def run_hot_stock_ai():
     if hot_stock_ai_service.running:
         raise HTTPException(status_code=409, detail="热门股票智能分析任务已在执行中")
-    asyncio.create_task(hot_stock_ai_service.run(trigger="manual"))
+    _spawn_tracked(hot_stock_ai_service.run(trigger="manual"))
     return {"success": True, "message": "热门股票智能分析任务已启动", "snapshot": hot_stock_ai_service.get_snapshot()}
 
 

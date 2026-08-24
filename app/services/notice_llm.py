@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
-import requests
+import httpx
 
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """你是A股公告事件分析助手。请仅基于公告标题和类型判断短期上涨潜力。
 输出 JSON 数组，每项包含:
@@ -20,12 +23,26 @@ SYSTEM_PROMPT = """你是A股公告事件分析助手。请仅基于公告标题
 """
 
 
-def score_with_llm(
+def _resolve_endpoint() -> tuple[str, str, str]:
+    """返回 (url, api_key, model)。未正确配置时 api_key 为空。"""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    model = os.getenv("HERMES_MODEL", "gpt-4o-mini").strip()
+    # 占位 key（如 .env.example 中 Ollama 方案的 "ollama"）视为未配置真实凭据，
+    # 但仍允许请求 —— 本地推理服务通常不校验 key。
+    return f"{base_url}/responses", api_key, model
+
+
+async def score_with_llm(
     notices: list[dict[str, Any]],
-    model: str = "gpt-5.3-codex",
     timeout_seconds: int = 40,
 ) -> tuple[dict[str, dict[str, Any]], bool]:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    """LLM 公告打分。
+
+    返回 (scores, llm_enabled)。任何失败都返回 ( {}, False) 并记录日志，
+    绝不把故障伪装成"已启用"，避免错误状态被持久化误导下游复盘。
+    """
+    url, api_key, model = _resolve_endpoint()
     if not api_key:
         return {}, False
 
@@ -51,14 +68,14 @@ def score_with_llm(
     }
 
     try:
-        resp = requests.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=timeout_seconds,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
         output_text = _extract_text(data)
         parsed = json.loads(output_text)
         result: dict[str, dict[str, Any]] = {}
@@ -73,7 +90,8 @@ def score_with_llm(
             }
         return result, True
     except Exception:
-        return {}, True
+        log.exception("[notice_llm] LLM scoring failed (endpoint=%s model=%s)", url, model)
+        return {}, False
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
@@ -88,4 +106,3 @@ def _extract_text(payload: dict[str, Any]) -> str:
             if text:
                 chunks.append(str(text))
     return "".join(chunks).strip()
-

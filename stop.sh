@@ -76,12 +76,18 @@ for pid_file in "$PID_DIR"/*.pid; do
 done
 
 # 2) 兜底：按进程名找所有 app.main:app 实例（覆盖 UEs 之外的残留）
+#    额外校验进程工作目录属于本仓库，避免误杀本机其他项目的同名 uvicorn。
 if command -v pgrep >/dev/null 2>&1; then
   PIDS="$(pgrep -f "uvicorn app.main:app" 2>/dev/null || true)"
   for pid in $PIDS; do
     stat="$(ps -p "$pid" -o stat= 2>/dev/null || true)"
     if [[ "$stat" == *U* ]]; then
       echo "跳过不可中断状态进程: PID=$pid STAT=${stat}（需重启 Mac 清理）"
+      continue
+    fi
+    pid_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
+    if [[ -n "$ROOT_DIR" && "$pid_cwd" != "$ROOT_DIR"* ]]; then
+      echo "跳过非本项目进程: PID=$pid (cwd=${pid_cwd:-未知})"
       continue
     fi
     if stop_pid "$pid"; then

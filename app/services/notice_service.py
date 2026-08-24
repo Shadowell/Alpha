@@ -172,7 +172,7 @@ class NoticeService:
                 dedup[item["code"]] = item
         shortlisted = list(dedup.values())[: max(10, min(limit * 4, 120))]
 
-        llm_scores, llm_enabled = score_with_llm(shortlisted)
+        llm_scores, llm_enabled = await score_with_llm(shortlisted)
         self.llm_enabled = llm_enabled
         self.source = "llm" if llm_scores else "rule"
 

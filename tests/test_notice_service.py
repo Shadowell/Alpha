@@ -27,10 +27,11 @@ def test_notice_screen_and_detail(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr("app.services.notice_service.ak.stock_notice_report", lambda symbol, date: df)
-    monkeypatch.setattr(
-        "app.services.notice_service.score_with_llm",
-        lambda notices: ({"000001": {"score": 88, "reason": "业绩+合同共振", "risk": "兑现风险"}}, True),
-    )
+
+    async def _fake_score_with_llm(notices, timeout_seconds=40):
+        return {"000001": {"score": 88, "reason": "业绩+合同共振", "risk": "兑现风险"}}, True
+
+    monkeypatch.setattr("app.services.notice_service.score_with_llm", _fake_score_with_llm)
 
     store = SQLiteStateStore(str(tmp_path / "state.db"))
     service = NoticeService(state_store=store, kline_cache_service=FakeKlineCache())

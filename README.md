@@ -616,8 +616,9 @@ docker compose logs -f  # 查看启动日志
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `18890` | 服务端口，可通过环境变量覆盖 |
-| `HOST` | `0.0.0.0` | 监听地址（`.env.example` 建议值 `127.0.0.1`；Docker 内固定 `0.0.0.0`，暴露面由 compose 端口映射控制） |
+| `HOST` | `127.0.0.1` | 监听地址；如需局域网访问改为 `0.0.0.0` 并阅读下方「安全提示」。Docker 内固定 `0.0.0.0`，暴露面由 compose 端口映射控制 |
 | `RELOAD` | `0` | 热重载（开发模式设为 `1`） |
+| `ALPHA_WRITE_TOKEN` | — | 写操作令牌。配置后所有 POST/PUT/DELETE 需携带 `X-Alpha-Token` 头（MCP Server 会自动读取同一变量附加请求头）；留空时写操作仅允许本机回环来源 |
 | `ENABLE_TUSHARE` | `false`（示例文件默认） | 是否启用 Tushare 兜底源；不配置时系统通过东财 / 新浪完整运行 |
 | `TUSHARE_TOKEN` | — | 可选 Tushare Pro Token；留空时系统仍可通过东财 / 新浪运行 |
 | `ENABLE_LIVE_MARKET_DATA` | `true` | 是否允许实时外部行情请求；CI / 离线环境设为 `false` 时快速使用本地缓存 |
@@ -629,6 +630,14 @@ docker compose logs -f  # 查看启动日志
 | `FEISHU_WEBHOOK_URL` | — | 飞书群通知 Webhook |
 | `FEISHU_APP_ID` | — | 飞书图片上传应用 ID，仅通过环境变量配置 |
 | `FEISHU_APP_SECRET` | — | 飞书图片上传应用密钥，仅通过环境变量配置，禁止提交到 Git |
+| `ALPHA_CORS_ORIGINS` | 本机 18888/18890 | CORS 允许来源白名单（逗号分隔） |
+
+### 安全提示
+
+- **默认仅本机可用**：裸机启动监听 `127.0.0.1`；Docker compose 的端口映射也只绑定回环地址。
+- **写操作防护**：未配置 `ALPHA_WRITE_TOKEN` 时，所有写请求（POST/PUT/DELETE）仅接受本机回环来源，局域网/外网返回 403。远程写入需在 `.env` 配置令牌并让请求携带 `X-Alpha-Token: <token>` 头。
+- **公告数据按不可信输入处理**：外部抓取的公告标题/链接在前端渲染时全部转义，外链仅允许 http(s) 协议；MCP 工具对股票代码强制 6 位数字校验。
+- 如需将服务暴露到局域网或公网，请务必同时配置 `ALPHA_WRITE_TOKEN`，并建议前置反向代理加 TLS 与访问控制。
 
 ### 服务管理
 

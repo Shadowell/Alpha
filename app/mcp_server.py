@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 ALPHA_API_BASE = os.environ.get("ALPHA_API_BASE", "http://127.0.0.1:18890")
+# 写操作令牌：与服务端 ALPHA_WRITE_TOKEN 一致时方可远程写入
+ALPHA_WRITE_TOKEN = os.environ.get("ALPHA_WRITE_TOKEN", "").strip()
+
+_SYMBOL_RE = re.compile(r"^\d{6}$")
 
 mcp = FastMCP(
     name="alpha-quant",
@@ -24,15 +29,29 @@ mcp = FastMCP(
 )
 
 
+def _check_symbol(symbol: str) -> str:
+    """symbol 必须是 6 位数字；防止 LLM 可控参数拼接出越权请求路径。"""
+    clean = str(symbol or "").strip()
+    if not _SYMBOL_RE.fullmatch(clean):
+        raise ValueError(f"非法股票代码: {symbol!r}（应为 6 位数字，如 603577）")
+    return clean
+
+
+def _headers() -> dict[str, str]:
+    if ALPHA_WRITE_TOKEN:
+        return {"X-Alpha-Token": ALPHA_WRITE_TOKEN}
+    return {}
+
+
 async def _get(path: str, params: dict | None = None) -> dict:
-    async with httpx.AsyncClient(base_url=ALPHA_API_BASE, timeout=30) as client:
+    async with httpx.AsyncClient(base_url=ALPHA_API_BASE, timeout=30, headers=_headers()) as client:
         resp = await client.get(path, params=params)
         resp.raise_for_status()
         return resp.json()
 
 
 async def _post(path: str, body: dict | None = None) -> dict:
-    async with httpx.AsyncClient(base_url=ALPHA_API_BASE, timeout=60) as client:
+    async with httpx.AsyncClient(base_url=ALPHA_API_BASE, timeout=60, headers=_headers()) as client:
         resp = await client.post(path, json=body or {})
         resp.raise_for_status()
         return resp.json()
@@ -70,7 +89,7 @@ async def get_stock_detail(symbol: str, kline_days: int = 30) -> str:
         symbol: 股票代码，如 '603577'
         kline_days: K线天数，默认30
     """
-    data = await _get(f"/api/stock/{symbol}/detail", {"kline_days": kline_days})
+    data = await _get(f"/api/stock/{_check_symbol(symbol)}/detail", {"kline_days": kline_days})
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -106,7 +125,7 @@ async def get_notice_detail(symbol: str, days: int = 30) -> str:
         symbol: 股票代码
         days: K线天数
     """
-    data = await _get(f"/api/notice/{symbol}/detail", {"days": days})
+    data = await _get(f"/api/notice/{_check_symbol(symbol)}/detail", {"days": days})
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -121,7 +140,7 @@ async def get_kline(symbol: str, days: int = 30) -> str:
         symbol: 股票代码
         days: 历史天数
     """
-    data = await _get(f"/api/kline/{symbol}", {"days": days})
+    data = await _get(f"/api/kline/{_check_symbol(symbol)}", {"days": days})
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -168,7 +187,7 @@ async def predict_kronos(symbol: str, lookback: int = 180, horizon: int = 3) -> 
         horizon: 预测天数（默认3）
     """
     try:
-        data = await _get(f"/api/predict/{symbol}/kronos", {"lookback": lookback, "horizon": horizon})
+        data = await _get(f"/api/predict/{_check_symbol(symbol)}/kronos", {"lookback": lookback, "horizon": horizon})
         pk = data.get("predicted_kline", [])
         if not pk:
             return json.dumps({"symbol": symbol, "prediction": "无预测结果（可能K线数据不足）"}, ensure_ascii=False)
@@ -197,7 +216,7 @@ async def get_stock_realtime(symbol: str) -> str:
     Args:
         symbol: 股票代码，如 '603577'
     """
-    data = await _get(f"/api/stock/{symbol}/realtime")
+    data = await _get(f"/api/stock/{_check_symbol(symbol)}/realtime")
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 

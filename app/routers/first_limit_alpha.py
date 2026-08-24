@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 
 from app.services.first_limit_alpha_service import FirstLimitAlphaService
@@ -16,6 +18,11 @@ def init_first_limit_alpha_router(service: FirstLimitAlphaService) -> APIRouter:
     return router
 
 
+async def _run(fn, /, **kwargs):
+    """训练/推理为同步重 CPU 调用（torch/lightgbm），统一下放线程避免阻塞事件循环。"""
+    return await asyncio.to_thread(lambda: fn(**kwargs))
+
+
 @router.get("/strategy/first-limit-alpha/status")
 async def get_first_limit_alpha_status():
     return _service.get_status()
@@ -26,7 +33,8 @@ async def build_first_limit_alpha_dataset(
     start_date: str | None = None,
     end_date: str | None = None,
 ):
-    return await _service.build_dataset(
+    return await _run(
+        _service.build_dataset,
         start_date=start_date,
         end_date=end_date,
         build_cfg=SampleBuildConfig(),
@@ -36,24 +44,24 @@ async def build_first_limit_alpha_dataset(
 
 @router.post("/strategy/first-limit-alpha/features/build")
 async def build_first_limit_alpha_features():
-    return _service.build_features(feature_cfg=FeatureConfig())
+    return await _run(_service.build_features, feature_cfg=FeatureConfig())
 
 
 @router.post("/strategy/first-limit-alpha/train/baseline")
 async def train_first_limit_alpha_baseline():
-    return _service.train_baseline(training_cfg=TrainingConfig())
+    return await _run(_service.train_baseline, training_cfg=TrainingConfig())
 
 
 @router.post("/strategy/first-limit-alpha/train/sequence")
 async def train_first_limit_alpha_sequence():
-    return _service.train_sequence(sequence_cfg=SequenceConfig())
+    return await _run(_service.train_sequence, sequence_cfg=SequenceConfig())
 
 
 @router.post("/strategy/first-limit-alpha/inference/run")
 async def run_first_limit_alpha_inference(trade_date: str | None = None):
-    return _service.run_inference(trade_date=trade_date)
+    return await _run(_service.run_inference, trade_date=trade_date)
 
 
 @router.post("/strategy/first-limit-alpha/backtest")
 async def run_first_limit_alpha_backtest():
-    return _service.backtest_latest(config=BacktestConfig())
+    return await _run(_service.backtest_latest, config=BacktestConfig())

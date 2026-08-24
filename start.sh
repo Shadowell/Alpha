@@ -15,7 +15,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 PORT="${PORT:-18890}"
-HOST="${HOST:-0.0.0.0}"
+HOST="${HOST:-127.0.0.1}"
 RELOAD="${RELOAD:-0}"
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -x "$HOME/arm-python/python/bin/python3.11" ]]; then

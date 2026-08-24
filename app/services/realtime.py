@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import suppress
 from typing import Any
 
 from fastapi import WebSocket
+
+
+_SEND_TIMEOUT_SECONDS = 5.0
 
 
 class RealtimeHub:
@@ -22,12 +27,17 @@ class RealtimeHub:
             return
         msg = json.dumps({"event": event, "data": payload}, ensure_ascii=False)
 
+        # 遍历快照副本：await 期间 connect/disconnect 可能并发修改集合，
+        # 直接迭代会触发 "Set changed size during iteration"。
         disconnected: list[WebSocket] = []
-        for ws in self._clients:
+        for ws in list(self._clients):
             try:
-                await ws.send_text(msg)
+                # 单个慢/半死客户端不能拖住整个广播（队头阻塞 ticker 循环）
+                await asyncio.wait_for(ws.send_text(msg), timeout=_SEND_TIMEOUT_SECONDS)
             except Exception:
                 disconnected.append(ws)
 
         for ws in disconnected:
             self._clients.discard(ws)
+            with suppress(Exception):
+                await ws.close()

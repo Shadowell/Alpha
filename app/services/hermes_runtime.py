@@ -28,11 +28,14 @@ class HermesRuntime:
         funnel_service: Any,
         notice_service: Any,
         kline_cache_service: Any,
+        kronos_service: Any = None,
     ) -> None:
         self.memory = memory
         self.funnel = funnel_service
         self.notice = notice_service
         self.kline = kline_cache_service
+        # 共享 KronosPredictService（main.py 注入）；为 None 时监控跳过预测段
+        self.kronos = kronos_service
         self._sem = asyncio.Semaphore(_MAX_CONCURRENT)
         self._failures: dict[str, list[float]] = {}
         self._running = False
@@ -752,10 +755,9 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
         except Exception as e:
             data["funnel_summary"] = f"获取失败: {e}"
 
-        # Kronos 预测 — 对 buy/focus 池的股票调真实模型
-        if pool_symbols:
-            from app.services.kronos_predict_service import KronosPredictService
-            kronos = KronosPredictService()
+        # Kronos 预测 — 对 buy/focus 池的股票调真实模型（复用 main 注入的共享实例）
+        if pool_symbols and self.kronos is not None:
+            kronos = self.kronos
             pred_lines = []
             for sym, nm, pool in pool_symbols[:10]:
                 try:

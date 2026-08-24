@@ -4,6 +4,23 @@ const state = {
   chart: null,
 };
 
+// 公告数据来自外部披露平台抓取，属不可信输入，所有 DOM 插值必须转义
+function esc(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+// 外链仅允许 http(s)，拦截 javascript: 等伪协议
+function safeUrl(v) {
+  const s = String(v || '').trim();
+  if (/^https?:\/\//i.test(s)) return esc(s);
+  return '#';
+}
+
 function fmtNum(v, digits = 2) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n.toFixed(digits) : '0.00';
@@ -91,17 +108,17 @@ function renderPool(poolName, list) {
     card.className = `stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
     card.onclick = () => selectSymbol(stock.symbol);
     const actions = cardActions(stock)
-      .map(([label, pool]) => `<button data-symbol="${stock.symbol}" data-pool="${pool}">${label}</button>`)
+      .map(([label, pool]) => `<button data-symbol="${esc(stock.symbol)}" data-pool="${esc(pool)}">${esc(label)}</button>`)
       .join('');
     card.innerHTML = `
       <div class="stock-top">
-        <div class="stock-name">${stock.name} (${stock.symbol})</div>
+        <div class="stock-name">${esc(stock.name)} (${esc(stock.symbol)})</div>
         <div class="score up">${fmtNum(stock.score)}</div>
       </div>
-      <div class="metrics">${stock.notice_type} · ${stock.notice_date}</div>
-      <div class="metrics">${stock.title}</div>
-      <div class="metrics">理由: ${stock.reason || '-'}</div>
-      <div class="metrics">风险: ${stock.risk || '-'}</div>
+      <div class="metrics">${esc(stock.notice_type)} · ${esc(stock.notice_date)}</div>
+      <div class="metrics">${esc(stock.title)}</div>
+      <div class="metrics">理由: ${esc(stock.reason || '-')}</div>
+      <div class="metrics">风险: ${esc(stock.risk || '-')}</div>
       <div class="card-actions">${actions}</div>
     `;
     card.querySelectorAll('button').forEach((btn) => {
@@ -208,11 +225,11 @@ async function selectSymbol(symbol) {
     document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
     const first = (detail.notices || [])[0] || {};
     document.getElementById('noticeDetail').innerHTML = `
-      <div class="metrics"><b>${first.title || '-'}</b></div>
-      <div class="metrics">类型: ${first.notice_type || '-'}</div>
-      <div class="metrics">理由: ${detail.reason || '-'}</div>
-      <div class="metrics">风险: ${detail.risk || '-'}</div>
-      <div class="metrics"><a href="${first.url || '#'}" target="_blank">公告链接</a></div>
+      <div class="metrics"><b>${esc(first.title || '-')}</b></div>
+      <div class="metrics">类型: ${esc(first.notice_type || '-')}</div>
+      <div class="metrics">理由: ${esc(detail.reason || '-')}</div>
+      <div class="metrics">风险: ${esc(detail.risk || '-')}</div>
+      <div class="metrics"><a href="${safeUrl(first.url)}" target="_blank" rel="noopener noreferrer">公告链接</a></div>
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
     renderKlineChart(kline);

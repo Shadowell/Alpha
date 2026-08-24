@@ -164,7 +164,7 @@ function renderMarketSummary() {
   el.innerHTML = [
     _psItem('上涨概念', `${upCount}/${concepts.length}`, upCount >= 5 ? 'success' : 'warning'),
     _psSep(),
-    _psItem('龙头', `${leader} ${topChg >= 0 ? '+' : ''}${fmtNum(topChg, 2)}%`, topChg >= 0 ? 'up' : 'down'),
+    _psItem('龙头', `${esc(leader)} ${topChg >= 0 ? '+' : ''}${fmtNum(topChg, 2)}%`, topChg >= 0 ? 'up' : 'down'),
     _psSep(),
     _psItem('市场情绪', mood, moodCls),
   ].join('');
@@ -421,7 +421,7 @@ function renderPool(poolName, list) {
     const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
     const conceptTags = stock.concept_tags || [];
     const tags = conceptTags
-      .map((tag) => `<span class="tag" style="background:${tag.color}" title="热度:${tag.heat} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${tag.name} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
+      .map((tag) => `<span class="tag" style="background:${esc(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
       .join('');
     const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
     const badge = stock.recommended_pool
@@ -431,7 +431,7 @@ function renderPool(poolName, list) {
       .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
       .join('');
     const simBuyBtn = poolName === 'buy'
-      ? `<button class="btn-sim-buy" data-symbol="${stock.symbol}" data-name="${stock.name}" data-price="${stock.price || stock.breakout_level || 0}">模拟买入</button>`
+      ? `<button class="btn-sim-buy" data-symbol="${esc(stock.symbol)}" data-name="${esc(stock.name)}" data-price="${stock.price || stock.breakout_level || 0}">模拟买入</button>`
       : '';
     const pct = Number(stock.pct_change || 0);
     const pctCls = _chgCls(pct);
@@ -441,7 +441,7 @@ function renderPool(poolName, list) {
     const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
     div.innerHTML = `
       <div class="stock-top">
-        <div class="stock-name">${stock.name} <span class="stock-code">${stock.symbol}</span></div>
+        <div class="stock-name">${esc(stock.name)} <span class="stock-code">${esc(stock.symbol)}</span></div>
         <div class="stock-price-area">${priceHtml}${pctHtml}</div>
       </div>
       ${tagsHtml}
@@ -541,7 +541,7 @@ function renderCompositeCandidatePool(root, systemCandidates) {
       const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
       const conceptTags = stock.concept_tags || [];
       const tags = conceptTags
-        .map((tag) => `<span class="tag" style="background:${tag.color}" title="热度:${tag.heat} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${tag.name} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
+        .map((tag) => `<span class="tag" style="background:${esc(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
         .join('');
       const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
       const badge = stock.recommended_pool
@@ -558,7 +558,7 @@ function renderCompositeCandidatePool(root, systemCandidates) {
       const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
       div.innerHTML = `
         <div class="stock-top">
-          <div class="stock-name">${stock.name} <span class="stock-code">${stock.symbol}</span></div>
+          <div class="stock-name">${esc(stock.name)} <span class="stock-code">${esc(stock.symbol)}</span></div>
           <div class="stock-price-area">${priceHtml}${pctHtml}</div>
         </div>
         ${tagsHtml}
@@ -644,9 +644,9 @@ function renderHotConcepts() {
       if (state.activeTab === 'funnel') renderFunnel();
     };
     div.innerHTML = `
-      <div class="hot-title"><span>${item.name}</span><span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span></div>
+      <div class="hot-title"><span>${esc(item.name)}</span><span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span></div>
       <div class="hot-meta">热度 ${fmtNum(item.heat, 3)} · 涨停 ${item.limit_up_count} · 上涨 ${item.up_count} / 下跌 ${item.down_count}</div>
-      <div class="hot-meta">领涨 ${item.leader || '-'} · 入选 ${item.selected_count}</div>
+      <div class="hot-meta">领涨 ${esc(item.leader || '-')} · 入选 ${item.selected_count}</div>
     `;
     root.appendChild(div);
   });
@@ -669,7 +669,7 @@ function renderHotStocks() {
     card.className = `hot-stock-item ${state.selectedHotSymbol === item.symbol ? 'active' : ''}`;
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
-      <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${item.name} (${item.symbol})</div></div>
+      <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${esc(item.name)} (${esc(item.symbol)})</div></div>
       <div class="hot-stock-side">
         <span class="hot-stock-price">${fmtNum(item.latest_price, 2)}</span>
         <span class="${dayCls}">${daySign}${fmtNum(dayPct, 2)}%</span>
@@ -1260,7 +1260,7 @@ function renderStockSummaryLite(item, klinePayload) {
   const pct = Number(item.change_pct || 0);
   const pctCls = _chgCls(pct);
   const pctSign = pct > 0 ? '+' : '';
-  root.innerHTML = `<span style="font-weight:600">${item.name}(${item.symbol})</span>`
+  root.innerHTML = `<span style="font-weight:600">${esc(item.name)}(${esc(item.symbol)})</span>`
     + `<span class="summary-sep" style="margin:0 6px;color:var(--text-dim)">·</span>`
     + `<span>现价 <b>${fmtNum(item.latest_price, 2)}</b></span>`
     + `<span class="summary-sep" style="margin:0 6px;color:var(--text-dim)">·</span>`
@@ -1459,11 +1459,11 @@ function renderNoticePool(poolName, list) {
       .map(([label, pool]) => `<button data-symbol="${stock.symbol}" data-pool="${pool}">${label}</button>`)
       .join('');
     const simBuyBtn = poolName === 'buy'
-      ? `<button class="btn-sim-buy" data-symbol="${stock.symbol}" data-name="${stock.name}">模拟买入</button>`
+      ? `<button class="btn-sim-buy" data-symbol="${esc(stock.symbol)}" data-name="${esc(stock.name)}">模拟买入</button>`
       : '';
     card.innerHTML = `
       <div class="stock-top">
-        <div class="stock-name">${stock.name} (${stock.symbol})</div>
+        <div class="stock-name">${esc(stock.name)} (${esc(stock.symbol)})</div>
         <div class="score up">${fmtNum(stock.score)}</div>
       </div>
       <div class="metrics">${stock.notice_type} · ${stock.notice_date}</div>
@@ -1759,7 +1759,7 @@ function renderPaperPositions(positions) {
         <span>开仓 ${fmtShortTime(p.opened_at)}</span>
       </div>
       <div class="paper-card-actions">
-        <button class="btn-sell" data-id="${p.id}" data-symbol="${p.symbol}" data-name="${p.name}">模拟卖出</button>
+        <button class="btn-sell" data-id="${p.id}" data-symbol="${esc(p.symbol)}" data-name="${esc(p.name)}">模拟卖出</button>
       </div>
     `;
     div.querySelector('.btn-sell').onclick = (e) => {
@@ -2241,7 +2241,7 @@ function _renderMonitorCard(msg) {
   const themesHtml = themes.map(t => {
     const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : t.level === '中' ? 'mid' : 'low';
     const stocksHtml = t.stocks.map(s =>
-      `<div class="mtheme-stock" data-symbol="${s.symbol}" data-name="${s.name}" title="点击查看 ${esc(s.name)} K线预测">` +
+      `<div class="mtheme-stock" data-symbol="${esc(s.symbol)}" data-name="${esc(s.name)}" title="点击查看 ${esc(s.name)} K线预测">` +
       `<code>${s.symbol}</code> <b>${esc(s.name)}</b><svg viewBox="0 0 20 20" fill="currentColor" class="mtheme-stock-arrow"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/></svg></div>`
     ).join('');
     const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
