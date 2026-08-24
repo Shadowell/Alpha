@@ -1,0 +1,27 @@
+# VCS / local state
+.git
+.gitignore
+.gitnexus
+.cursor
+.run
+.pytest_cache
+.github
+
+# Runtime artifacts (mounted as volumes instead)
+data/
+logs/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Tests & docs (not needed in the runtime image)
+tests/
+docs/
+
+# Local config / tooling
+.env
+*.md
+scripts/

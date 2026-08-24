@@ -363,6 +363,12 @@ async def get_stock_realtime(symbol: str):
     }
 
 
+@app.get("/api/predict/kronos/status")
+async def kronos_model_status():
+    """Kronos 模型加载状态（首次预测会触发权重下载，前端据此展示徽标）。"""
+    return kronos_service.status()
+
+
 @app.get("/api/predict/{symbol}/kronos")
 async def predict_kronos(symbol: str, lookback: int = 180, horizon: int = 3):
     clean = normalize_symbol(symbol)

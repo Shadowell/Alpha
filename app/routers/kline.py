@@ -99,6 +99,30 @@ async def run_kline_batch_incremental_sync(
     return payload
 
 
+@router.post("/jobs/kline-cache/initialize", status_code=status.HTTP_202_ACCEPTED)
+async def initialize_kline_cache(window_days: int = 120):
+    """冷启动一键初始化：回补全市场近 N 个自然日的K线历史。
+
+    空库时前端引导入口调用；复用 full 同步队列，进度/日志与数据中心现有展示兼容。
+    """
+    try:
+        stats = await asyncio.to_thread(_kline_cache_service.get_stats)
+    except Exception:
+        stats = {}
+    window = max(30, min(int(window_days), 365))
+    payload = _kline_cache_service.enqueue_sync_trade_date(
+        trade_date=None,
+        force=True,
+        trigger_mode="initialize",
+        window_days=window,
+    )
+    return {
+        "already_initialized": int(stats.get("row_count") or 0) > 0,
+        "window_days": window,
+        **payload,
+    }
+
+
 @router.get("/jobs/kline-cache/status")
 async def get_kline_cache_status():
     return _kline_cache_service.get_sync_state()

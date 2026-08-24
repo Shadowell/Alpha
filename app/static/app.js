@@ -272,6 +272,7 @@ function switchTab(tab) {
     if (chip) chip.textContent = state.selectedConcept || '全部';
     renderFunnel();
     loadStrategyCenter();
+    _refreshDbEmptyBanners();
   }
   if (tab === 'notice') {
     loadNoticeKeywords();
@@ -722,6 +723,17 @@ function renderDcStats(stats, syncStatus, report) {
   const syncLabel = { idle: '空闲', running: '同步中', success: '已完成', failed: '失败' }[syncStatus.status] || '--';
   const syncCls = syncStatus.status === 'running' ? 'warning' : (syncStatus.status === 'success' ? 'success' : (syncStatus.status === 'failed' ? 'error' : 'brand'));
   const missing = report?.total_missing || 0;
+
+  // 冷启动引导：库为空时展示一键初始化卡片；同步进行中禁用按钮
+  const welcomeCard = document.getElementById('dcWelcomeCard');
+  if (welcomeCard) {
+    const hasStats = stats && Object.keys(stats).length > 0;
+    const dbEmpty = hasStats && Number(stats.row_count || 0) === 0;
+    const isRunning = syncStatus?.status === 'running';
+    welcomeCard.style.display = dbEmpty ? '' : 'none';
+    const initBtn = document.getElementById('btnDcInit');
+    if (initBtn) initBtn.disabled = isRunning;
+  }
 
   const alertBar = document.getElementById('dcAlertBar');
   if (cov != null && cov < 90) {
@@ -2643,6 +2655,28 @@ async function init() {
     }
   };
 
+  document.getElementById('btnDcInit').onclick = async () => {
+    const btn = document.getElementById('btnDcInit');
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+    setStatus('正在提交一键初始化任务...', 'info');
+    try {
+      const payload = await request('/api/jobs/kline-cache/initialize', { method: 'POST' });
+      state._dbStatsPromise = null; // 初始化后失效缓存，让引导横幅重新判断
+      if (payload.already_initialized) {
+        setStatus('数据库已有数据，本次为强制重新初始化（全量回补）', 'info');
+      } else {
+        setStatus(`初始化任务已提交：回补全市场近 ${payload.window_days} 个自然日K线，进度将在下方实时展示`, 'success');
+      }
+      await loadDataCenter();
+    } catch (err) {
+      setStatus(`初始化提交失败: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '一键初始化数据';
+    }
+  };
+
   function _tradeDatesBetween(start, end) {
     const dates = [];
     const cur = new Date(start + 'T00:00:00');
@@ -2839,6 +2873,7 @@ async function init() {
   switchTab((urlTab && TAB_TITLES[urlTab]) ? urlTab : (state.activeTab || 'market'));
 
   await reload();
+  _refreshDbEmptyBanners();
   connectWs();
 
   let _dcPollTimer = null;
@@ -2933,6 +2968,8 @@ function _stopHotAiPoll() {
 }
 
 async function loadPredictFunnel() {
+  refreshKronosStatusBadge();
+  _refreshDbEmptyBanners();
   try {
     const snap = await request('/api/predict-funnel');
     state.predictFunnel = snap;
@@ -2943,6 +2980,56 @@ async function loadPredictFunnel() {
     const el = document.getElementById('predictMeta');
     if (el) el.textContent = `加载失败: ${err.message}`;
   }
+}
+
+/* ── Kronos 模型状态徽标 ── */
+async function refreshKronosStatusBadge() {
+  const badge = document.getElementById('kronosStatusBadge');
+  if (!badge) return;
+  try {
+    const s = await request('/api/predict/kronos/status');
+    if (s.loaded) {
+      badge.className = 'kronos-badge ready';
+      badge.textContent = 'Kronos 模型已就绪';
+    } else if (s.loading) {
+      badge.className = 'kronos-badge loading';
+      badge.textContent = 'Kronos 模型加载中（首次需下载权重）…';
+    } else {
+      badge.className = 'kronos-badge muted';
+      badge.textContent = 'Kronos 未加载 · 首次预测时自动下载模型';
+    }
+  } catch (_) {
+    badge.className = 'kronos-badge muted';
+    badge.textContent = 'Kronos 状态未知';
+  }
+}
+
+/* ── 数据库未初始化引导横幅（漏斗 / 预测页） ── */
+async function _refreshDbEmptyBanners() {
+  try {
+    let stats = state.dcStats;
+    if (!stats || !Object.keys(stats).length) {
+      if (!state._dbStatsPromise) {
+        state._dbStatsPromise = request('/api/jobs/kline-cache/stats').catch(() => null);
+      }
+      stats = await state._dbStatsPromise;
+      if (stats && Object.keys(stats).length) state.dcStats = stats;
+    }
+    const dbEmpty = !!stats && Object.keys(stats).length > 0
+      && Number(stats.row_count || 0) === 0 && !stats.max_date;
+    ['funnelDbEmptyBanner', 'predictDbEmptyBanner'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = dbEmpty ? '' : 'none';
+      if (!dbEmpty) return;
+      el.innerHTML = '<span>本地行情数据尚未初始化，选股与预测功能暂不可用</span>';
+      const btn = document.createElement('button');
+      btn.className = 'btn-outline btn-sm';
+      btn.textContent = '去初始化 →';
+      btn.onclick = () => switchTab('data');
+      el.appendChild(btn);
+    });
+  } catch (_) {}
 }
 
 function _predictPctCls(pct) {

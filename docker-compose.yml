@@ -1,0 +1,25 @@
+services:
+  alpha:
+    build: .
+    image: alpha:latest
+    container_name: alpha
+    # 安全默认：仅本机可访问。如需局域网/外网访问，改为 "18888:18888"
+    # 并务必配置鉴权（当前版本 API 无鉴权，见 README「安全提示」）。
+    ports:
+      - "127.0.0.1:18888:18888"
+    env_file:
+      - .env
+    environment:
+      # 容器内必须绑 0.0.0.0（宿主机暴露面由上面的端口映射控制）
+      HOST: 0.0.0.0
+      PORT: "18888"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

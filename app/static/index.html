@@ -100,6 +100,15 @@
 
         <!-- ========== 数据中心 ========== -->
         <section id="tab-data" class="tab-content">
+          <!-- 冷启动引导 -->
+          <div id="dcWelcomeCard" class="dc-welcome-card" style="display:none">
+            <div class="dc-welcome-main">
+              <div class="dc-welcome-title">欢迎使用 Alpha · 本地数据库还没有行情数据</div>
+              <div class="dc-welcome-sub">三池漏斗、预测选股、公告打分等功能都依赖本地K线缓存。一键初始化会自动回补全市场近120个自然日数据（约10~30分钟，期间可离开本页，进度在此实时展示）。</div>
+            </div>
+            <button id="btnDcInit" class="btn-primary">一键初始化数据</button>
+          </div>
+
           <!-- 告警条 -->
           <div id="dcAlertBar" class="dc-alert-bar" style="display:none"></div>
 
@@ -160,6 +169,7 @@
 
         <!-- ========== 策略选股 ========== -->
         <section id="tab-funnel" class="tab-content">
+          <div id="funnelDbEmptyBanner" class="db-empty-banner" style="display:none"></div>
           <div id="funnelSummary" class="page-summary"></div>
           <div class="tab-toolbar funnel-toolbar">
             <div class="filter-line">
@@ -175,7 +185,7 @@
             <div class="sc-header">
               <div class="sc-title-row">
                 <span class="sc-badge">策略</span>
-                <h3>自适应策略中心</h3>
+                <h3>自定义策略中心</h3>
                 <span class="sc-hint">挑选 / 组合规则 → 全 A 股扫描 → 回测</span>
               </div>
               <div class="sc-strategy-row">
@@ -274,9 +284,11 @@
 
         <!-- ========== 预测选股 ========== -->
         <section id="tab-predict" class="tab-content">
+          <div id="predictDbEmptyBanner" class="db-empty-banner" style="display:none"></div>
           <div id="predictPageSummary" class="page-summary"></div>
           <div class="tab-toolbar">
             <div class="filter-line">
+              <span id="kronosStatusBadge" class="kronos-badge muted">Kronos 状态检测中…</span>
               <span class="predict-meta" id="predictMeta">加载中…</span>
               <span id="predictProgress" class="filter-hint"></span>
             </div>

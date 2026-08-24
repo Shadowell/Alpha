@@ -38,11 +38,15 @@
 **Why it matters for the OSS ecosystem:** most open quant stacks are US/crypto-centric. Alpha fills a practical gap for A-share research—local data pipelines, LLM-agent workflows, and reproducible screening loops that researchers and builders can fork, audit, and extend under MIT.
 
 ```bash
-# Quick start (API / data runtime)
+# Quick start (Docker, recommended)
+cp .env.example .env   # optional: add Tushare / LLM keys (all can stay empty)
+docker compose up -d   # http://127.0.0.1:18888
+
+# Or run from source (API / data runtime)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-base.txt
 cp .env.example .env   # add Tushare / LLM keys as needed
-./start.sh             # http://127.0.0.1:18888
+./start.sh             # http://127.0.0.1:18890
 ```
 
 Full install options, API map, and architecture details are below. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -547,6 +551,9 @@ Alpha/
 │       └── train_sequence.py          # 时序训练入口
 ├── logs/                              # 日志文件
 ├── start.sh / stop.sh / restart.sh    # 服务管理脚本
+├── Dockerfile                         # 容器镜像（CPU 版 Torch；基础+Kronos+MCP 依赖档位）
+├── docker-compose.yml                 # 一键部署（env_file + data/logs volume + healthcheck）
+├── .dockerignore                      # 镜像构建排除（.git/data/logs/tests 等）
 └── requirements.txt
 ```
 
@@ -579,6 +586,29 @@ CI 使用 `requirements-ci.txt` 执行基础单元/API 回归；只有模型代�
 
 打开浏览器访问 http://127.0.0.1:18890。默认端口为 18890，可通过 `PORT=xxxx ./start.sh` 覆盖；如果端口被不可用的旧进程占用，`start.sh` 会直接失败并提示先释放端口。
 
+### Docker 部署（推荐新手）
+
+```bash
+cp .env.example .env    # 按需填入 Token / LLM 配置（可全部留空先跑起来）
+docker compose up -d    # 构建并后台启动（CPU 版 Torch，无需 GPU）
+docker compose logs -f  # 查看启动日志
+```
+
+访问 http://127.0.0.1:18888。默认端口映射仅绑定本机回环地址；`data/` 与 `logs/` 通过 volume 挂载持久化，Kronos 权重首次预测时自动下载到容器内缓存。
+
+### 零配置体验矩阵
+
+不配置任何 Token / API Key 也能完整跑通核心链路：
+
+| 配置状态 | 可用功能 | 不可用 |
+|----------|----------|--------|
+| 全空 | 三池漏斗选股、K线缓存同步、数据中心、模拟盘、Web UI | LLM 公告打分、Hermes 复盘与监控、Tushare 兜底源 |
+| + Ollama（本地免费） | 公告 LLM 打分、Hermes 复盘/监控（降级模式） | — |
+| + Tushare Token | 日线补缺与交易日历增加可信兜底 | — |
+| + Kronos（首次预测自动下载权重） | 预测选股、单股 K 线预测 | — |
+
+首次使用建议：打开「数据中心」Tab，空库时会出现**一键初始化**引导卡；初始化完成前，「策略选股」「预测选股」页会显示去初始化的引导横幅。
+
 ### 环境变量
 
 建议先复制示例文件：`cp .env.example .env`。`.env` 已被 Git 忽略，真实 Token 不应写入 README、Issue、日志或提交历史。
@@ -586,9 +616,9 @@ CI 使用 `requirements-ci.txt` 执行基础单元/API 回归；只有模型代�
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `18890` | 服务端口，可通过环境变量覆盖 |
-| `HOST` | `0.0.0.0` | 监听地址 |
+| `HOST` | `0.0.0.0` | 监听地址（`.env.example` 建议值 `127.0.0.1`；Docker 内固定 `0.0.0.0`，暴露面由 compose 端口映射控制） |
 | `RELOAD` | `0` | 热重载（开发模式设为 `1`） |
-| `ENABLE_TUSHARE` | `true` | 是否启用 Tushare 主源；设为 `false` 可强制使用既有降级链路 |
+| `ENABLE_TUSHARE` | `false`（示例文件默认） | 是否启用 Tushare 兜底源；不配置时系统通过东财 / 新浪完整运行 |
 | `TUSHARE_TOKEN` | — | 可选 Tushare Pro Token；留空时系统仍可通过东财 / 新浪运行 |
 | `ENABLE_LIVE_MARKET_DATA` | `true` | 是否允许实时外部行情请求；CI / 离线环境设为 `false` 时快速使用本地缓存 |
 | `PYTHON_BIN` | 自动探测 arm64 Python | 启动服务使用的 Python 可执行文件，必须是 arm64 Python 3.11+；默认优先 `$HOME/arm-python/python/bin/python3.11`、`/opt/homebrew/bin/python3.11` |
@@ -691,6 +721,7 @@ python3 scripts/repair_market_cache.py
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/predict/kronos/status` | Kronos 模型加载状态（`loaded` / `loading`，前端徽标数据源） |
 | GET | `/api/predict/{symbol}/kronos` | K 线预测（`lookback`=30, `horizon`=3） |
 | GET | `/api/predict-funnel` | 预测选股快照（概念板块→成分股→Kronos；东财接口带重试，仍失败时降级同花顺概念名，见 `meta.concept_board_source`：`em` / `ths_names`） |
 | POST | `/api/predict-funnel/trigger` | 手动触发预测选股任务 |
@@ -705,6 +736,7 @@ python3 scripts/repair_market_cache.py
 | POST | `/api/jobs/kline-cache/sync` | 提交全量补缺后台任务（202 Accepted） |
 | POST | `/api/jobs/kline-cache/incremental-sync` | 提交增量同步后台任务（202 Accepted） |
 | POST | `/api/jobs/kline-cache/batch-incremental-sync` | 按日期范围批量提交增量同步后台任务（202 Accepted） |
+| POST | `/api/jobs/kline-cache/initialize` | 冷启动一键初始化：回补全市场近 `window_days`（默认120，30~365）个自然日K线，返回 `already_initialized` 标志（202 Accepted） |
 | POST | `/api/jobs/kline-cache/check` | 完整性检查 |
 | GET | `/api/jobs/kline-cache/stats` | 数据库统计 |
 | GET | `/api/jobs/kline-cache/status` | 同步状态 |

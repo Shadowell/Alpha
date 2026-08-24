@@ -49,6 +49,10 @@ class KronosPredictService:
     def is_loaded(self) -> bool:
         return self._predictor is not None
 
+    def status(self) -> dict:
+        """模型加载状态（供前端徽标与 /api/predict/kronos/status 使用）。"""
+        return {"loaded": self.is_loaded(), "loading": bool(self._loading)}
+
     def get_device(self) -> str:
         return self._device
 
