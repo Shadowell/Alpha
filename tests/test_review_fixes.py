@@ -41,6 +41,21 @@ class TestWriteAccessGuard:
         finally:
             monkeypatch.delenv("ALPHA_WRITE_TOKEN", raising=False)
 
+    def test_trust_edge_allows_natted_source(self, monkeypatch):
+        # Docker 端口发布场景：来源是网桥网关，非回环；信任边界时放行
+        monkeypatch.delenv("ALPHA_WRITE_TOKEN", raising=False)
+        assert write_access_decision(method="POST", client_host="172.18.0.1", header_token=None, trust_edge=True) is None
+
+    def test_no_trust_edge_rejects_bridge_gateway(self, monkeypatch):
+        monkeypatch.delenv("ALPHA_TRUST_EDGE", raising=False)
+        monkeypatch.delenv("ALPHA_WRITE_TOKEN", raising=False)
+        assert write_access_decision(method="POST", client_host="172.18.0.1", header_token=None, trust_edge=False) == "non_loopback_without_token"
+
+    def test_trust_edge_env_read(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_TRUST_EDGE", "1")
+        monkeypatch.delenv("ALPHA_WRITE_TOKEN", raising=False)
+        assert write_access_decision(method="POST", client_host="172.18.0.1", header_token=None) is None
+
 
 # ── notice_llm ────────────────────────────────────────────────
 

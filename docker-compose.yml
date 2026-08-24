@@ -13,6 +13,10 @@ services:
       # 容器内必须绑 0.0.0.0（宿主机暴露面由上面的端口映射控制）
       HOST: 0.0.0.0
       PORT: "18888"
+      # 写防护适配：经 docker-proxy NAT 后容器内看不到真实来源 IP，
+      # 信任宿主机的端口绑定（默认仅 127.0.0.1）作为访问边界。
+      # ⚠️ 若把端口映射改为 "18888:18888" 暴露到局域网，请删除此项并改配 ALPHA_WRITE_TOKEN。
+      ALPHA_TRUST_EDGE: "1"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
