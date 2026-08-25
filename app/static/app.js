@@ -3743,11 +3743,19 @@ function _renderStrategyMeta() {
   if (btnSetDefault) btnSetDefault.disabled = !draft.id || draft.is_default;
 }
 
+const SC_CAT_ICONS = {
+  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  price: '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.83z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+  volume: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+  pattern: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  trend: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+};
+
 function _renderRulesList() {
   const root = document.getElementById('scRulesList');
   if (!root) return;
   const draft = strategyCenterState.editing;
-  if (!draft) { root.innerHTML = '<div class="sc-empty">请先选择或新建策略</div>'; return; }
+  if (!draft) { root.innerHTML = '<div class="sc-empty">请先选择或新建策略</div>'; _updateRulesSummary(); return; }
   const specsMap = {};
   strategyCenterState.rules.forEach((s) => { specsMap[s.code] = s; });
 
@@ -3790,26 +3798,34 @@ function _renderRulesList() {
       }).join('');
       return `
         <div class="sc-rule-card ${ref.enabled ? 'enabled' : ''}" data-code="${spec.code}">
-          <div class="sc-rule-head">
-            <label class="sc-rule-toggle">
+          <div class="sc-rule-main">
+            <label class="sc-switch" title="${ref.enabled ? '点击停用' : '点击启用'}">
               <input type="checkbox" class="sc-rule-enabled" data-code="${spec.code}" ${ref.enabled ? 'checked' : ''} />
-              <span class="sc-rule-title">${esc(spec.title)}</span>
+              <span class="sc-switch-track"><span class="sc-switch-thumb"></span></span>
             </label>
-            <span class="sc-rule-cat">${esc(catTitles[cat] || cat)}</span>
+            <div class="sc-rule-info">
+              <span class="sc-rule-title">${esc(spec.title)}</span>
+              <span class="sc-rule-desc">${esc(spec.description || '')}</span>
+            </div>
           </div>
-          <div class="sc-rule-desc">${esc(spec.description || '')}</div>
-          <div class="sc-rule-params">${paramsHtml || '<span class="muted">此规则无参数</span>'}</div>
+          <div class="sc-rule-params">${paramsHtml || '<span class="sc-rule-noparam">无参数</span>'}</div>
         </div>
       `;
     }).join('');
     return `
-      <div class="sc-rule-group">
-        <div class="sc-rule-group-title">${esc(catTitles[cat] || cat)}</div>
+      <section class="sc-rule-group">
+        <header class="sc-rule-group-head">
+          <span class="sc-rule-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${SC_CAT_ICONS[cat] || ''}</svg></span>
+          <span class="sc-rule-group-name">${esc(catTitles[cat] || cat)}</span>
+          <span class="sc-rule-group-count" data-cat="${cat}"></span>
+          <span class="sc-rule-group-line"></span>
+        </header>
         <div class="sc-rule-group-body">${cards}</div>
-      </div>`;
+      </section>`;
   }).join('');
 
   root.innerHTML = html;
+  _updateRuleGroupCounts(root);
 
   root.querySelectorAll('.sc-rule-enabled').forEach((cb) => {
     cb.onchange = () => {
@@ -3818,7 +3834,12 @@ function _renderRulesList() {
       if (!ref) return;
       ref.enabled = cb.checked;
       const card = root.querySelector(`.sc-rule-card[data-code="${code}"]`);
-      if (card) card.classList.toggle('enabled', cb.checked);
+      if (card) {
+        card.classList.toggle('enabled', cb.checked);
+        const sw = card.querySelector('.sc-switch');
+        if (sw) sw.title = cb.checked ? '点击停用' : '点击启用';
+      }
+      _updateRuleGroupCounts(root);
     };
   });
   root.querySelectorAll('.sc-param-input, .sc-param-bool input').forEach((el) => {
@@ -3835,6 +3856,31 @@ function _renderRulesList() {
       ref.params[key] = val;
     };
   });
+}
+
+function _updateRuleGroupCounts(root) {
+  const draft = strategyCenterState.editing;
+  root.querySelectorAll('.sc-rule-group-count').forEach((pill) => {
+    const cat = pill.getAttribute('data-cat');
+    const specs = strategyCenterState.rules.filter((s) => s.category === cat);
+    const n = !draft ? 0 : specs.filter((s) => {
+      const ref = draft.rules.find((r) => r.rule_code === s.code);
+      return ref ? !!ref.enabled : false;
+    }).length;
+    pill.innerHTML = `<b>${n}</b>&thinsp;/&thinsp;${specs.length}`;
+    pill.classList.toggle('all', specs.length > 0 && n === specs.length);
+  });
+  _updateRulesSummary();
+}
+
+function _updateRulesSummary() {
+  const el = document.getElementById('scRulesSummary');
+  if (!el) return;
+  const draft = strategyCenterState.editing;
+  if (!draft) { el.innerHTML = ''; return; }
+  const total = strategyCenterState.rules.length;
+  const enabled = (draft.rules || []).filter((r) => r.enabled).length;
+  el.innerHTML = `已启用 <b>${enabled}</b> / ${total} 条规则`;
 }
 
 function _ensureRuleRef(code) {

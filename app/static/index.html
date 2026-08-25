@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260424_hotstock_10d" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260825_sc_rules_layout" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -208,8 +208,10 @@
 
             <div class="sc-rules-panel">
               <div class="sc-rules-header">
-                <h4>规则组合（AND：全部启用的规则都必须满足）</h4>
-                <span class="sc-rules-hint">勾选即启用，逐条调整参数</span>
+                <h4>规则组合</h4>
+                <span class="sc-and-badge">AND</span>
+                <span class="sc-rules-hint">全部启用的规则须同时满足 · 开关即启用，行内调整参数</span>
+                <span id="scRulesSummary" class="sc-rules-summary"></span>
               </div>
               <div id="scRulesList" class="sc-rules-list"></div>
             </div>
@@ -559,6 +561,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/app.js?v=20260424_hotstock_10d"></script>
+  <script src="/static/app.js?v=20260825_sc_rules_layout"></script>
 </body>
 </html>
