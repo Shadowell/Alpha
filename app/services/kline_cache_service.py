@@ -418,9 +418,13 @@ class KlineCacheService:
             finished_at=now_cn().isoformat(),
             message=final_msg,
         )
+        # D1×D2 交互修正：目标日本身未收盘定型时（本轮被 skipped），
+        # 即使比例达标也不能封账到 target——否则当晚 run_if_due 会误判
+        # "今日已完成"而跳过盘后同步，当天K线永久缺失。
+        seal_target = sealed and target_trade_date not in unsettled_dates
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
-            success_trade_date=target_trade_date if sealed else state.get("last_success_trade_date"),
+            success_trade_date=target_trade_date if seal_target else state.get("last_success_trade_date"),
             status=final_status,
             symbol_count=completed,
             total_symbols=total,

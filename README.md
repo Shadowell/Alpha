@@ -594,7 +594,11 @@ docker compose up -d    # 构建并后台启动（CPU 版 Torch，无需 GPU）
 docker compose logs -f  # 查看启动日志
 ```
 
-访问 http://127.0.0.1:18888。默认端口映射仅绑定本机回环地址；`data/` 与 `logs/` 通过 volume 挂载持久化，Kronos 权重首次预测时自动下载到容器内缓存。
+访问 http://127.0.0.1:18888。默认端口映射仅绑定本机回环地址；Kronos 权重首次预测时自动下载到 `alpha_hf_cache` 卷。
+
+**数据卷说明**：数据库存放在 `alpha_data` 命名卷（VM 内 ext4）——macOS 上 SQLite 放 VirtioFS bind mount 会在容器异常退出或宿主机并发访问时页级损坏（实测两次）。宿主机取数据用 `docker compose cp alpha:/app/data/xxx.db .`；**禁止**在容器运行时从宿主机直接读写卷内 DB 文件。从裸金属迁移时用 SQLite backup API 复制（`sqlite3.connect(src).backup(dst)`），不要用 `cp` 直接拷贝挂载中的文件。
+
+**自动备份**：每天 20 点后自动对两个库做 SQLite backup API 热备到 `data/backups/`（卷内），每库保留最近 7 份。
 
 ### 零配置体验矩阵
 

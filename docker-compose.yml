@@ -18,7 +18,11 @@ services:
       # ⚠️ 若把端口映射改为 "18888:18888" 暴露到局域网，请删除此项并改配 ALPHA_WRITE_TOKEN。
       ALPHA_TRUST_EDGE: "1"
     volumes:
-      - ./data:/app/data
+      # ⚠️ 数据库必须放命名卷（VM 内 ext4）：macOS VirtioFS bind mount 上的
+      # SQLite WAL 在容器强杀/宿主机并发访问下会页级损坏（已两次实测）。
+      # 宿主机需要取数据时用 `docker compose cp alpha:/app/data/xxx .`，
+      # 禁止在容器运行期间从宿主机直接读写卷内 DB 文件。
+      - alpha_data:/app/data
       - ./logs:/app/logs
       # Kronos 模型权重缓存持久化（否则每次重建容器都重新下载 ~300MB）
       - alpha_hf_cache:/root/.cache/huggingface
@@ -31,4 +35,6 @@ services:
       start_period: 20s
 
 volumes:
+  alpha_data:
+    name: alpha_data # 固定卷名（已迁入 5.19M 行K线数据），避免 compose 加项目前缀生成空卷
   alpha_hf_cache:

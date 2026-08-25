@@ -189,8 +189,9 @@ async def get_cached_kline(symbol: str, days: int = 30):
 
 
 async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
-    """后台循环：每 10 分钟检测是否需要自动同步 K 线，同步后自动检查数据完整性。"""
+    """后台循环：每 10 分钟检测是否需要自动同步 K 线；每天 20 点后自动备份两个 SQLite 库。"""
     await asyncio.sleep(10)
+    last_backup_date: str = ""
     while True:
         try:
             result = await kline_cache_service.run_if_due()
@@ -207,4 +208,54 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
                 print("[kline-cache] sync completion notification skipped")
         except Exception as exc:
             print(f"[kline-cache] error: {exc}")
+
+        # 每日备份：funnel_state 曾因容器异常退出损坏且无备份可回滚，
+        # 故每天收盘后对两个库做一次 sqlite backup API 热备，保留最近 7 份。
+        try:
+            from app.services.time_utils import now_cn as _now_cn
+
+            today = _now_cn().date().isoformat()
+            if _now_cn().hour >= 20 and last_backup_date != today:
+                done = await asyncio.to_thread(_backup_all_sqlite)
+                last_backup_date = today
+                if done:
+                    print(f"[kline-cache] daily sqlite backup done: {done}")
+        except Exception as exc:
+            print(f"[kline-cache] daily backup failed: {exc}")
+
         await asyncio.sleep(600)
+
+
+def _backup_all_sqlite() -> list[str]:
+    import glob as _glob
+    import os as _os
+    import sqlite3 as _sqlite3
+
+    from app.services.time_utils import now_cn
+
+    backed_up: list[str] = []
+    backup_dir = "data/backups"
+    _os.makedirs(backup_dir, exist_ok=True)
+    for src in ("data/funnel_state.db", "data/market_kline.db"):
+        if not _os.path.exists(src):
+            continue
+        stem = _os.path.splitext(_os.path.basename(src))[0]
+        dst = _os.path.join(backup_dir, f"{stem}-{now_cn().strftime('%Y%m%d-%H%M%S')}.db")
+        try:
+            conn = _sqlite3.connect(src, timeout=30)
+            dest = _sqlite3.connect(dst)
+            with dest:
+                conn.backup(dest)
+            dest.close()
+            conn.close()
+            backed_up.append(dst)
+            # 每个库只保留最近 7 份
+            olds = sorted(_glob.glob(_os.path.join(backup_dir, f"{stem}-*.db")))
+            for old in olds[:-7]:
+                try:
+                    _os.remove(old)
+                except OSError:
+                    pass
+        except Exception as exc:
+            print(f"[kline-cache] backup {src} failed: {exc}")
+    return backed_up
