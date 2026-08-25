@@ -109,7 +109,7 @@ async def initialize_kline_cache(window_days: int = 120):
         stats = await asyncio.to_thread(_kline_cache_service.get_stats)
     except Exception:
         stats = {}
-    window = max(30, min(int(window_days), 365))
+    window = max(30, min(int(window_days), 1095))
     payload = _kline_cache_service.enqueue_sync_trade_date(
         trade_date=None,
         force=True,

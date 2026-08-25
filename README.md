@@ -656,6 +656,8 @@ docker compose logs -f  # 查看启动日志
 
 - **盘中不写当日K线**：目标交易日未收盘定型（上海时间 < 15:05）时，增量/全量同步会跳过当日，避免把未完成行情经 `(symbol, trade_date)` 唯一键永久固化；盘后调度（15:20）自动补上。
 - **比例封账**：补缺完成度 ≥ 90% 才写入 `last_success_trade_date`（封账）；未达标记为 `partial` 状态且不封账，次日自动补缺可自愈。同日重试有 30 分钟冷却节流。
+- **报告自动重检**：任何封账成功的同步完成后，服务自动重跑 30 天完整性检查；数据中心对"早于最近同步"的过期报告只显示琥珀色提示，不会拿旧数字误报"严重缺失"。
+- **历史深度**：全量同步 `window_days` 上限 1095 自然日（约 3 年）；一键初始化默认 120 天保证快速冷启动，需要更深历史时手动传大窗口即可。
 - 历史解析缺陷或错误补数可能污染 `data/market_kline.db`。维护命令默认只做只读预检；只有显式传入 `--apply` 才会先通过 SQLite backup API 创建并验证完整备份，再用单一事务清理早于 2000 年或无法解析的交易日期及其关联同步状态。
 
 ```bash
@@ -750,7 +752,7 @@ python3 scripts/repair_market_cache.py
 | POST | `/api/jobs/kline-cache/sync` | 提交全量补缺后台任务（202 Accepted） |
 | POST | `/api/jobs/kline-cache/incremental-sync` | 提交增量同步后台任务（202 Accepted） |
 | POST | `/api/jobs/kline-cache/batch-incremental-sync` | 按日期范围批量提交增量同步后台任务（202 Accepted） |
-| POST | `/api/jobs/kline-cache/initialize` | 冷启动一键初始化：回补全市场近 `window_days`（默认120，30~365）个自然日K线，返回 `already_initialized` 标志（202 Accepted） |
+| POST | `/api/jobs/kline-cache/initialize` | 冷启动一键初始化：回补全市场近 `window_days`（默认120，30~1095，上限约3年）个自然日K线，返回 `already_initialized` 标志（202 Accepted） |
 | POST | `/api/jobs/kline-cache/check` | 完整性检查 |
 | GET | `/api/jobs/kline-cache/stats` | 数据库统计 |
 | GET | `/api/jobs/kline-cache/status` | 同步状态 |

@@ -39,7 +39,7 @@ class KlineCacheService:
         self.store = store or KlineSQLiteStore()
         self.market_data_client = market_data_client or EastmoneyMarketDataClient(store=self.store)
         self.schedule_after = schedule_after
-        self.window_days = max(10, min(window_days, 365))
+        self.window_days = max(10, min(window_days, 1095))  # 最长回溯 3 年
         self._syncing = False
         self._queue: list[tuple[str, dict[str, Any]]] = []
         self._queue_task: asyncio.Task | None = None
@@ -287,7 +287,7 @@ class KlineCacheService:
             )
             return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
 
-        effective_window = max(10, min(window_days if window_days is not None else self.window_days, 365))
+        effective_window = max(10, min(window_days if window_days is not None else self.window_days, 1095))
         trade_dates_list = await self._resolve_trade_dates(target_trade_date, effective_window)
         if not trade_dates_list:
             self.store.set_sync_state(
@@ -432,6 +432,8 @@ class KlineCacheService:
             updated_at=now_cn().isoformat(),
             message=final_msg,
         )
+        if sealed:
+            self._spawn_auto_recheck()
         return {
             "success": completed > 0,
             "sealed": sealed,
@@ -462,6 +464,30 @@ class KlineCacheService:
             return await self._do_incremental_sync(trade_date=trade_date, trigger_mode=trigger_mode)
         finally:
             self._syncing = False
+
+    _auto_check_task: asyncio.Task | None = None
+
+    def _spawn_auto_recheck(self) -> None:
+        """sealed 同步完成后自动重检数据完整性（30 天窗口）。
+
+        此前只有每日自动同步路径会重检，手动/初始化同步后报告停留在同步前，
+        数据中心会拿旧报告显示"严重缺失"误报。任务引用挂在实例上防止被 GC。
+        """
+        if self._auto_check_task is not None and not self._auto_check_task.done():
+            return
+
+        async def _run() -> None:
+            await asyncio.sleep(2)  # 让同步状态先落库
+            try:
+                report = await self.check_data_integrity(days=30)
+                print(
+                    f"[kline-cache] auto integrity check: coverage={report.get('coverage_pct')}% "
+                    f"missing={report.get('total_missing')}"
+                )
+            except Exception as exc:
+                print(f"[kline-cache] auto integrity check failed: {exc}")
+
+        self._auto_check_task = asyncio.create_task(_run())
 
     @staticmethod
     def _seal_decision(completed: int, total: int) -> tuple[str, bool]:
@@ -670,6 +696,8 @@ class KlineCacheService:
             updated_at=now_cn().isoformat(),
             message=final_msg,
         )
+        if sealed:
+            self._spawn_auto_recheck()
         return {
             "success": completed > 0,
             "sealed": sealed,

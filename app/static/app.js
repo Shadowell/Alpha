@@ -736,10 +736,16 @@ function renderDcStats(stats, syncStatus, report) {
   }
 
   const alertBar = document.getElementById('dcAlertBar');
-  if (cov != null && cov < 90) {
+  // 报告过期判定：完整性检查早于最近一次同步完成时间 → 数据已变，旧数字不可信
+  const reportStale = !!(report?.check_time && syncStatus?.updated_at && report.check_time < syncStatus.updated_at);
+  if (cov != null && cov < 90 && !reportStale) {
     alertBar.style.display = '';
     alertBar.className = `dc-alert-bar dc-alert-${health.cls}`;
     alertBar.innerHTML = `<span class="dc-alert-icon">${health.icon}</span>数据覆盖率仅 ${cov.toFixed(1)}%，缺失 ${missing.toLocaleString()} 条，建议执行 <strong>全量补缺</strong>`;
+  } else if (cov != null && cov < 90 && reportStale) {
+    alertBar.style.display = '';
+    alertBar.className = 'dc-alert-bar dc-alert-warning';
+    alertBar.innerHTML = `<span class="dc-alert-icon">▲</span>检查报告已过期（生成于最近同步完成前，当时覆盖率 ${cov.toFixed(1)}%），同步完成后将自动重检`;
   } else {
     alertBar.style.display = 'none';
   }

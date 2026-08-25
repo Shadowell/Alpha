@@ -20,6 +20,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      # Kronos 模型权重缓存持久化（否则每次重建容器都重新下载 ~300MB）
+      - alpha_hf_cache:/root/.cache/huggingface
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/', timeout=5)\""]
@@ -27,3 +29,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+volumes:
+  alpha_hf_cache:
