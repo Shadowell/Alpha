@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  lint:
+    name: Lint and type check
     runs-on: ubuntu-24.04
 
     steps:
@@ -29,6 +30,54 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements*.txt
+            pyproject.toml
+
+      - name: Install lint tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+          pip check
+
+      - name: Ruff lint
+        run: ruff check app tests
+
+      - name: Ruff format check (migrated modules)
+        # Repo-wide `ruff format` is pending; the gate covers the SQLite/Kronos/
+        # deployment modules and their tests that are already normalized.
+        run: |
+          ruff format --check \
+            app/services/deployment_guard.py \
+            app/services/sqlite_migrations.py \
+            app/services/sqlite_store.py \
+            app/services/kline_store.py \
+            app/services/paper_trading.py \
+            app/services/kronos_predict_service.py \
+            tests/test_deployment_guard.py \
+            tests/test_sqlite_migrations.py \
+            tests/test_sqlite_store.py \
+            tests/test_kline_store.py \
+            tests/test_kronos_cache.py \
+            tests/test_paper_trading_settings.py
+
+      - name: Mypy (scoped type gate)
+        run: python -m mypy
+
+  test:
+    name: Pytest and coverage
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            pyproject.toml
 
       - name: Install dependencies
         run: |
@@ -40,6 +89,7 @@ jobs:
         env:
           ENABLE_TUSHARE: "false"
           ENABLE_LIVE_MARKET_DATA: "false"
+          ALPHA_EDGE_EXPOSURE: "loopback"
         run: |
           nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 18890 > /tmp/alpha-api.log 2>&1 &
           echo $! > /tmp/alpha-api.pid
@@ -52,9 +102,26 @@ jobs:
           cat /tmp/alpha-api.log
           exit 1
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests with coverage
+        run: |
+          python -m pytest -q \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=45
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
 
       - name: Show API log on failure
         if: failure()
         run: tail -n 200 /tmp/alpha-api.log || true
+
+      - name: Stop API
+        if: always()
+        run: kill "$(cat /tmp/alpha-api.pid)" 2>/dev/null || true
