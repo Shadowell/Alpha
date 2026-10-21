@@ -135,7 +135,18 @@ async def get_kline_data_source_status():
 
 @router.get("/jobs/kline-cache/progress")
 async def get_kline_cache_progress():
-    return _kline_cache_service.get_sync_progress()
+    payload = _kline_cache_service.get_sync_progress()
+    task = _kline_cache_service._queue_task
+    payload.update(
+        {
+            "queue_size": len(_kline_cache_service._queue),
+            "syncing": _kline_cache_service._syncing,
+            "queue_task": str(task) if task is not None else "",
+            "queue_task_done": bool(task is not None and task.done()),
+            "event_loop_tasks": len(asyncio.all_tasks()),
+        }
+    )
+    return payload
 
 
 @router.get("/jobs/kline-cache/logs")

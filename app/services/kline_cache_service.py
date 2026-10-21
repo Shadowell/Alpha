@@ -131,8 +131,14 @@ class KlineCacheService:
     def _enqueue_job(self, job_type: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         self._queue.append((job_type, kwargs))
         queue_size = len(self._queue)
-        if self._queue_task is None or self._queue_task.done():
+        created = self._queue_task is None or self._queue_task.done()
+        if created:
             self._queue_task = asyncio.create_task(self._run_queue())
+        print(
+            f"[kline-cache] enqueue {job_type} kwargs={kwargs} "
+            f"queue_size={queue_size} syncing={self._syncing} "
+            f"task_created={created} task={self._queue_task}"
+        )
         return {
             "success": True,
             "accepted": True,
@@ -142,16 +148,20 @@ class KlineCacheService:
         }
 
     async def _run_queue(self) -> None:
+        print(f"[kline-cache] queue worker start size={len(self._queue)}")
         while self._queue:
             job_type, kwargs = self._queue.pop(0)
+            print(f"[kline-cache] queue run {job_type} kwargs={kwargs}")
             try:
                 if job_type == "incremental":
-                    await self.incremental_sync(**kwargs)
+                    result = await self.incremental_sync(**kwargs)
                 else:
-                    await self.sync_trade_date(**kwargs)
+                    result = await self.sync_trade_date(**kwargs)
+                print(f"[kline-cache] queue done {job_type} result={result}")
             except Exception as exc:
                 print(f"[kline-cache] queued {job_type} sync failed: {exc}")
                 self._fail_stale_running_tasks(f"同步异常中断: {str(exc)[:160]}")
+        print("[kline-cache] queue worker end")
 
     @staticmethod
     def _weekdays_between(start_date: str, end_date: str, max_days: int = 180) -> list[str]:
