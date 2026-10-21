@@ -1,21 +1,27 @@
 """K 线同步模块 — 缓存同步、定时任务。
 
 路由前缀: /api  (由 main.py include 时指定)
+服务通过 app.state.container 依赖注入；`init_kline_router()` 保留给外部/测试兼容。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.container import ServiceContainer
+from app.dependencies import get_container
 from app.services.data_provider import AkshareDataProvider, normalize_symbol
 from app.services.kline_cache_service import KlineCacheService
 
+log = logging.getLogger("routers.kline")
+
 router = APIRouter(tags=["K线同步"])
 
-# 由 init_kline_router() 注入
+# 兼容外部显式注入（旧 main.py / 脚本）
 _provider: AkshareDataProvider | None = None
 _kline_cache_service: KlineCacheService | None = None
 
@@ -24,19 +30,24 @@ def init_kline_router(
     provider: AkshareDataProvider,
     kline_cache_service: KlineCacheService,
 ) -> APIRouter:
-    """注入依赖并返回 router，供 main.py 调用。"""
+    """注入依赖并返回 router（兼容旧调用方式）。"""
     global _provider, _kline_cache_service
     _provider = provider
     _kline_cache_service = kline_cache_service
     return router
 
 
+def _service(container: ServiceContainer) -> KlineCacheService:
+    return _kline_cache_service or container.kline_cache_service
+
+
 # ── 同步任务路由 ──────────────────────────────────────────
 
 
-def _checkpoint_sqlite_for_shutdown() -> list[dict[str, str]]:
+def _checkpoint_sqlite_for_shutdown(paths: list[str] | None = None) -> list[dict[str, str]]:
+    targets = paths or ["data/funnel_state.db", "data/market_kline.db"]
     results: list[dict[str, str]] = []
-    for rel in ("data/funnel_state.db", "data/market_kline.db"):
+    for rel in targets:
         path = Path(rel)
         if not path.exists():
             continue
@@ -45,17 +56,21 @@ def _checkpoint_sqlite_for_shutdown() -> list[dict[str, str]]:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.close()
             results.append({"path": rel, "status": "ok"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — 逐库上报失败
             results.append({"path": rel, "status": "failed", "error": str(exc)})
     return results
 
 
 @router.post("/admin/shutdown-prepare")
-async def admin_shutdown_prepare(reason: str = "restart"):
+async def admin_shutdown_prepare(
+    reason: str = "restart",
+    container: ServiceContainer = Depends(get_container),
+):
+    paths = [str(path) for path in container.db_paths]
     return {
         "success": True,
         "reason": reason,
-        "sqlite": await asyncio.to_thread(_checkpoint_sqlite_for_shutdown),
+        "sqlite": await asyncio.to_thread(_checkpoint_sqlite_for_shutdown, paths),
     }
 
 
@@ -65,22 +80,22 @@ async def run_kline_cache_sync(
     force: bool = False,
     trigger_mode: str = "manual",
     window_days: int | None = None,
+    container: ServiceContainer = Depends(get_container),
 ):
-    payload = _kline_cache_service.enqueue_sync_trade_date(
+    return _service(container).enqueue_sync_trade_date(
         trade_date=trade_date, force=force, trigger_mode=trigger_mode, window_days=window_days,
     )
-    return payload
 
 
 @router.post("/jobs/kline-cache/incremental-sync", status_code=status.HTTP_202_ACCEPTED)
 async def run_kline_incremental_sync(
     trade_date: str | None = None,
     trigger_mode: str = "manual",
+    container: ServiceContainer = Depends(get_container),
 ):
-    payload = _kline_cache_service.enqueue_incremental_sync(
+    return _service(container).enqueue_incremental_sync(
         trade_date=trade_date, trigger_mode=trigger_mode,
     )
-    return payload
 
 
 @router.post("/jobs/kline-cache/batch-incremental-sync", status_code=status.HTTP_202_ACCEPTED)
@@ -88,8 +103,9 @@ async def run_kline_batch_incremental_sync(
     start_date: str,
     end_date: str,
     trigger_mode: str = "manual",
+    container: ServiceContainer = Depends(get_container),
 ):
-    payload = await _kline_cache_service.enqueue_incremental_range(
+    payload = await _service(container).enqueue_incremental_range(
         start_date=start_date,
         end_date=end_date,
         trigger_mode=trigger_mode,
@@ -100,17 +116,18 @@ async def run_kline_batch_incremental_sync(
 
 
 @router.post("/jobs/kline-cache/initialize", status_code=status.HTTP_202_ACCEPTED)
-async def initialize_kline_cache(window_days: int = 120):
-    """冷启动一键初始化：回补全市场近 N 个自然日的K线历史。
-
-    空库时前端引导入口调用；复用 full 同步队列，进度/日志与数据中心现有展示兼容。
-    """
+async def initialize_kline_cache(
+    window_days: int = 120,
+    container: ServiceContainer = Depends(get_container),
+):
+    """冷启动一键初始化：回补全市场近 N 个自然日的K线历史。"""
+    service = _service(container)
     try:
-        stats = await asyncio.to_thread(_kline_cache_service.get_stats)
-    except Exception:
+        stats = await asyncio.to_thread(service.get_stats)
+    except Exception:  # noqa: BLE001 — 统计失败不阻断初始化
         stats = {}
     window = max(30, min(int(window_days), 1095))
-    payload = _kline_cache_service.enqueue_sync_trade_date(
+    payload = service.enqueue_sync_trade_date(
         trade_date=None,
         force=True,
         trigger_mode="initialize",
@@ -124,23 +141,24 @@ async def initialize_kline_cache(window_days: int = 120):
 
 
 @router.get("/jobs/kline-cache/status")
-async def get_kline_cache_status():
-    return _kline_cache_service.get_sync_state()
+async def get_kline_cache_status(container: ServiceContainer = Depends(get_container)):
+    return _service(container).get_sync_state()
 
 
 @router.get("/jobs/kline-cache/data-source")
-async def get_kline_data_source_status():
-    return _kline_cache_service.get_data_source_status()
+async def get_kline_data_source_status(container: ServiceContainer = Depends(get_container)):
+    return _service(container).get_data_source_status()
 
 
 @router.get("/jobs/kline-cache/progress")
-async def get_kline_cache_progress():
-    payload = _kline_cache_service.get_sync_progress()
-    task = _kline_cache_service._queue_task
+async def get_kline_cache_progress(container: ServiceContainer = Depends(get_container)):
+    service = _service(container)
+    payload = service.get_sync_progress()
+    task = service._queue_task
     payload.update(
         {
-            "queue_size": len(_kline_cache_service._queue),
-            "syncing": _kline_cache_service._syncing,
+            "queue_size": len(service._queue),
+            "syncing": service._syncing,
             "queue_task": str(task) if task is not None else "",
             "queue_task_done": bool(task is not None and task.done()),
             "event_loop_tasks": len(asyncio.all_tasks()),
@@ -150,32 +168,38 @@ async def get_kline_cache_progress():
 
 
 @router.get("/jobs/kline-cache/logs")
-async def get_kline_cache_logs(page: int = 1, page_size: int = 20):
-    return _kline_cache_service.list_sync_logs(page=page, page_size=page_size)
+async def get_kline_cache_logs(
+    page: int = 1,
+    page_size: int = 20,
+    container: ServiceContainer = Depends(get_container),
+):
+    return _service(container).list_sync_logs(page=page, page_size=page_size)
 
 
 @router.get("/jobs/kline-cache/logs/{task_id}")
-async def get_kline_cache_log_detail(task_id: str):
-    payload = _kline_cache_service.get_sync_log_detail(task_id)
+async def get_kline_cache_log_detail(
+    task_id: str,
+    container: ServiceContainer = Depends(get_container),
+):
+    payload = _service(container).get_sync_log_detail(task_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="task not found")
     return payload
 
 
 @router.get("/jobs/kline-cache/stats")
-async def get_kline_cache_stats():
-    return _kline_cache_service.get_stats()
+async def get_kline_cache_stats(container: ServiceContainer = Depends(get_container)):
+    return _service(container).get_stats()
 
 
 @router.post("/jobs/kline-cache/check")
-async def run_kline_data_check():
-    report = await _kline_cache_service.check_data_integrity(days=30)
-    return report
+async def run_kline_data_check(container: ServiceContainer = Depends(get_container)):
+    return await _service(container).check_data_integrity(days=30)
 
 
 @router.get("/jobs/kline-cache/report")
-async def get_kline_check_report():
-    report = _kline_cache_service.get_latest_check_report()
+async def get_kline_check_report(container: ServiceContainer = Depends(get_container)):
+    report = _service(container).get_latest_check_report()
     if report is None:
         return {"status": "none", "message": "暂无检查报告"}
     return report
@@ -185,9 +209,13 @@ async def get_kline_check_report():
 
 
 @router.get("/kline/{symbol}")
-async def get_cached_kline(symbol: str, days: int = 30):
+async def get_cached_kline(
+    symbol: str,
+    days: int = 30,
+    container: ServiceContainer = Depends(get_container),
+):
     clean_symbol = normalize_symbol(symbol)
-    items = _kline_cache_service.get_kline(symbol=clean_symbol, days=days)
+    items = _service(container).get_kline(symbol=clean_symbol, days=days)
     return {
         "symbol": clean_symbol,
         "days": max(1, min(days, 365)),
@@ -291,18 +319,18 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
         try:
             result = await kline_cache_service.run_if_due()
             if result is not None:
-                print(f"[kline-cache] daily sync completed: {result.get('message')}")
-
-                report = None
+                log.info("daily sync completed: %s", result.get("message"))
                 try:
                     report = await kline_cache_service.check_data_integrity(days=30)
-                    print(f"[kline-cache] integrity check: {report.get('status')} coverage={report.get('coverage_pct')}%")
-                except Exception as chk_exc:
-                    print(f"[kline-cache] integrity check failed: {chk_exc}")
-
-                print("[kline-cache] sync completion notification skipped")
-        except Exception as exc:
-            print(f"[kline-cache] error: {exc}")
+                    log.info(
+                        "integrity check: %s coverage=%s%%",
+                        report.get("status"),
+                        report.get("coverage_pct"),
+                    )
+                except Exception as chk_exc:  # noqa: BLE001 — 完整性检查失败不阻断同步
+                    log.warning("integrity check failed: %s", chk_exc)
+        except Exception as exc:  # noqa: BLE001 — 循环必须存活
+            log.exception("kline cache loop error: %s", exc)
 
         # 每日备份：funnel_state 曾因容器异常退出损坏且无备份可回滚，
         # 故每天收盘后对两个库做一次 sqlite backup API 热备，保留最近 7 份。
@@ -314,9 +342,9 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
                 done = await asyncio.to_thread(_backup_all_sqlite)
                 last_backup_date = today
                 if done:
-                    print(f"[kline-cache] daily sqlite backup done: {done}")
-        except Exception as exc:
-            print(f"[kline-cache] daily backup failed: {exc}")
+                    log.info("daily sqlite backup done: %s", done)
+        except Exception as exc:  # noqa: BLE001 — 备份失败不影响主循环
+            log.warning("daily backup failed: %s", exc)
 
         await asyncio.sleep(600)
 
@@ -380,6 +408,6 @@ def _backup_all_sqlite() -> list[str]:
                     _os.remove(old)
                 except OSError:
                     pass
-        except Exception as exc:
-            print(f"[kline-cache] backup {src} failed: {exc}")
+        except Exception as exc:  # noqa: BLE001 — 单库备份失败继续下一个
+            log.warning("backup %s failed: %s", src, exc)
     return backed_up

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS
+from app.services.strategy_rules import RULE_REGISTRY, RuleParam, RuleSpec
 
 PoolName = Literal["candidate", "focus", "buy"]
 
@@ -80,10 +81,10 @@ class HotStocksResponse(BaseModel):
 
 
 class MovePoolRequest(BaseModel):
-    symbol: str
+    symbol: str = Field(min_length=1, max_length=32)
     target_pool: PoolName
     source_pool: PoolName | None = None
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class MovePoolResponse(BaseModel):
@@ -160,3 +161,198 @@ DEFAULT_EMPTY_FUNNEL = FunnelResponse(
     pools={POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []},
     stats={"candidate": 0, "focus": 0, "buy": 0},
 )
+
+
+# ─────────────────────────── 写接口请求模型 ───────────────────────────
+# 说明：config 类接口允许未知字段透传（extra="allow"），但已知字段有严格类型/范围；
+# 其余写接口对未声明字段忽略，避免前端历史 payload 直接 422。
+
+
+def _coerce_rule_param(spec: RuleSpec, param: RuleParam, value: Any) -> Any:
+    """按 RULE_REGISTRY 的 RuleParam schema 校验单个参数并做规范化。"""
+    key = param.key
+    if param.type == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(f"规则 {spec.code} 参数 {key} 必须为布尔值")
+        return value
+    if param.type == "text":
+        if not isinstance(value, str):
+            raise ValueError(f"规则 {spec.code} 参数 {key} 必须为字符串")
+        if spec.code == "ma_bull_stack" and key == "periods":
+            parts = [p.strip() for p in value.split(",") if p.strip()]
+            try:
+                periods = [int(p) for p in parts]
+            except ValueError as exc:
+                raise ValueError("规则 ma_bull_stack 参数 periods 需为逗号分隔的整数，例如 5,10,20") from exc
+            if len(periods) < 2 or any(p <= 0 for p in periods):
+                raise ValueError("规则 ma_bull_stack 参数 periods 至少需要 2 个正整数")
+        return value
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"规则 {spec.code} 参数 {key} 必须为数字")
+    if param.type == "int":
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"规则 {spec.code} 参数 {key} 必须为整数")
+        number: float | int = int(value)
+    else:
+        number = float(value)
+    if param.min is not None and number < param.min:
+        raise ValueError(f"规则 {spec.code} 参数 {key} 不能小于 {param.min}")
+    if param.max is not None and number > param.max:
+        raise ValueError(f"规则 {spec.code} 参数 {key} 不能大于 {param.max}")
+    return number
+
+
+class StrategyRuleIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    rule_code: str = Field(min_length=1, max_length=64)
+    enabled: bool = True
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_params(self) -> "StrategyRuleIn":
+        spec = RULE_REGISTRY.get(self.rule_code)
+        if spec is None:
+            raise ValueError(f"未知规则: {self.rule_code}")
+        allowed = {p.key: p for p in spec.params}
+        unknown = sorted(set(self.params) - set(allowed))
+        if unknown:
+            raise ValueError(f"规则 {self.rule_code} 不支持参数: {', '.join(unknown)}")
+        for key, value in list(self.params.items()):
+            self.params[key] = _coerce_rule_param(spec, allowed[key], value)
+        return self
+
+
+class CustomStrategyUpsert(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = Field(default=None, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=2000)
+    rules: list[StrategyRuleIn] = Field(min_length=1)
+    is_default: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("策略名称不能为空")
+        return cleaned
+
+    @field_validator("id")
+    @classmethod
+    def _empty_id_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class PredictFunnelConfigUpdate(BaseModel):
+    """预测选股配置（仅更新显式传入字段）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    top_k_boards: int | None = Field(default=None, ge=1, le=50)
+    top_m_stocks: int | None = Field(default=None, ge=1, le=50)
+    threshold_candidate: float | None = Field(default=None, ge=0, le=100)
+    threshold_focus: float | None = Field(default=None, ge=0, le=100)
+    threshold_buy: float | None = Field(default=None, ge=0, le=100)
+    horizon: int | None = Field(default=None, ge=1, le=10)
+    lookback: int | None = Field(default=None, ge=30, le=240)
+    feishu_enabled: bool | None = None
+    auto_after_close: bool | None = None
+
+
+class HotStockAIConfigUpdate(BaseModel):
+    """热门股票智能分析配置（仅更新显式传入字段）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    top_n: int | None = Field(default=None, ge=5, le=30)
+    lookback: int | None = Field(default=None, ge=30, le=240)
+    horizon: int | None = Field(default=None, ge=1, le=5)
+    threshold_candidate: float | None = Field(default=None, ge=0, le=100)
+    threshold_focus: float | None = Field(default=None, ge=0, le=100)
+    threshold_buy: float | None = Field(default=None, ge=0, le=100)
+    max_buy_pool_size: int | None = Field(default=None, ge=1, le=10)
+    auto_refresh_enabled: bool | None = None
+    refresh_interval_minutes: int | None = Field(default=None, ge=1, le=60)
+    use_kronos: bool | None = None
+    tradingagents_enabled: bool | None = None
+    tradingagents_top_n: int | None = Field(default=None, ge=0, le=20)
+    tradingagents_timeout_seconds: int | None = Field(default=None, ge=30, le=900)
+    tradingagents_provider: str | None = Field(default=None, max_length=64)
+    tradingagents_quick_model: str | None = Field(default=None, max_length=128)
+    tradingagents_deep_model: str | None = Field(default=None, max_length=128)
+
+
+class AgentRunRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    task_type: Literal["daily_review", "notice_review", "full_diagnosis"] = "daily_review"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class MonitorConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    system_prompt: str | None = Field(default=None, max_length=20000)
+    interval_minutes: int | None = Field(default=None, ge=1, le=240)
+    enabled: bool | None = None
+
+
+class PaperBuyRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    symbol: str = Field(min_length=1, max_length=32)
+    name: str | None = Field(default=None, max_length=64)
+    qty: int = Field(default=100, gt=0, le=1_000_000)
+    note: str = Field(default="", max_length=500)
+
+
+class PaperSellRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    position_id: str = Field(min_length=1, max_length=64)
+    note: str = Field(default="", max_length=500)
+
+
+class PaperSettingsUpdate(BaseModel):
+    """模拟盘费用参数：费率 [0,1]，最低佣金 [0,100]，滑点 [0,0.1]。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    commission_rate: float | None = Field(default=None, ge=0, le=1)
+    min_commission: float | None = Field(default=None, ge=0, le=100)
+    stamp_tax_rate: float | None = Field(default=None, ge=0, le=1)
+    slippage_rate: float | None = Field(default=None, ge=0, le=0.1)
+
+
+JobStatus = Literal["queued", "running", "succeeded", "failed", "interrupted"]
+
+
+class JobAccepted(BaseModel):
+    job_id: str
+    kind: str
+    status: JobStatus
+    poll_url: str
+
+
+class JobOut(BaseModel):
+    id: str
+    kind: str
+    status: JobStatus
+    progress: dict[str, Any] = Field(default_factory=dict)
+    result: Any | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    finished_at: str | None = None
+
+
+class JobListOut(BaseModel):
+    items: list[JobOut] = Field(default_factory=list)
+    total: int = 0

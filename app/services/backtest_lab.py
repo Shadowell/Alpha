@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.time_utils import now_cn
+
+log = logging.getLogger("backtest")
 
 
 @dataclass
@@ -173,7 +176,8 @@ class BacktestLab:
                             "is_limit_up": bool(is_lu),
                         })
                     return hits
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — 单只股票回测失败跳过
+                    log.debug("backtest %s failed: %s", sym, exc)
                     return []
 
             async def _bounded(sym: str):
@@ -285,7 +289,8 @@ class BacktestLab:
                     if self._name_lookup is not None:
                         try:
                             name = self._name_lookup(sym) or ""
-                        except Exception:
+                        except Exception as exc:  # noqa: BLE001
+                            log.debug("name lookup %s failed: %s", sym, exc)
                             name = ""
                     hits: list[dict] = []
                     start_anchor = max(window, len(rows) - history_days)
@@ -350,7 +355,8 @@ class BacktestLab:
                             "reason": exit_reason,
                         })
                     return hits
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 — 单只股票回测失败跳过
+                    log.debug("custom backtest %s failed: %s", sym, exc)
                     return []
 
             async def _bounded(sym: str):
