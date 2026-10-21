@@ -225,10 +225,15 @@ async def get_cached_kline(
 
 
 @router.get("/kline/{symbol}/extras")
-async def get_cached_kline_extras(symbol: str, days: int = 30):
+async def get_cached_kline_extras(
+    symbol: str,
+    days: int = 30,
+    container: ServiceContainer = Depends(get_container),
+):
     clean_symbol = normalize_symbol(symbol)
+    service = _service(container)
     items = await asyncio.to_thread(
-        _kline_cache_service.store.get_daily_extras, clean_symbol, days
+        service.store.get_daily_extras, clean_symbol, days
     )
     return {
         "symbol": clean_symbol,
@@ -239,10 +244,15 @@ async def get_cached_kline_extras(symbol: str, days: int = 30):
 
 
 @router.get("/kline/{symbol}/moneyflow")
-async def get_cached_kline_moneyflow(symbol: str, days: int = 30):
+async def get_cached_kline_moneyflow(
+    symbol: str,
+    days: int = 30,
+    container: ServiceContainer = Depends(get_container),
+):
     clean_symbol = normalize_symbol(symbol)
+    service = _service(container)
     items = await asyncio.to_thread(
-        _kline_cache_service.store.get_moneyflow, clean_symbol, days
+        service.store.get_moneyflow, clean_symbol, days
     )
     return {
         "symbol": clean_symbol,
@@ -257,10 +267,12 @@ async def get_cached_kline_minute(
     symbol: str,
     trade_date: str | None = None,
     limit: int = 500,
+    container: ServiceContainer = Depends(get_container),
 ):
     clean_symbol = normalize_symbol(symbol)
+    service = _service(container)
     items = await asyncio.to_thread(
-        _kline_cache_service.store.get_minute_bars,
+        service.store.get_minute_bars,
         clean_symbol,
         trade_date,
         limit,
@@ -274,17 +286,26 @@ async def get_cached_kline_minute(
 
 
 @router.get("/market/capital-flow")
-async def get_market_capital_flow(days: int = 30):
+async def get_market_capital_flow(
+    days: int = 30,
+    container: ServiceContainer = Depends(get_container),
+):
+    service = _service(container)
     items = await asyncio.to_thread(
-        _kline_cache_service.store.get_market_capital_flow, days
+        service.store.get_market_capital_flow, days
     )
     return {"days": max(1, min(days, 365)), "count": len(items), "items": items}
 
 
 @router.get("/market/index-daily")
-async def get_market_index_daily(ts_code: str = "000001.SH", days: int = 30):
+async def get_market_index_daily(
+    ts_code: str = "000001.SH",
+    days: int = 30,
+    container: ServiceContainer = Depends(get_container),
+):
+    service = _service(container)
     items = await asyncio.to_thread(
-        _kline_cache_service.store.get_index_daily, ts_code, days
+        service.store.get_index_daily, ts_code, days
     )
     return {
         "ts_code": ts_code,
@@ -295,14 +316,20 @@ async def get_market_index_daily(ts_code: str = "000001.SH", days: int = 30):
 
 
 @router.get("/jobs/kline-cache/enrichment-status")
-async def get_enrichment_status():
-    items = await asyncio.to_thread(_kline_cache_service.store.get_enrichment_overview)
+async def get_enrichment_status(
+    container: ServiceContainer = Depends(get_container),
+):
+    service = _service(container)
+    items = await asyncio.to_thread(service.store.get_enrichment_overview)
     return {"count": len(items), "items": items}
 
 
 @router.post("/jobs/kline-cache/enrichment-sync")
-async def run_enrichment_sync(trade_date: str | None = None):
-    result = await _kline_cache_service.sync_enrichment(
+async def run_enrichment_sync(
+    trade_date: str | None = None,
+    container: ServiceContainer = Depends(get_container),
+):
+    result = await _service(container).sync_enrichment(
         trade_date=trade_date, trigger_mode="manual"
     )
     return result
