@@ -97,3 +97,31 @@ def test_hanging_akshare_source_falls_back_to_db_and_keeps_default_executor_free
     started = time.monotonic()
     assert asyncio.run(_default_executor_probe()) == [1] * 20
     assert time.monotonic() - started < 1.0
+
+
+def test_realtime_snapshot_sina_is_skipped_after_em_timeout(monkeypatch):
+    """东财超时后不应继续等新浪超时，直接走 DB 降级。"""
+    monkeypatch.setenv("ALPHA_EXTERNAL_TIMEOUT_SECONDS", "0.15")
+    reset_external_io_state()
+    calls = {"sina": 0}
+
+    def _hang_em(*args, **kwargs):
+        time.sleep(0.8)
+        return pd.DataFrame()
+
+    def _sina(*args, **kwargs):
+        calls["sina"] += 1
+        return pd.DataFrame()
+
+    monkeypatch.setattr(provider_mod.ak, "stock_zh_a_spot_em", _hang_em)
+    monkeypatch.setattr(provider_mod.ak, "stock_zh_a_spot", _sina)
+
+    provider = AkshareDataProvider(kline_store=_FakeKlineStore())
+    started = time.monotonic()
+    snapshot = asyncio.run(provider.get_realtime_snapshot(prefer_live=True, retries=2))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.6
+    assert calls["sina"] == 0
+    assert provider.realtime_snapshot_source == "db_fallback"
+    assert not snapshot.empty

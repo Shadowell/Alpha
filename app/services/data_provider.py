@@ -10,7 +10,7 @@ from typing import Any
 import akshare as ak
 import pandas as pd
 
-from app.services.blocking_io import run_blocking
+from app.services.blocking_io import ExternalTimeoutError, external_timeout_seconds, run_blocking
 
 
 def _live_market_data_enabled() -> bool:
@@ -37,6 +37,7 @@ class AkshareDataProvider:
     hot_stocks_cache: tuple[datetime, pd.DataFrame] | None = None
     symbol_name_cache: tuple[datetime, dict[str, str]] | None = None
     kline_store: Any = None
+    realtime_snapshot_timed_out: bool = False
 
     def _snapshot_from_db(self) -> pd.DataFrame:
         """从本地 K 线数据库构建类行情快照（仅用于盘后或实时接口不可用时）。"""
@@ -74,23 +75,49 @@ class AkshareDataProvider:
             print(f"[data_provider] snapshot_from_db failed: {exc}")
             return pd.DataFrame()
 
+    @staticmethod
+    def _spot_timeout() -> float:
+        """实时快照对延迟最敏感：单次上限取配置值与 8s 的较小者。"""
+        return min(external_timeout_seconds(), 8.0)
+
     async def _fetch_spot_em(self) -> pd.DataFrame:
-        """拉取东财全市场 spot 快照（真正的实时接口），失败自动降级到 sina。"""
+        """拉取东财全市场 spot 快照（真正的实时接口），失败自动降级到 sina。
+
+        东财超时说明上游已挂起，此时不再级联尝试新浪（否则最坏要等两个超时），
+        由调用方直接走 DB/stale cache 降级。
+        """
+        self.realtime_snapshot_timed_out = False
         try:
-            df = await run_blocking(ak.stock_zh_a_spot_em, name="akshare.stock_zh_a_spot_em")
+            df = await run_blocking(
+                ak.stock_zh_a_spot_em,
+                timeout=self._spot_timeout(),
+                name="akshare.stock_zh_a_spot_em",
+            )
             payload = self._normalize_snapshot(df)
             if not payload.empty:
                 await self._ensure_names_from_snapshot(payload)
                 return payload
+        except ExternalTimeoutError as exc:
+            self.realtime_snapshot_timed_out = True
+            print(f"[data_provider] _fetch_spot_em timeout, skip sina fallback: {exc}")
+            return pd.DataFrame()
         except Exception as exc:
             print(f"[data_provider] _fetch_spot_em failed: {exc}")
-        # 兜底：新浪 spot
+        # 兜底：新浪 spot（同样受超时保护）
         try:
-            df = await run_blocking(ak.stock_zh_a_spot, name="akshare.stock_zh_a_spot")
+            df = await run_blocking(
+                ak.stock_zh_a_spot,
+                timeout=self._spot_timeout(),
+                name="akshare.stock_zh_a_spot",
+            )
             payload = self._normalize_snapshot(df)
             if not payload.empty:
                 await self._ensure_names_from_snapshot(payload)
             return payload
+        except ExternalTimeoutError as exc:
+            self.realtime_snapshot_timed_out = True
+            print(f"[data_provider] _fetch_spot_sina timeout: {exc}")
+            return pd.DataFrame()
         except Exception as exc:
             print(f"[data_provider] _fetch_spot_sina failed: {exc}")
             return pd.DataFrame()
@@ -155,6 +182,8 @@ class AkshareDataProvider:
                         return df.copy()
                 except Exception as exc:
                     last_exc = exc
+                if self.realtime_snapshot_timed_out:
+                    break
                 if idx < retries:
                     await asyncio.sleep(retry_wait_seconds * (idx + 1))
             if last_exc is not None:
