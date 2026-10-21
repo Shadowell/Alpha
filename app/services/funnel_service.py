@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +25,7 @@ from app.services.concept_engine import (
 from app.services.data_provider import AkshareDataProvider
 from app.services.strategy_engine import apply_transition_rules, compute_intraday_score, get_last_n_trade_window
 from app.services.sqlite_store import SQLiteStateStore
-from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn
+from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn, now_cn_naive, parse_cn_datetime
 
 
 class FunnelService:
@@ -115,7 +114,7 @@ class FunnelService:
 
     def _is_hot_stocks_stale(self, ttl_seconds: int = 300) -> bool:
         try:
-            refreshed_at = datetime.fromisoformat(self.hot_stocks_updated_at)
+            refreshed_at = parse_cn_datetime(self.hot_stocks_updated_at)
         except Exception:
             return True
         return (now_cn() - refreshed_at).total_seconds() >= ttl_seconds
@@ -165,8 +164,9 @@ class FunnelService:
                 merged[symbol] = n
 
         if merged:
-            from datetime import datetime
-            self.provider.symbol_name_cache = (datetime.now(), merged)
+            # 兼容边界：provider.symbol_name_cache 仍以 naive 时间做 TTL 比较，
+            # 因此这里写入上海墙钟 naive 值；data_provider 迁移到 aware 后一并切换。
+            self.provider.symbol_name_cache = (now_cn_naive(), merged)
 
     async def backfill_names(self) -> int:
         """刷新名称缓存，并把缺名 entries 回填。返回被回填数量。"""

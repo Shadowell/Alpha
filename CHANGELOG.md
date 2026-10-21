@@ -17,6 +17,7 @@
 ### Changed
 
 - `quiet_breakout_scanner` 明确标注为兼容保留路径，删除前需同步 README 与前端（#20）。
+- 时间戳统一走 Asia/Shanghai：`FunnelService` / `KlineCacheService` 移除 naive `datetime.now()`，新增 `now_cn_iso()` / `parse_cn_datetime()` 并兼容历史 naive 字符串；`hot_stocks_updated_at` 已写入 funnel state payload，待 schema 迁移后完成重启恢复（#21）。
 
 ## [0.1.0] - 2026-07-22
 

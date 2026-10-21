@@ -11,7 +11,7 @@ import pandas as pd
 from app.services.data_provider import AkshareDataProvider, to_float
 from app.services.kline_store import KlineSQLiteStore
 from app.services.market_data_client import EastmoneyMarketDataClient
-from app.services.time_utils import now_cn
+from app.services.time_utils import now_cn, now_cn_naive, parse_cn_datetime
 
 
 _CONCURRENCY = 8
@@ -203,11 +203,11 @@ class KlineCacheService:
         if state.get("attempt_trade_date") == trade_date:
             updated_raw = str(state.get("updated_at") or "")
             try:
-                last_attempt = datetime.fromisoformat(updated_raw)
+                last_attempt = parse_cn_datetime(updated_raw)
                 elapsed = (now - last_attempt).total_seconds()
                 if 0 <= elapsed < _ATTEMPT_RETRY_COOLDOWN_SEC:
                     return None
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
 
         # D1：未收盘定型时不发起自动同步
@@ -1185,7 +1185,8 @@ class KlineCacheService:
             try:
                 name_map = self.store.load_symbol_names()
                 if name_map:
-                    self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                    # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                    self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
             except Exception as exc:
                 print(f"[kline_cache] load_symbol_names failed: {exc}")
                 name_map = {}
@@ -1196,7 +1197,8 @@ class KlineCacheService:
                 try:
                     name_map = await fetch_symbol_names()
                     if name_map:
-                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
                 except Exception as exc:
                     print(f"[kline_cache] fetch symbol names from primary source failed: {exc}")
@@ -1211,7 +1213,8 @@ class KlineCacheService:
                         if r.get("代码") and r.get("名称")
                     }
                     if name_map:
-                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
             except Exception as exc:
                 print(f"[kline_cache] fetch symbol names from eastmoney failed: {exc}")

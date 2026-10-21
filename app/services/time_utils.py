@@ -9,6 +9,34 @@ def now_cn() -> datetime:
     return datetime.now(APP_TZ)
 
 
+def now_cn_iso() -> str:
+    """当前上海时间（aware）的 ISO 8601 字符串。"""
+    return now_cn().isoformat()
+
+
+def now_cn_naive() -> datetime:
+    """上海墙钟时间，但去掉 tzinfo。
+
+    仅供仍以 naive ``datetime.now()`` 做比较的历史调用方
+    （如 ``AkshareDataProvider.symbol_name_cache``）使用；新代码必须用
+    :func:`now_cn`。待这些调用方迁移到 aware 时间后应删除本函数。
+    """
+    return datetime.now(APP_TZ).replace(tzinfo=None)
+
+
+def ensure_cn_tz(dt: datetime) -> datetime:
+    """把 datetime 归一到 Asia/Shanghai；naive 值按上海墙钟时间解释。"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=APP_TZ)
+    return dt.astimezone(APP_TZ)
+
+
+def parse_cn_datetime(value: str | datetime) -> datetime:
+    """解析 ISO 8601 时间并归一到 Asia/Shanghai（兼容历史 naive 字符串）。"""
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return ensure_cn_tz(parsed)
+
+
 def today_str() -> str:
     return now_cn().date().isoformat()
 
