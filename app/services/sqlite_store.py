@@ -5,11 +5,16 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.services.sqlite_migrations import FUNNEL_DB_MIGRATIONS, migrate_database
+
 
 class SQLiteStateStore:
     def __init__(self, db_path: str = "data/funnel_state.db") -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Schema is created/upgraded once per process start; read/write paths
+        # below never execute DDL.
+        migrate_database(self.db_path, FUNNEL_DB_MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -18,80 +23,19 @@ class SQLiteStateStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
-    def _init_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS funnel_state (
-                id INTEGER PRIMARY KEY CHECK(id = 1),
-                trade_date TEXT NOT NULL,
-                entries_json TEXT NOT NULL,
-                hot_concepts_json TEXT NOT NULL,
-                hot_stocks_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                frozen INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS strategy_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                config_json TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notice_state (
-                id INTEGER PRIMARY KEY CHECK(id = 1),
-                trade_date TEXT NOT NULL,
-                entries_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                llm_enabled INTEGER NOT NULL DEFAULT 0,
-                source TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kv_store (
-                key TEXT PRIMARY KEY,
-                value_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS custom_strategies (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                rules_json TEXT NOT NULL,
-                is_builtin INTEGER NOT NULL DEFAULT 0,
-                is_default INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
-
     def get_kv(self, key: str) -> Any | None:
         with self._connect() as conn:
-            self._init_schema(conn)
-            row = conn.execute("SELECT value_json FROM kv_store WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value_json FROM kv_store WHERE key = ?", (key,)
+            ).fetchone()
             if row is None:
                 return None
             return self._loads_json(row["value_json"], default=None)
 
     def set_kv(self, key: str, value: Any) -> None:
         from datetime import datetime
+
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO kv_store (key, value_json, updated_at) VALUES (?, ?, ?)
@@ -103,7 +47,6 @@ class SQLiteStateStore:
 
     def load_state(self) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute("SELECT * FROM funnel_state WHERE id = 1").fetchone()
             if row is None:
                 return None
@@ -119,7 +62,6 @@ class SQLiteStateStore:
 
     def save_state(self, payload: dict[str, Any]) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO funnel_state (
@@ -146,7 +88,6 @@ class SQLiteStateStore:
 
     def get_active_strategy_profile(self) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute(
                 "SELECT id, name, config_json, updated_at FROM strategy_profiles WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
             ).fetchone()
@@ -159,10 +100,13 @@ class SQLiteStateStore:
                 "updated_at": row["updated_at"],
             }
 
-    def upsert_single_active_strategy_profile(self, name: str, config: dict[str, Any], updated_at: str) -> dict[str, Any]:
+    def upsert_single_active_strategy_profile(
+        self, name: str, config: dict[str, Any], updated_at: str
+    ) -> dict[str, Any]:
         with self._connect() as conn:
-            self._init_schema(conn)
-            conn.execute("UPDATE strategy_profiles SET is_active = 0 WHERE is_active = 1")
+            conn.execute(
+                "UPDATE strategy_profiles SET is_active = 0 WHERE is_active = 1"
+            )
             conn.execute(
                 """
                 INSERT INTO strategy_profiles(name, config_json, is_active, updated_at)
@@ -173,11 +117,14 @@ class SQLiteStateStore:
             conn.commit()
 
         active = self.get_active_strategy_profile()
-        return active if active is not None else {"id": 0, "name": name, "config": config, "updated_at": updated_at}
+        return (
+            active
+            if active is not None
+            else {"id": 0, "name": name, "config": config, "updated_at": updated_at}
+        )
 
     def load_notice_state(self) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute("SELECT * FROM notice_state WHERE id = 1").fetchone()
             if row is None:
                 return None
@@ -191,7 +138,6 @@ class SQLiteStateStore:
 
     def save_notice_state(self, payload: dict[str, Any]) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO notice_state(id, trade_date, entries_json, updated_at, llm_enabled, source)
@@ -217,7 +163,6 @@ class SQLiteStateStore:
 
     def list_custom_strategies(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies ORDER BY is_builtin DESC, name ASC"
             ).fetchall()
@@ -225,7 +170,6 @@ class SQLiteStateStore:
 
     def get_custom_strategy(self, strategy_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute(
                 "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies WHERE id = ?",
                 (strategy_id,),
@@ -234,7 +178,6 @@ class SQLiteStateStore:
 
     def get_default_custom_strategy(self) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute(
                 "SELECT id, name, description, rules_json, is_builtin, is_default, created_at, updated_at FROM custom_strategies WHERE is_default = 1 ORDER BY updated_at DESC LIMIT 1"
             ).fetchone()
@@ -242,14 +185,18 @@ class SQLiteStateStore:
 
     def upsert_custom_strategy(self, payload: dict[str, Any]) -> dict[str, Any]:
         from datetime import datetime
+
         sid = str(payload.get("id") or "").strip()
         if not sid:
             import uuid
+
             sid = uuid.uuid4().hex
         now = datetime.now().isoformat(timespec="seconds")
         with self._connect() as conn:
-            self._init_schema(conn)
-            existing = conn.execute("SELECT id, created_at, is_builtin FROM custom_strategies WHERE id = ?", (sid,)).fetchone()
+            existing = conn.execute(
+                "SELECT id, created_at, is_builtin FROM custom_strategies WHERE id = ?",
+                (sid,),
+            ).fetchone()
             created_at = existing["created_at"] if existing else now
             is_builtin = bool(payload.get("is_builtin", False))
             if existing:
@@ -282,8 +229,9 @@ class SQLiteStateStore:
 
     def delete_custom_strategy(self, strategy_id: str) -> bool:
         with self._connect() as conn:
-            self._init_schema(conn)
-            row = conn.execute("SELECT is_builtin FROM custom_strategies WHERE id = ?", (strategy_id,)).fetchone()
+            row = conn.execute(
+                "SELECT is_builtin FROM custom_strategies WHERE id = ?", (strategy_id,)
+            ).fetchone()
             if not row:
                 return False
             if int(row["is_builtin"]) == 1:
@@ -294,27 +242,35 @@ class SQLiteStateStore:
 
     def set_default_custom_strategy(self, strategy_id: str) -> bool:
         with self._connect() as conn:
-            self._init_schema(conn)
-            exists = conn.execute("SELECT 1 FROM custom_strategies WHERE id = ?", (strategy_id,)).fetchone()
+            exists = conn.execute(
+                "SELECT 1 FROM custom_strategies WHERE id = ?", (strategy_id,)
+            ).fetchone()
             if not exists:
                 return False
-            conn.execute("UPDATE custom_strategies SET is_default = 0 WHERE is_default = 1")
-            conn.execute("UPDATE custom_strategies SET is_default = 1 WHERE id = ?", (strategy_id,))
+            conn.execute(
+                "UPDATE custom_strategies SET is_default = 0 WHERE is_default = 1"
+            )
+            conn.execute(
+                "UPDATE custom_strategies SET is_default = 1 WHERE id = ?",
+                (strategy_id,),
+            )
             conn.commit()
             return True
 
     def ensure_builtin_custom_strategies(self, defaults: list[dict[str, Any]]) -> int:
         """幂等写入内置策略：仅当 id 不存在时插入（保留用户修改）。返回新插入条数。"""
         from datetime import datetime
+
         inserted = 0
         now = datetime.now().isoformat(timespec="seconds")
         with self._connect() as conn:
-            self._init_schema(conn)
             for s in defaults:
                 sid = str(s.get("id") or "").strip()
                 if not sid:
                     continue
-                exists = conn.execute("SELECT 1 FROM custom_strategies WHERE id = ?", (sid,)).fetchone()
+                exists = conn.execute(
+                    "SELECT 1 FROM custom_strategies WHERE id = ?", (sid,)
+                ).fetchone()
                 if exists:
                     continue
                 conn.execute(
@@ -334,11 +290,16 @@ class SQLiteStateStore:
                 )
                 inserted += 1
             # 若没有任何 is_default=1 的策略，把 defaults 里第一个 is_default 的设为默认
-            any_default = conn.execute("SELECT 1 FROM custom_strategies WHERE is_default = 1 LIMIT 1").fetchone()
+            any_default = conn.execute(
+                "SELECT 1 FROM custom_strategies WHERE is_default = 1 LIMIT 1"
+            ).fetchone()
             if not any_default:
                 for s in defaults:
                     if s.get("is_default"):
-                        conn.execute("UPDATE custom_strategies SET is_default = 1 WHERE id = ?", (str(s["id"]),))
+                        conn.execute(
+                            "UPDATE custom_strategies SET is_default = 1 WHERE id = ?",
+                            (str(s["id"]),),
+                        )
                         break
             conn.commit()
         return inserted
