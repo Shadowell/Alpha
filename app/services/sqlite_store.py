@@ -57,6 +57,8 @@ class SQLiteStateStore:
                 "hot_concepts": self._loads_json(row["hot_concepts_json"], default=[]),
                 "hot_stocks": self._loads_json(row["hot_stocks_json"], default=[]),
                 "updated_at": row["updated_at"],
+                "hot_stocks_updated_at": row["hot_stocks_updated_at"]
+                or row["updated_at"],
                 "frozen": bool(row["frozen"]),
             }
 
@@ -65,14 +67,16 @@ class SQLiteStateStore:
             conn.execute(
                 """
                 INSERT INTO funnel_state (
-                    id, trade_date, entries_json, hot_concepts_json, hot_stocks_json, updated_at, frozen
-                ) VALUES (1, ?, ?, ?, ?, ?, ?)
+                    id, trade_date, entries_json, hot_concepts_json, hot_stocks_json,
+                    updated_at, hot_stocks_updated_at, frozen
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     trade_date=excluded.trade_date,
                     entries_json=excluded.entries_json,
                     hot_concepts_json=excluded.hot_concepts_json,
                     hot_stocks_json=excluded.hot_stocks_json,
                     updated_at=excluded.updated_at,
+                    hot_stocks_updated_at=excluded.hot_stocks_updated_at,
                     frozen=excluded.frozen
                 """,
                 (
@@ -81,6 +85,8 @@ class SQLiteStateStore:
                     self._dumps_json(payload.get("hot_concepts", [])),
                     self._dumps_json(payload.get("hot_stocks", [])),
                     payload.get("updated_at", ""),
+                    payload.get("hot_stocks_updated_at")
+                    or payload.get("updated_at", ""),
                     1 if payload.get("frozen", False) else 0,
                 ),
             )

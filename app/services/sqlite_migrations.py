@@ -163,10 +163,23 @@ def _migrate_funnel_v1(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "paper_trades", "fee", "REAL NOT NULL DEFAULT 0")
 
 
+def _migrate_funnel_v2(conn: sqlite3.Connection) -> None:
+    """Persist the hot-stocks freshness timestamp separately from the bucket timestamp (#21)."""
+    _ensure_column(conn, "funnel_state", "hot_stocks_updated_at", "TEXT")
+    conn.execute(
+        """
+        UPDATE funnel_state
+        SET hot_stocks_updated_at = updated_at
+        WHERE hot_stocks_updated_at IS NULL OR hot_stocks_updated_at = ''
+        """
+    )
+
+
 FUNNEL_DB_MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1, "funnel state, strategies and paper trading base schema", _migrate_funnel_v1
     ),
+    Migration(2, "persist hot stocks freshness timestamp", _migrate_funnel_v2),
 )
 
 

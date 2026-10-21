@@ -386,3 +386,56 @@ def test_apply_migrations_noop_when_current(tmp_path):
         assert apply_migrations(conn, FUNNEL_DB_MIGRATIONS) == FUNNEL_SCHEMA_VERSION
     finally:
         conn.close()
+
+
+def test_v1_funnel_database_backfills_hot_stocks_timestamp(tmp_path):
+    db_path = tmp_path / "funnel_state.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE funnel_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                trade_date TEXT NOT NULL,
+                entries_json TEXT NOT NULL,
+                hot_concepts_json TEXT NOT NULL,
+                hot_stocks_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                frozen INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO funnel_state VALUES (1, '2026-01-05', '{}', '[]', '[]', '2026-01-05T16:00:00+08:00', 0)"
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+    state = SQLiteStateStore(str(db_path))
+
+    assert _user_version(db_path) == FUNNEL_SCHEMA_VERSION
+    assert "hot_stocks_updated_at" in _column_names(db_path, "funnel_state")
+    loaded = state.load_state()
+    assert loaded is not None
+    assert loaded["hot_stocks_updated_at"] == "2026-01-05T16:00:00+08:00"
+
+
+def test_state_store_roundtrips_hot_stocks_timestamp(tmp_path):
+    state = SQLiteStateStore(str(tmp_path / "funnel_state.db"))
+    state.save_state(
+        {
+            "trade_date": "2026-01-05",
+            "entries": {},
+            "hot_concepts": [],
+            "hot_stocks": [],
+            "updated_at": "2026-01-05T16:00:00+08:00",
+            "hot_stocks_updated_at": "2026-01-05T14:30:00+08:00",
+            "frozen": False,
+        }
+    )
+
+    loaded = state.load_state()
+    assert loaded is not None
+    assert loaded["hot_stocks_updated_at"] == "2026-01-05T14:30:00+08:00"
