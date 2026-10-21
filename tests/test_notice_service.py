@@ -47,3 +47,29 @@ def test_notice_screen_and_detail(monkeypatch, tmp_path):
     detail = asyncio.run(service.get_notice_detail(symbol))
     assert detail.symbol == symbol
     assert len(detail.kline) == 2
+
+
+def test_notice_screen_timeout_degrades_instead_of_hanging(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("ALPHA_EXTERNAL_TIMEOUT_SECONDS", "0.15")
+
+    def _slow_notice(symbol, date):
+        time.sleep(0.8)
+        return pd.DataFrame()
+
+    monkeypatch.setattr("app.services.notice_service.ak.stock_notice_report", _slow_notice)
+
+    store = SQLiteStateStore(str(tmp_path / "state.db"))
+    service = NoticeService(state_store=store)
+
+    started = time.monotonic()
+    result = asyncio.run(service.run_notice_screen(notice_date="20260413", limit=10))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert result["success"] is False
+    assert result["degraded"] is True
+    assert result["reason"] == "timeout"
+    assert result["candidate_count"] == 0
+    assert result["source"] == "timeout"

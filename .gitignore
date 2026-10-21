@@ -14,3 +14,6 @@ tests/e2e/node_modules/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
 tests/test_report.txt
+
+# Qoder worktrees / session artifacts
+.qoder/

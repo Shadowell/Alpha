@@ -296,3 +296,27 @@ def test_realtime_quote_returns_normalized_snapshot():
     assert snapshot["price"] == 11.41
     assert snapshot["bar_time"] == "2026-10-21 16:30:00"
     assert snapshot["source"] == "tushare.realtime_quote"
+def test_tushare_timeout_falls_back_to_eastmoney(monkeypatch):
+    import time
+
+    monkeypatch.setenv("ALPHA_EXTERNAL_TIMEOUT_SECONDS", "0.15")
+
+    def _slow_daily(**kwargs):
+        time.sleep(0.8)
+        return pd.DataFrame()
+
+    pro = SimpleNamespace(daily=Mock(side_effect=_slow_daily))
+    tushare = SimpleNamespace(set_token=Mock(), pro_api=Mock(return_value=pro))
+    client = TushareFirstMarketDataClient(
+        fallback=FakeFallback(), token="test-token", tushare_module=tushare
+    )
+
+    started = time.monotonic()
+    frame = _run(client.fetch_hist("600000", "20260807", "20260807"))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert frame.iloc[0]["收盘"] == 10
+    assert frame.attrs["data_source"] == "eastmoney"
+    assert frame.attrs["fallback_reason"] == "tushare_timeout"
+    assert client.describe()["last_operation"]["source"] == "eastmoney"

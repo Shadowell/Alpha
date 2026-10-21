@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import os
 from typing import Any
 
 import pandas as pd
 
+from app.services.blocking_io import ExternalTimeoutError, run_blocking
 from app.services.market_data_client import EastmoneyMarketDataClient, _normalize_symbol
 
 try:
@@ -119,14 +119,21 @@ class TushareFirstMarketDataClient:
         fallback_reason = "tushare_not_configured"
         if self.is_ready:
             try:
-                frame = await asyncio.to_thread(
-                    self._fetch_hist_sync, symbol, start_date, end_date, adjust
+                frame = await run_blocking(
+                    self._fetch_hist_sync,
+                    symbol,
+                    start_date,
+                    end_date,
+                    adjust,
+                    name="tushare.daily_history",
                 )
                 if not frame.empty:
                     return self._mark(frame, operation="daily_history", source="tushare")
                 fallback_reason = "tushare_empty_response"
             except Exception as exc:
-                fallback_reason = f"tushare_error:{type(exc).__name__}"
+                fallback_reason = (
+                    "tushare_timeout" if isinstance(exc, ExternalTimeoutError) else f"tushare_error:{type(exc).__name__}"
+                )
         frame = await self.fallback.fetch_hist(symbol, start_date, end_date, adjust=adjust)
         return self._mark(
             frame,
@@ -139,12 +146,16 @@ class TushareFirstMarketDataClient:
         fallback_reason = "tushare_not_configured"
         if self.is_ready:
             try:
-                frame = await asyncio.to_thread(self._fetch_trade_days_sync, min_days)
+                frame = await run_blocking(
+                    self._fetch_trade_days_sync, min_days, name="tushare.trade_calendar"
+                )
                 if not frame.empty:
                     return self._mark(frame, operation="trade_calendar", source="tushare")
                 fallback_reason = "tushare_empty_response"
             except Exception as exc:
-                fallback_reason = f"tushare_error:{type(exc).__name__}"
+                fallback_reason = (
+                    "tushare_timeout" if isinstance(exc, ExternalTimeoutError) else f"tushare_error:{type(exc).__name__}"
+                )
         frame = await self.fallback.fetch_trade_days(min_days=min_days)
         source = str(frame.attrs.get("data_source") or "sina/db")
         return self._mark(
@@ -158,7 +169,9 @@ class TushareFirstMarketDataClient:
         fallback_reason = "tushare_not_configured"
         if self.is_ready:
             try:
-                names = await asyncio.to_thread(self._fetch_symbol_names_sync)
+                names = await run_blocking(
+                    self._fetch_symbol_names_sync, name="tushare.stock_basic"
+                )
                 if names:
                     self._last_operation = {
                         "operation": "stock_basic",
@@ -168,7 +181,9 @@ class TushareFirstMarketDataClient:
                     return names
                 fallback_reason = "tushare_empty_response"
             except Exception as exc:
-                fallback_reason = f"tushare_error:{type(exc).__name__}"
+                fallback_reason = (
+                    "tushare_timeout" if isinstance(exc, ExternalTimeoutError) else f"tushare_error:{type(exc).__name__}"
+                )
         frame = await self.fallback.fetch_spot()
         names = {
             str(row["代码"]): str(row["名称"])
@@ -191,13 +206,17 @@ class TushareFirstMarketDataClient:
                 fallback_reason="tushare_not_configured",
             )
         try:
-            frame = await asyncio.to_thread(self._fetch_daily_by_trade_date_sync, trade_date)
+            frame = await run_blocking(
+                self._fetch_daily_by_trade_date_sync, trade_date, name="tushare.market_daily"
+            )
             if not frame.empty:
                 return self._mark(frame, operation="market_daily", source="tushare")
             reason = "tushare_empty_response"
         except Exception as exc:
             frame = pd.DataFrame()
-            reason = f"tushare_error:{type(exc).__name__}"
+            reason = (
+                "tushare_timeout" if isinstance(exc, ExternalTimeoutError) else f"tushare_error:{type(exc).__name__}"
+            )
         return self._mark(
             frame,
             operation="market_daily",

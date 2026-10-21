@@ -24,6 +24,8 @@ const IGNORED_ERRORS = [
   /WebSocket/i,
   /Failed to load resource.*status of 404/,  // 静态资源偶发
   /net::ERR_INTERNET_DISCONNECTED/,
+  // meta 里的 frame-ancestors 会被浏览器忽略并告警（应由响应头下发），非 JS 错误
+  /Content Security Policy directive 'frame-ancestors' is ignored/i,
 ];
 
 function isCriticalError(msg) {
@@ -195,5 +197,73 @@ test.describe('全站 JS 错误巡检', () => {
     }
 
     expect(errors, `发现关键 JS 错误:\n${errors.join('\n')}`).toEqual([]);
+  });
+});
+
+test.describe('公告存储型 XSS 回归（#8）', () => {
+  test('恶意公告标题与 javascript: 链接不会执行', async ({ page }) => {
+    await page.routeWebSocket(/\/ws\/realtime$/, () => { /* 阻断实时快照覆盖注入数据 */ });
+    await page.route('**/api/notice/funnel', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        trade_date: '2026-10-22',
+        updated_at: '2026-10-22T10:00:00',
+        llm_enabled: false,
+        source: 'rule',
+        stats: { candidate: 1, focus: 0, buy: 0 },
+        pools: {
+          candidate: [{
+            symbol: '000001',
+            name: '<img src=x onerror="window.__xss=1">平安银行',
+            title: '<img src=x onerror="window.__xss=1">业绩预增',
+            notice_type: '<svg onload="window.__xss=1">预告',
+            notice_date: '2026-10-22',
+            url: 'javascript:window.__xss=1',
+            score: 88,
+            pool: 'candidate',
+            reason: '业绩+合同',
+            risk: '<script>window.__xss=1</script>',
+          }],
+          focus: [],
+          buy: [],
+        },
+      }),
+    }));
+    await page.route('**/api/notice/keywords', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ keywords: [{ tag: '业绩预增', weight: 14 }] }),
+    }));
+    await page.route('**/api/notice/000001/detail*', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        symbol: '000001',
+        name: '<img src=x onerror="window.__xss=1">平安银行',
+        score: 88,
+        pool: 'candidate',
+        reason: '业绩+合同',
+        risk: '<script>window.__xss=1</script>',
+        notices: [{
+          title: '<img src=x onerror="window.__xss=1">业绩预增',
+          notice_type: '<svg onload="window.__xss=1">预告',
+          notice_date: '2026-10-22',
+          url: 'javascript:window.__xss=1',
+        }],
+        kline: [],
+      }),
+    }));
+
+    await page.goto('/?tab=notice');
+    const card = page.locator('#notice-pool-candidate .stock-card').first();
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.locator('#noticeDetail')).toContainText('类型:');
+
+    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    expect(await page.locator('#notice-pool-candidate img, #noticeDetail img, #noticeDetail script').count()).toBe(0);
+    expect(await page.locator('#noticeDetail a').count()).toBe(0);
+    expect(await page.evaluate(() => document.querySelectorAll('[onclick],[onerror],[onload]').length)).toBe(0);
   });
 });
