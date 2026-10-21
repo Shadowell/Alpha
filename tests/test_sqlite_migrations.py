@@ -11,6 +11,7 @@ from app.services.paper_trading import PaperTradingService
 from app.services.sqlite_migrations import (
     FUNNEL_DB_MIGRATIONS,
     FUNNEL_SCHEMA_VERSION,
+    MARKET_KLINE_DB_MIGRATIONS,
     MARKET_KLINE_SCHEMA_VERSION,
     apply_migrations,
 )
@@ -93,6 +94,13 @@ def test_empty_market_database_is_created_at_latest_version(tmp_path):
         "kline_sync_task_details",
         "kline_check_reports",
         "symbol_names",
+        # v2: Tushare enrichment tables already present on main.
+        "kline_daily_extras",
+        "moneyflow_daily",
+        "market_capital_flow",
+        "index_daily",
+        "kline_minute",
+        "enrichment_sync_state",
     } <= _table_names(db_path)
 
 
@@ -277,6 +285,30 @@ def test_legacy_market_database_gets_new_columns_and_keeps_rows(tmp_path):
         "2026-01-06T16:00:00",
     )
     assert store.get_kline("600519", days=1)[0]["source"] == "tushare"
+
+
+def test_market_database_upgrades_from_v1_to_latest(tmp_path):
+    db_path = tmp_path / "market_kline.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        assert apply_migrations(conn, MARKET_KLINE_DB_MIGRATIONS[:1]) == 1
+    finally:
+        conn.close()
+    assert _user_version(db_path) == 1
+    assert "kline_daily_extras" not in _table_names(db_path)
+
+    KlineSQLiteStore(str(db_path))
+
+    assert _user_version(db_path) == MARKET_KLINE_SCHEMA_VERSION
+    assert {
+        "kline_daily",
+        "kline_daily_extras",
+        "moneyflow_daily",
+        "market_capital_flow",
+        "index_daily",
+        "kline_minute",
+        "enrichment_sync_state",
+    } <= _table_names(db_path)
 
 
 def test_read_paths_do_not_execute_ddl_or_migration_writes(tmp_path, monkeypatch):

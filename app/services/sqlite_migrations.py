@@ -304,10 +304,126 @@ def _migrate_market_kline_v1(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_market_kline_v2(conn: sqlite3.Connection) -> None:
+    """Tushare enrichment tables (already shipped on main as a later feature).
+
+    Kept as an explicit version so databases created by this branch and by
+    main converge on the same schema after merge; all statements are
+    idempotent for fresh installs.
+    """
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kline_daily_extras (
+            symbol TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            pe_ttm REAL,
+            pb REAL,
+            ps_ttm REAL,
+            turnover_rate REAL,
+            turnover_rate_f REAL,
+            volume_ratio REAL,
+            total_mv REAL,
+            circ_mv REAL,
+            up_limit REAL,
+            down_limit REAL,
+            adj_factor REAL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, trade_date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS moneyflow_daily (
+            symbol TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            buy_sm_amount REAL,
+            sell_sm_amount REAL,
+            buy_md_amount REAL,
+            sell_md_amount REAL,
+            buy_lg_amount REAL,
+            sell_lg_amount REAL,
+            buy_elg_amount REAL,
+            sell_elg_amount REAL,
+            net_mf_amount REAL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, trade_date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_capital_flow (
+            trade_date TEXT PRIMARY KEY,
+            hgt REAL,
+            sgt REAL,
+            north_money REAL,
+            south_money REAL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS index_daily (
+            ts_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            pre_close REAL,
+            change REAL,
+            pct_chg REAL,
+            volume REAL,
+            amount REAL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (ts_code, trade_date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kline_minute (
+            symbol TEXT NOT NULL,
+            bar_time TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL,
+            amount REAL,
+            source TEXT NOT NULL DEFAULT 'tushare',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, bar_time)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kline_minute_symbol_date "
+        "ON kline_minute(symbol, trade_date)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS enrichment_sync_state (
+            dataset TEXT PRIMARY KEY,
+            trade_date TEXT,
+            status TEXT NOT NULL,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            message TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MARKET_KLINE_DB_MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1, "market kline, sync task and report base schema", _migrate_market_kline_v1
     ),
+    Migration(2, "Tushare enrichment tables", _migrate_market_kline_v2),
 )
 
 
