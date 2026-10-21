@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import os
 
 WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -19,6 +20,15 @@ LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 def _env_flag(name: str, default: str = "") -> str:
     return (os.getenv(name, "") or default).strip().lower()
+
+
+def _tokens_match(header_token: str | None, expected: str) -> bool:
+    """常量时间比较令牌（UTF-8 bytes，避免非 ASCII 触发 TypeError）。"""
+    supplied = (header_token or "").strip()
+    return hmac.compare_digest(
+        supplied.encode("utf-8"),
+        expected.strip().encode("utf-8"),
+    )
 
 
 def write_access_decision(
@@ -39,7 +49,7 @@ def write_access_decision(
     ).strip()
     host = (client_host or "").strip()
     if token:
-        if (header_token or "").strip() == token:
+        if _tokens_match(header_token, token):
             return None
         return "token_mismatch"
     if trust_edge is None:
