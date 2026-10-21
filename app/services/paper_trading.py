@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,30 @@ DEFAULT_COMMISSION_RATE = 0.00025  # 佣金费率 万2.5（双向）
 DEFAULT_MIN_COMMISSION = 5.0  # 最低佣金 5元
 DEFAULT_STAMP_TAX_RATE = 0.0005  # 印花税 万5（卖出单向）
 DEFAULT_SLIPPAGE_RATE = 0.001  # 滑点 0.1%
+
+# 服务层边界（API 层的 Pydantic 校验是第二道防线）。
+SETTINGS_LIMITS: dict[str, tuple[float, float]] = {
+    "commission_rate": (0.0, 1.0),
+    "min_commission": (0.0, 100.0),
+    "stamp_tax_rate": (0.0, 1.0),
+    "slippage_rate": (0.0, 0.1),
+}
+
+
+def _coerce_setting(name: str, value: Any, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must be a number between {minimum} and {maximum}"
+        ) from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if number < minimum or number > maximum:
+        raise ValueError(
+            f"{name} must be between {minimum} and {maximum}, got {number}"
+        )
+    return number
 
 
 @dataclass
@@ -59,14 +84,18 @@ class PaperTradingService:
         migrate_database(self.db_path, FUNNEL_DB_MIGRATIONS)
 
     def update_settings(self, **kwargs):
-        if "commission_rate" in kwargs:
-            self.commission_rate = float(kwargs["commission_rate"])
-        if "min_commission" in kwargs:
-            self.min_commission = float(kwargs["min_commission"])
-        if "stamp_tax_rate" in kwargs:
-            self.stamp_tax_rate = float(kwargs["stamp_tax_rate"])
-        if "slippage_rate" in kwargs:
-            self.slippage_rate = float(kwargs["slippage_rate"])
+        """Update fee settings atomically after range validation.
+
+        Raises ``ValueError`` for unknown types, NaN/inf or out-of-range
+        values; no field is applied when any supplied field is invalid.
+        """
+
+        validated: dict[str, float] = {}
+        for name, (minimum, maximum) in SETTINGS_LIMITS.items():
+            if name in kwargs:
+                validated[name] = _coerce_setting(name, kwargs[name], minimum, maximum)
+        for name, value in validated.items():
+            setattr(self, name, value)
 
     def get_settings(self) -> dict:
         return {
