@@ -384,7 +384,7 @@ class KronosPredictService:
             if len(future) >= horizon:
                 return [d.strftime("%Y-%m-%d") for d in future.iloc[:horizon]]
 
-        result = []
+        result: list[str] = []
         d = target
         while len(result) < horizon:
             d += pd.Timedelta(days=1)
