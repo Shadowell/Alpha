@@ -2,24 +2,51 @@
 
 数据存储在 data/funnel_state.db 的 paper_positions / paper_trades 表中。
 """
+
 from __future__ import annotations
 
+import math
 import sqlite3
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.services.sqlite_migrations import FUNNEL_DB_MIGRATIONS, migrate_database
 from app.services.time_utils import now_cn
 
 
 _DB_PATH = Path("data/funnel_state.db")
 
 # A股交易费用默认值
-DEFAULT_COMMISSION_RATE = 0.00025    # 佣金费率 万2.5（双向）
-DEFAULT_MIN_COMMISSION = 5.0         # 最低佣金 5元
-DEFAULT_STAMP_TAX_RATE = 0.0005      # 印花税 万5（卖出单向）
-DEFAULT_SLIPPAGE_RATE = 0.001        # 滑点 0.1%
+DEFAULT_COMMISSION_RATE = 0.00025  # 佣金费率 万2.5（双向）
+DEFAULT_MIN_COMMISSION = 5.0  # 最低佣金 5元
+DEFAULT_STAMP_TAX_RATE = 0.0005  # 印花税 万5（卖出单向）
+DEFAULT_SLIPPAGE_RATE = 0.001  # 滑点 0.1%
+
+# 服务层边界（API 层的 Pydantic 校验是第二道防线）。
+SETTINGS_LIMITS: dict[str, tuple[float, float]] = {
+    "commission_rate": (0.0, 1.0),
+    "min_commission": (0.0, 100.0),
+    "stamp_tax_rate": (0.0, 1.0),
+    "slippage_rate": (0.0, 0.1),
+}
+
+
+def _coerce_setting(name: str, value: Any, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must be a number between {minimum} and {maximum}"
+        ) from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if number < minimum or number > maximum:
+        raise ValueError(
+            f"{name} must be between {minimum} and {maximum}, got {number}"
+        )
+    return number
 
 
 @dataclass
@@ -27,20 +54,20 @@ class Position:
     id: str
     symbol: str
     name: str
-    direction: str          # "long"
-    qty: int                # 股数
-    cost_price: float       # 成本价（含买入费用分摊）
-    current_price: float    # 最新价
-    pnl: float              # 浮动盈亏
-    pnl_pct: float          # 浮动盈亏%
-    opened_at: str          # ISO datetime
-    status: str             # "open" / "closed"
+    direction: str  # "long"
+    qty: int  # 股数
+    cost_price: float  # 成本价（含买入费用分摊）
+    current_price: float  # 最新价
+    pnl: float  # 浮动盈亏
+    pnl_pct: float  # 浮动盈亏%
+    opened_at: str  # ISO datetime
+    status: str  # "open" / "closed"
     closed_at: str | None = None
     close_price: float | None = None
     realized_pnl: float | None = None
     realized_pnl_pct: float | None = None
-    buy_fee: float = 0.0    # 买入总费用
-    sell_fee: float = 0.0   # 卖出总费用
+    buy_fee: float = 0.0  # 买入总费用
+    sell_fee: float = 0.0  # 卖出总费用
     note: str = ""
 
 
@@ -52,17 +79,23 @@ class PaperTradingService:
         self.min_commission = DEFAULT_MIN_COMMISSION
         self.stamp_tax_rate = DEFAULT_STAMP_TAX_RATE
         self.slippage_rate = DEFAULT_SLIPPAGE_RATE
-        self._init_schema()
+        # funnel_state.db is shared with SQLiteStateStore: both stores run the
+        # same migration registry so PRAGMA user_version stays consistent.
+        migrate_database(self.db_path, FUNNEL_DB_MIGRATIONS)
 
     def update_settings(self, **kwargs):
-        if "commission_rate" in kwargs:
-            self.commission_rate = float(kwargs["commission_rate"])
-        if "min_commission" in kwargs:
-            self.min_commission = float(kwargs["min_commission"])
-        if "stamp_tax_rate" in kwargs:
-            self.stamp_tax_rate = float(kwargs["stamp_tax_rate"])
-        if "slippage_rate" in kwargs:
-            self.slippage_rate = float(kwargs["slippage_rate"])
+        """Update fee settings atomically after range validation.
+
+        Raises ``ValueError`` for unknown types, NaN/inf or out-of-range
+        values; no field is applied when any supplied field is invalid.
+        """
+
+        validated: dict[str, float] = {}
+        for name, (minimum, maximum) in SETTINGS_LIMITS.items():
+            if name in kwargs:
+                validated[name] = _coerce_setting(name, kwargs[name], minimum, maximum)
+        for name, value in validated.items():
+            setattr(self, name, value)
 
     def get_settings(self) -> dict:
         return {
@@ -98,52 +131,6 @@ class PaperTradingService:
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
-    def _init_schema(self):
-        with self._connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS paper_positions (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    direction TEXT NOT NULL DEFAULT 'long',
-                    qty INTEGER NOT NULL,
-                    cost_price REAL NOT NULL,
-                    current_price REAL NOT NULL DEFAULT 0,
-                    opened_at TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'open',
-                    closed_at TEXT,
-                    close_price REAL,
-                    buy_fee REAL NOT NULL DEFAULT 0,
-                    sell_fee REAL NOT NULL DEFAULT 0,
-                    note TEXT DEFAULT ''
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS paper_trades (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    action TEXT NOT NULL,
-                    qty INTEGER NOT NULL,
-                    price REAL NOT NULL,
-                    fee REAL NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    note TEXT DEFAULT ''
-                )
-            """)
-            # 兼容旧表：如缺字段则加
-            for col, typ in [("buy_fee", "REAL DEFAULT 0"), ("sell_fee", "REAL DEFAULT 0")]:
-                try:
-                    conn.execute(f"ALTER TABLE paper_positions ADD COLUMN {col} {typ}")
-                except Exception:
-                    pass
-            try:
-                conn.execute("ALTER TABLE paper_trades ADD COLUMN fee REAL DEFAULT 0")
-            except Exception:
-                pass
-            conn.commit()
-
     # ── 开仓 ──
 
     def open_position(
@@ -176,14 +163,21 @@ class PaperTradingService:
             conn.commit()
 
         return {
-            "id": pid, "symbol": symbol, "name": name,
-            "qty": qty, "cost_price": actual_price, "buy_fee": buy_fee,
-            "market_price": price, "note": note,
+            "id": pid,
+            "symbol": symbol,
+            "name": name,
+            "qty": qty,
+            "cost_price": actual_price,
+            "buy_fee": buy_fee,
+            "market_price": price,
+            "note": note,
         }
 
     # ── 平仓 ──
 
-    def close_position(self, position_id: str, price: float, note: str = "") -> dict | None:
+    def close_position(
+        self, position_id: str, price: float, note: str = ""
+    ) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM paper_positions WHERE id = ? AND status = 'open'",
@@ -214,15 +208,32 @@ class PaperTradingService:
                 """INSERT INTO paper_trades
                    (id, position_id, symbol, name, action, qty, price, fee, created_at, note)
                    VALUES (?, ?, ?, ?, 'sell', ?, ?, ?, ?, ?)""",
-                (tid, position_id, row["symbol"], row["name"], qty, actual_sell, sell_fee, ts, note),
+                (
+                    tid,
+                    position_id,
+                    row["symbol"],
+                    row["name"],
+                    qty,
+                    actual_sell,
+                    sell_fee,
+                    ts,
+                    note,
+                ),
             )
             conn.commit()
 
             return {
-                "id": position_id, "symbol": row["symbol"], "name": row["name"],
-                "qty": qty, "cost_price": cost, "close_price": actual_sell,
-                "market_price": price, "buy_fee": buy_fee, "sell_fee": sell_fee,
-                "realized_pnl": round(rpnl, 2), "realized_pnl_pct": round(rpnl_pct, 2),
+                "id": position_id,
+                "symbol": row["symbol"],
+                "name": row["name"],
+                "qty": qty,
+                "cost_price": cost,
+                "close_price": actual_sell,
+                "market_price": price,
+                "buy_fee": buy_fee,
+                "sell_fee": sell_fee,
+                "realized_pnl": round(rpnl, 2),
+                "realized_pnl_pct": round(rpnl_pct, 2),
             }
 
     # ── 批量更新持仓价格 ──
@@ -272,8 +283,9 @@ class PaperTradingService:
         wins = sum(1 for p in closed if (p.get("realized_pnl") or 0) > 0)
         win_rate = (wins / len(closed) * 100) if closed else 0
 
-        total_fee = sum((p.get("buy_fee") or 0) + (p.get("sell_fee") or 0)
-                        for p in opens + closed)
+        total_fee = sum(
+            (p.get("buy_fee") or 0) + (p.get("sell_fee") or 0) for p in opens + closed
+        )
 
         total_trades = len(closed)
         initial_capital = 1_000_000
@@ -296,7 +308,9 @@ class PaperTradingService:
             "open_count": len(opens),
             "closed_count": len(closed),
             "total_float_pnl": round(total_float_pnl, 2),
-            "total_float_pnl_pct": round(total_float_pnl / total_float_cost * 100, 2) if total_float_cost else 0,
+            "total_float_pnl_pct": round(total_float_pnl / total_float_cost * 100, 2)
+            if total_float_cost
+            else 0,
             "total_realized_pnl": round(total_realized, 2),
             "total_market_value": round(total_market_value, 2),
             "total_asset": round(total_asset, 2),

@@ -1,0 +1,61 @@
+# Project tooling configuration (ruff / mypy / pytest / coverage).
+#
+# CI runs:
+#   ruff check app tests
+#   ruff format --check <scoped files>
+#   python -m mypy
+#   python -m pytest -q --cov=app --cov-report=term-missing --cov-fail-under=<baseline>
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Baseline ignores for pre-existing violations outside the P2b file ownership.
+# Remove an entry as soon as the owning module is cleaned up; new code must not
+# add entries here.
+"app/config.py" = ["F401"]
+"app/main.py" = ["E402", "F401"]
+"app/services/backtest_lab.py" = ["F841"]
+"app/services/custom_strategy.py" = ["F401"]
+"app/services/hermes_runtime.py" = ["F541"]
+"app/services/kline_cache_service.py" = ["E741", "F841"]
+"app/services/strategy_rules.py" = ["F401"]
+"tests/test_secret_hygiene.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+files = [
+    "app/models.py",
+    "app/config.py",
+    "app/services/sqlite_migrations.py",
+    "app/services/deployment_guard.py",
+    "app/services/sqlite_store.py",
+    "app/services/kline_store.py",
+    "app/services/paper_trading.py",
+    "app/services/kronos_predict_service.py",
+]
+# Scoped type gate: imported modules outside the list are treated as Any so a
+# pre-existing annotation bug elsewhere cannot block this check.
+follow_imports = "skip"
+ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["app"]
+# Vendored Kronos model implementation needs torch weights and is exercised by
+# the separate model-tests workflow, not by the coverage gate.
+omit = ["app/services/kronos_model/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

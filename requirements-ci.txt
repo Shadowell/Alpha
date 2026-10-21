@@ -1,3 +1,9 @@
 # Deterministic unit/API regression environment; optional model/MCP imports stay lazy.
 -r requirements-base.txt
+# Floor is asserted verbatim by tests/test_dependency_profiles.py; the exact
+# pin below is what pip actually resolves so CI remains reproducible.
 pytest>=8.0.0
+pytest==9.0.3
+pytest-cov==7.1.0
+mypy==2.4.0
+ruff==0.15.15

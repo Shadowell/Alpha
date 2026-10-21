@@ -7,11 +7,16 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.services.sqlite_migrations import MARKET_KLINE_DB_MIGRATIONS, migrate_database
+
 
 class KlineSQLiteStore:
     def __init__(self, db_path: str = "data/market_kline.db") -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Create/upgrade the schema once at startup; every query below uses a
+        # short-lived connection without DDL.
+        migrate_database(self.db_path, MARKET_KLINE_DB_MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=1.0)
@@ -21,227 +26,13 @@ class KlineSQLiteStore:
         conn.execute("PRAGMA busy_timeout=1000")
         return conn
 
-    def _init_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_daily (
-                symbol TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                open REAL NOT NULL,
-                high REAL NOT NULL,
-                low REAL NOT NULL,
-                close REAL NOT NULL,
-                volume REAL NOT NULL,
-                amount REAL NOT NULL,
-                source TEXT NOT NULL DEFAULT 'unknown',
-                fallback_reason TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (symbol, trade_date)
-            )
-            """
-        )
-        self._ensure_column(conn, "kline_daily", "source", "TEXT NOT NULL DEFAULT 'unknown'")
-        self._ensure_column(conn, "kline_daily", "fallback_reason", "TEXT NOT NULL DEFAULT ''")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_sync_state (
-                id INTEGER PRIMARY KEY CHECK(id = 1),
-                last_attempt_trade_date TEXT,
-                last_success_trade_date TEXT,
-                status TEXT NOT NULL,
-                symbol_count INTEGER NOT NULL DEFAULT 0,
-                total_symbols INTEGER NOT NULL DEFAULT 0,
-                synced_symbols INTEGER NOT NULL DEFAULT 0,
-                success_symbols INTEGER NOT NULL DEFAULT 0,
-                failed_symbols INTEGER NOT NULL DEFAULT 0,
-                task_id TEXT,
-                trigger_mode TEXT NOT NULL DEFAULT 'auto',
-                updated_at TEXT NOT NULL,
-                message TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-        self._ensure_column(conn, "kline_sync_state", "total_symbols", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column(conn, "kline_sync_state", "synced_symbols", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column(conn, "kline_sync_state", "success_symbols", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column(conn, "kline_sync_state", "failed_symbols", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column(conn, "kline_sync_state", "task_id", "TEXT")
-        self._ensure_column(conn, "kline_sync_state", "trigger_mode", "TEXT NOT NULL DEFAULT 'auto'")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_sync_tasks (
-                task_id TEXT PRIMARY KEY,
-                trigger_mode TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                status TEXT NOT NULL,
-                total_symbols INTEGER NOT NULL DEFAULT 0,
-                synced_symbols INTEGER NOT NULL DEFAULT 0,
-                success_symbols INTEGER NOT NULL DEFAULT 0,
-                failed_symbols INTEGER NOT NULL DEFAULT 0,
-                started_at TEXT NOT NULL,
-                finished_at TEXT,
-                message TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_sync_task_details (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                status TEXT NOT NULL,
-                elapsed_ms INTEGER NOT NULL DEFAULT 0,
-                error_message TEXT NOT NULL DEFAULT '',
-                data_source TEXT NOT NULL DEFAULT '',
-                fallback_reason TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        self._ensure_column(conn, "kline_sync_task_details", "data_source", "TEXT NOT NULL DEFAULT ''")
-        self._ensure_column(conn, "kline_sync_task_details", "fallback_reason", "TEXT NOT NULL DEFAULT ''")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_sync_tasks_started_at ON kline_sync_tasks(started_at DESC)")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_kline_sync_task_details_task_id ON kline_sync_task_details(task_id, id DESC)"
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_symbol_date ON kline_daily(symbol, trade_date DESC)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_check_reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                check_time TEXT NOT NULL,
-                report_json TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_check_reports_time ON kline_check_reports(check_time DESC)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS symbol_names (
-                symbol TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_daily_extras (
-                symbol TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                pe_ttm REAL,
-                pb REAL,
-                ps_ttm REAL,
-                turnover_rate REAL,
-                turnover_rate_f REAL,
-                volume_ratio REAL,
-                total_mv REAL,
-                circ_mv REAL,
-                up_limit REAL,
-                down_limit REAL,
-                adj_factor REAL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (symbol, trade_date)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS moneyflow_daily (
-                symbol TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                buy_sm_amount REAL,
-                sell_sm_amount REAL,
-                buy_md_amount REAL,
-                sell_md_amount REAL,
-                buy_lg_amount REAL,
-                sell_lg_amount REAL,
-                buy_elg_amount REAL,
-                sell_elg_amount REAL,
-                net_mf_amount REAL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (symbol, trade_date)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS market_capital_flow (
-                trade_date TEXT PRIMARY KEY,
-                hgt REAL,
-                sgt REAL,
-                north_money REAL,
-                south_money REAL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS index_daily (
-                ts_code TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                open REAL,
-                high REAL,
-                low REAL,
-                close REAL,
-                pre_close REAL,
-                change REAL,
-                pct_chg REAL,
-                volume REAL,
-                amount REAL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS kline_minute (
-                symbol TEXT NOT NULL,
-                bar_time TEXT NOT NULL,
-                trade_date TEXT NOT NULL,
-                open REAL,
-                high REAL,
-                low REAL,
-                close REAL,
-                volume REAL,
-                amount REAL,
-                source TEXT NOT NULL DEFAULT 'tushare',
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (symbol, bar_time)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_minute_symbol_date ON kline_minute(symbol, trade_date)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS enrichment_sync_state (
-                dataset TEXT PRIMARY KEY,
-                trade_date TEXT,
-                status TEXT NOT NULL,
-                row_count INTEGER NOT NULL DEFAULT 0,
-                message TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
-
-    @staticmethod
-    def _ensure_column(conn: sqlite3.Connection, table_name: str, col_name: str, col_def: str) -> None:
-        cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-        existing = {str(row[1]) for row in cols}
-        if col_name not in existing:
-            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}")
-
-    def upsert_symbol_klines(self, symbol: str, rows: list[dict[str, Any]], updated_at: str) -> int:
+    def upsert_symbol_klines(
+        self, symbol: str, rows: list[dict[str, Any]], updated_at: str
+    ) -> int:
         if not rows:
             return 0
 
         with self._connect() as conn:
-            self._init_schema(conn)
             payload = [
                 (
                     symbol,
@@ -281,7 +72,9 @@ class KlineSQLiteStore:
             conn.commit()
             return len(payload)
 
-    def upsert_many_klines(self, items: list[tuple[str, dict[str, Any]]], updated_at: str) -> int:
+    def upsert_many_klines(
+        self, items: list[tuple[str, dict[str, Any]]], updated_at: str
+    ) -> int:
         if not items:
             return 0
 
@@ -306,7 +99,6 @@ class KlineSQLiteStore:
             return 0
 
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO kline_daily(
@@ -332,7 +124,6 @@ class KlineSQLiteStore:
     def get_kline(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 """
                 SELECT trade_date, open, high, low, close, volume, amount, source, fallback_reason
@@ -378,7 +169,6 @@ class KlineSQLiteStore:
         message: str = "",
     ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO kline_sync_state (
@@ -417,9 +207,16 @@ class KlineSQLiteStore:
             )
             conn.commit()
 
-    def start_sync_task(self, *, task_id: str, trigger_mode: str, trade_date: str, total_symbols: int, started_at: str) -> None:
+    def start_sync_task(
+        self,
+        *,
+        task_id: str,
+        trigger_mode: str,
+        trade_date: str,
+        total_symbols: int,
+        started_at: str,
+    ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT OR REPLACE INTO kline_sync_tasks(
@@ -441,7 +238,6 @@ class KlineSQLiteStore:
         message: str,
     ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 UPDATE kline_sync_tasks
@@ -452,9 +248,10 @@ class KlineSQLiteStore:
             )
             conn.commit()
 
-    def finish_sync_task(self, *, task_id: str, status: str, finished_at: str, message: str) -> None:
+    def finish_sync_task(
+        self, *, task_id: str, status: str, finished_at: str, message: str
+    ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 UPDATE kline_sync_tasks
@@ -478,7 +275,6 @@ class KlineSQLiteStore:
         created_at: str,
     ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO kline_sync_task_details(
@@ -486,7 +282,16 @@ class KlineSQLiteStore:
                     data_source, fallback_reason, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, symbol, status, elapsed_ms, error_message, data_source, fallback_reason, created_at),
+                (
+                    task_id,
+                    symbol,
+                    status,
+                    elapsed_ms,
+                    error_message,
+                    data_source,
+                    fallback_reason,
+                    created_at,
+                ),
             )
             conn.commit()
 
@@ -510,7 +315,6 @@ class KlineSQLiteStore:
         if not payload:
             return
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO kline_sync_task_details(
@@ -574,7 +378,6 @@ class KlineSQLiteStore:
         ]
 
         with self._connect() as conn:
-            self._init_schema(conn)
             if kline_payload:
                 conn.executemany(
                     """
@@ -652,9 +455,10 @@ class KlineSQLiteStore:
             conn.commit()
         return len(kline_payload)
 
-    def fail_running_sync_tasks(self, *, finished_at: str, message: str, task_id: str | None = None) -> int:
+    def fail_running_sync_tasks(
+        self, *, finished_at: str, message: str, task_id: str | None = None
+    ) -> int:
         with self._connect() as conn:
-            self._init_schema(conn)
             if task_id:
                 cur = conn.execute(
                     """
@@ -678,7 +482,6 @@ class KlineSQLiteStore:
 
     def get_sync_state(self) -> dict[str, Any]:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute("SELECT * FROM kline_sync_state WHERE id = 1").fetchone()
             if row is None:
                 return {
@@ -708,7 +511,9 @@ class KlineSQLiteStore:
                 "failed_symbols": int(row["failed_symbols"] or 0),
                 "task_id": row["task_id"],
                 "trigger_mode": row["trigger_mode"] or "auto",
-                "progress_pct": round((synced_symbols / total_symbols) * 100, 2) if total_symbols > 0 else 0.0,
+                "progress_pct": round((synced_symbols / total_symbols) * 100, 2)
+                if total_symbols > 0
+                else 0.0,
                 "updated_at": row["updated_at"],
                 "message": row["message"],
             }
@@ -718,8 +523,9 @@ class KlineSQLiteStore:
         safe_size = max(1, min(int(page_size), 200))
         offset = (safe_page - 1) * safe_size
         with self._connect() as conn:
-            self._init_schema(conn)
-            total = conn.execute("SELECT COUNT(*) AS c FROM kline_sync_tasks").fetchone()["c"]
+            total = conn.execute(
+                "SELECT COUNT(*) AS c FROM kline_sync_tasks"
+            ).fetchone()["c"]
             rows = conn.execute(
                 """
                 SELECT task_id, trigger_mode, trade_date, status, total_symbols, synced_symbols, success_symbols, failed_symbols,
@@ -746,11 +552,15 @@ class KlineSQLiteStore:
             }
             for row in rows
         ]
-        return {"page": safe_page, "page_size": safe_size, "total": int(total), "items": items}
+        return {
+            "page": safe_page,
+            "page_size": safe_size,
+            "total": int(total),
+            "items": items,
+        }
 
     def get_sync_task_detail(self, task_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             task = conn.execute(
                 """
                 SELECT task_id, trigger_mode, trade_date, status, total_symbols, synced_symbols, success_symbols, failed_symbols,
@@ -834,7 +644,6 @@ class KlineSQLiteStore:
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO kline_daily_extras(
@@ -880,7 +689,6 @@ class KlineSQLiteStore:
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 f"""
                 INSERT INTO moneyflow_daily(
@@ -911,7 +719,6 @@ class KlineSQLiteStore:
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO market_capital_flow(
@@ -951,7 +758,6 @@ class KlineSQLiteStore:
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO index_daily(
@@ -996,7 +802,6 @@ class KlineSQLiteStore:
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO kline_minute(
@@ -1030,7 +835,6 @@ class KlineSQLiteStore:
         updated_at: str,
     ) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 """
                 INSERT INTO enrichment_sync_state(
@@ -1050,7 +854,6 @@ class KlineSQLiteStore:
     def get_daily_extras(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 """
                 SELECT trade_date, pe_ttm, pb, ps_ttm, turnover_rate, turnover_rate_f,
@@ -1083,7 +886,6 @@ class KlineSQLiteStore:
     def get_moneyflow(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 """
                 SELECT * FROM moneyflow_daily
@@ -1112,7 +914,6 @@ class KlineSQLiteStore:
     def get_market_capital_flow(self, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 """
                 SELECT trade_date, hgt, sgt, north_money, south_money
@@ -1136,7 +937,6 @@ class KlineSQLiteStore:
     def get_index_daily(self, ts_code: str, days: int = 30) -> list[dict[str, Any]]:
         query_days = max(1, min(days, 365))
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 """
                 SELECT trade_date, open, high, low, close, pre_close, change,
@@ -1172,7 +972,6 @@ class KlineSQLiteStore:
     ) -> list[dict[str, Any]]:
         query_limit = max(1, min(limit, 2000))
         with self._connect() as conn:
-            self._init_schema(conn)
             if trade_date:
                 rows = conn.execute(
                     """
@@ -1212,7 +1011,6 @@ class KlineSQLiteStore:
 
     def get_enrichment_overview(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
-            self._init_schema(conn)
             states = {
                 str(row["dataset"]): dict(row)
                 for row in conn.execute("SELECT * FROM enrichment_sync_state").fetchall()
@@ -1273,7 +1071,6 @@ class KlineSQLiteStore:
 
     def get_stats(self) -> dict[str, Any]:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute(
                 """
                 SELECT
@@ -1301,7 +1098,6 @@ class KlineSQLiteStore:
     def get_trade_dates_from_db(self, limit: int = 3000) -> list[str]:
         """从 kline_daily 提取所有不重复的交易日（升序）。"""
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 "SELECT DISTINCT trade_date FROM kline_daily ORDER BY trade_date ASC LIMIT ?",
                 (limit,),
@@ -1311,18 +1107,20 @@ class KlineSQLiteStore:
     def get_all_symbols(self) -> list[str]:
         """从 kline_daily 提取所有不重复的 symbol。"""
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute(
                 "SELECT DISTINCT symbol FROM kline_daily ORDER BY symbol ASC"
             ).fetchall()
         return [r["symbol"] for r in rows]
 
-    def get_latest_snapshot(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+    def get_latest_snapshot(
+        self, trade_date: str | None = None
+    ) -> list[dict[str, Any]]:
         """从 kline_daily 构建最近交易日的类行情快照，用于替代实时接口。"""
         with self._connect() as conn:
-            self._init_schema(conn)
             if not trade_date:
-                row = conn.execute("SELECT MAX(trade_date) AS d FROM kline_daily").fetchone()
+                row = conn.execute(
+                    "SELECT MAX(trade_date) AS d FROM kline_daily"
+                ).fetchone()
                 trade_date = row["d"] if row and row["d"] else ""
             if not trade_date:
                 return []
@@ -1369,11 +1167,14 @@ class KlineSQLiteStore:
         """批量写入股票代码到名称的映射（幂等）。返回写入条数。"""
         if not name_map:
             return 0
-        payload = [(str(code), str(name), updated_at) for code, name in name_map.items() if code and name]
+        payload = [
+            (str(code), str(name), updated_at)
+            for code, name in name_map.items()
+            if code and name
+        ]
         if not payload:
             return 0
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.executemany(
                 """
                 INSERT INTO symbol_names(symbol, name, updated_at)
@@ -1390,7 +1191,6 @@ class KlineSQLiteStore:
     def load_symbol_names(self) -> dict[str, str]:
         """读取全部 symbol->name 映射。"""
         with self._connect() as conn:
-            self._init_schema(conn)
             rows = conn.execute("SELECT symbol, name FROM symbol_names").fetchall()
         return {r["symbol"]: r["name"] for r in rows}
 
@@ -1399,7 +1199,6 @@ class KlineSQLiteStore:
         if not trade_dates:
             return set()
         with self._connect() as conn:
-            self._init_schema(conn)
             placeholders = ",".join("?" for _ in trade_dates)
             rows = conn.execute(
                 f"SELECT symbol, trade_date FROM kline_daily WHERE trade_date IN ({placeholders})",
@@ -1411,7 +1210,6 @@ class KlineSQLiteStore:
 
     def save_check_report(self, report: dict[str, Any]) -> None:
         with self._connect() as conn:
-            self._init_schema(conn)
             conn.execute(
                 "INSERT INTO kline_check_reports(check_time, report_json) VALUES (?, ?)",
                 (report.get("check_time", ""), json.dumps(report, ensure_ascii=False)),
@@ -1423,7 +1221,6 @@ class KlineSQLiteStore:
 
     def get_latest_check_report(self) -> dict[str, Any] | None:
         with self._connect() as conn:
-            self._init_schema(conn)
             row = conn.execute(
                 "SELECT report_json FROM kline_check_reports ORDER BY id DESC LIMIT 1"
             ).fetchone()

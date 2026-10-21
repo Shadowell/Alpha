@@ -105,7 +105,12 @@ class TestKronosStatus:
 
         svc = KronosPredictService(kline_store=object(), provider=object())
         s = svc.status()
-        assert s == {"loaded": False, "loading": False}
+        assert s["loaded"] is False
+        assert s["loading"] is False
+        # #17: cache statistics are exposed alongside the load state.
+        assert {"cache_hits", "cache_misses", "cache_hit_rate", "cache_entries"} <= s.keys()
+        assert s["cache_entries"] == 0
+        assert s["cache"]["hits"] == 0
 
 
 # ── enqueue_incremental_range 日历过滤 ────────────────────────
