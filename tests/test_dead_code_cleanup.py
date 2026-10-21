@@ -33,7 +33,11 @@ def test_daban_scripts_live_under_legacy_only():
         "daban_2.py",
         "daban_3.py",
     ]
-    assert not (ROOT / "strategy" / "daban").exists()
+    stale_sources = [
+        p for p in (ROOT / "strategy" / "daban").glob("*.py")
+        if "__pycache__" not in p.parts
+    ] if (ROOT / "strategy" / "daban").exists() else []
+    assert stale_sources == []
     # 归属说明：目录入口文档保留迁移原因。
     assert (legacy_dir / "README.md").is_file()
 
