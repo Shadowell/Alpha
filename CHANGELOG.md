@@ -8,6 +8,7 @@
 
 - Bilingual README overview (English + 中文) with contribution / security entry points.
 - CONTRIBUTING.md, SECURITY.md, GitHub Issue templates, and PR template for OSS maintainership.
+- 新增 `app/services/paths.py`：以项目根目录解析数据/日志绝对路径，支持 `ALPHA_DATA_DIR` / `ALPHA_LOG_DIR` 覆盖，供 DB 与 shutdown checkpoint 复用（#21）。
 
 ### Removed
 
