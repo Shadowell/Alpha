@@ -211,3 +211,25 @@ test('两个页面都声明 CSP 且禁止内联脚本', async ({ page, request }
   expect(csp).toContain("default-src 'self'");
   expect(csp).toContain("script-src 'self' https://cdn.jsdelivr.net");
 });
+
+test('notice.html 独立页面加载共享安全模块', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/static/notice.html');
+  await expect(page.locator('#statusBar')).toContainText('就绪');
+  expect(await page.evaluate(() => typeof window.esc)).toBe('function');
+  expect(await page.evaluate(() => typeof window.safeLinkHtml)).toBe('function');
+  expect(await page.locator('meta[http-equiv="Content-Security-Policy"]').count()).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('CSP meta 实际阻断内联脚本执行', async ({ page }) => {
+  await page.goto('/');
+  const executed = await page.evaluate(() => {
+    const script = document.createElement('script');
+    script.textContent = 'window.__cspInline = 1';
+    document.body.appendChild(script);
+    return window.__cspInline;
+  });
+  expect(executed).toBeUndefined();
+});
