@@ -358,3 +358,74 @@ class TestPerformance:
         elapsed = time.time() - t0
         assert r.status_code == 200, f"{path} 返回 {r.status_code}"
         assert elapsed < 3.0, f"{path} 耗时 {elapsed:.2f}s 超过 3s"
+
+
+# ─────────────────────────────────────────────
+# 13. 健康检查 / 任务队列 / 指标
+# ─────────────────────────────────────────────
+
+class TestSystemObservability:
+    def test_health(self, client):
+        r = client.get("/api/health")
+        assert r.status_code in (200, 503)
+        data = r.json()
+        assert data["status"] in ("ok", "degraded", "error")
+        assert set(data["checks"]) >= {
+            "database", "background_tasks", "kronos", "kline_data", "jobs",
+        }
+        # 回归环境数据库必须可读；数据未同步允许 degraded
+        assert data["checks"]["database"]["status"] == "ok"
+        assert data["status"] in ("ok", "degraded")
+
+    def test_metrics(self, client):
+        r = client.get("/api/metrics")
+        assert r.status_code == 200
+        data = r.json()
+        assert "counters" in data["metrics"]
+        assert "requests_total" in data["metrics"]["counters"]
+        assert "queued" in data["jobs"]
+
+    def test_jobs_list(self, client):
+        r = client.get("/api/jobs?limit=5")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data["items"], list)
+        assert data["total"] == len(data["items"])
+
+    def test_unknown_job_404(self, client):
+        r = client.get("/api/jobs/definitely-not-a-job")
+        assert r.status_code == 404
+
+    def test_request_id_header(self, client):
+        r = client.get("/api/health", headers={"X-Request-ID": "regression-trace"})
+        assert r.headers.get("X-Request-ID") == "regression-trace"
+
+
+# ─────────────────────────────────────────────
+# 14. 写入校验（只发非法请求，不落库）
+# ─────────────────────────────────────────────
+
+class TestRequestValidation:
+    def test_paper_settings_invalid_rate(self, client):
+        r = client.post("/api/paper/settings", json={"commission_rate": 2})
+        assert r.status_code == 422
+        assert r.json()["detail"]
+
+    def test_paper_buy_invalid_qty(self, client):
+        r = client.post("/api/paper/buy", json={"symbol": "600519", "qty": "abc"})
+        assert r.status_code == 422
+
+    def test_predict_config_invalid(self, client):
+        r = client.post("/api/predict-funnel/config", json={"top_k_boards": 0})
+        assert r.status_code == 422
+
+    def test_custom_strategy_invalid_rule(self, client):
+        r = client.post(
+            "/api/strategy/custom",
+            json={"name": "非法策略", "rules": [{"rule_code": "not_a_rule"}]},
+        )
+        assert r.status_code == 422
+
+    def test_backtest_query_bounds(self, client):
+        r = client.post("/api/strategy/custom/any-id/backtest?hold_days=0")
+        assert r.status_code == 422

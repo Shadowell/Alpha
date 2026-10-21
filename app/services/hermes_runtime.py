@@ -7,13 +7,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
-import traceback
 from typing import Any
 
 from app.services.hermes_memory import HermesMemory
 from app.services.time_utils import now_cn
+
+log = logging.getLogger("hermes")
 
 _TASK_TIMEOUT = 180  # Agent 模式需要更长超时
 _MAX_CONCURRENT = 2
@@ -122,7 +124,7 @@ class HermesRuntime:
                     task_id, status="failed", error_message=str(exc), elapsed_ms=elapsed
                 )
                 self._record_failure(task_type)
-                print(f"[hermes] task {task_type} failed: {exc}\n{traceback.format_exc()}")
+                log.exception("task %s failed: %s", task_type, exc)
                 return {"success": False, "task_id": task_id, "message": str(exc)}
 
             finally:
@@ -235,11 +237,11 @@ class HermesRuntime:
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
                     return _json.loads(raw[start:end])
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — 提取失败返回 None
+                log.debug("extract JSON from LLM response failed: %s", exc)
             return None
         except Exception as e:
-            print(f"[hermes] agent delegation failed: {e}")
+            log.warning("agent delegation failed: %s", e)
             return None
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> dict | None:
@@ -256,7 +258,7 @@ class HermesRuntime:
                 model = "hermes-agent"
                 timeout = 90
                 use_json_format = False
-                print("[hermes] fallback: using local hermes-agent API Server")
+                log.info("fallback: using local hermes-agent API Server")
             else:
                 return None
         else:
@@ -292,18 +294,18 @@ class HermesRuntime:
                 content = data["choices"][0]["message"]["content"]
                 return _json.loads(content)
         except _json.JSONDecodeError:
-            print(f"[hermes] LLM returned non-JSON, extracting...")
+            log.warning("LLM returned non-JSON, extracting")
             try:
                 raw = data["choices"][0]["message"]["content"]
                 start = raw.find("{")
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
                     return _json.loads(raw[start:end])
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — 提取失败返回 None
+                log.debug("extract JSON from LLM response failed: %s", exc)
             return None
         except Exception as e:
-            print(f"[hermes] LLM call failed: {e}")
+            log.warning("LLM call failed: %s", e)
             return None
 
     # ── System Prompts ──
@@ -417,7 +419,7 @@ class HermesRuntime:
                 },
             }
 
-        print("[hermes] agent delegation failed, falling back to legacy mode")
+        log.warning("agent delegation failed, falling back to legacy mode")
         return await self._do_daily_review_fallback(task_id, tool_calls)
 
     async def _do_daily_review_fallback(self, task_id: int, tool_calls: list) -> dict:
@@ -565,7 +567,7 @@ class HermesRuntime:
                 },
             }
 
-        print("[hermes] agent delegation failed, falling back to legacy mode")
+        log.warning("agent delegation failed, falling back to legacy mode")
         return await self._do_notice_review_fallback(task_id, tool_calls)
 
     async def _do_notice_review_fallback(self, task_id: int, tool_calls: list) -> dict:
@@ -690,9 +692,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             return {"success": True, "message_id": msg_id, "content": content, "elapsed_ms": elapsed}
 
         except Exception as exc:
-            print(f"[hermes] monitor tick failed: {exc}")
-            import traceback
-            traceback.print_exc()
+            log.exception("monitor tick failed: %s", exc)
             return {"success": False, "message": str(exc)}
         finally:
             self._monitor_running = False
@@ -789,7 +789,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
                 if result:
                     return result
             except Exception as e:
-                print(f"[hermes] CLI call failed: {e}")
+                log.warning("CLI call failed: %s", e)
 
         # 2) HTTP API fallback
         import httpx
@@ -827,7 +827,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
         except Exception as e:
-            print(f"[hermes] monitor HTTP LLM call failed: {e}")
+            log.warning("monitor HTTP LLM call failed: %s", e)
             return None
 
     async def _call_hermes_cli(self, system_prompt: str, user_prompt: str) -> str | None:
@@ -843,12 +843,12 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
         except asyncio.TimeoutError:
             proc.kill()
-            print("[hermes] CLI call timed out (180s)")
+            log.warning("CLI call timed out (180s)")
             return None
 
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip()[:500]
-            print(f"[hermes] CLI exit code {proc.returncode}: {err}")
+            log.warning("CLI exit code %s: %s", proc.returncode, err)
             return None
 
         raw = stdout.decode(errors="replace").strip()
@@ -879,7 +879,7 @@ LLM 打分: {'开启' if notice_data.get('llm_enabled') else '关闭'}
 
         if not content:
             return None
-        print(f"[hermes] CLI response: {len(content)} chars")
+        log.info("CLI response: %s chars", len(content))
         return content
 
     # ── 状态查询 ──
@@ -921,18 +921,18 @@ async def hermes_scheduler_loop(runtime: HermesRuntime) -> None:
             if h == 15 and 30 <= m < 40:
                 last = runtime.memory.get_last_task("daily_review")
                 if not last or last.get("started_at", "")[:10] != n.date().isoformat():
-                    print("[hermes] scheduled daily_review")
+                    log.info("scheduled daily_review")
                     await runtime.run_task("daily_review", trigger="scheduled")
 
             # 公告复盘 21:00
             if h == 21 and 0 <= m < 10:
                 last = runtime.memory.get_last_task("notice_review")
                 if not last or last.get("started_at", "")[:10] != n.date().isoformat():
-                    print("[hermes] scheduled notice_review")
+                    log.info("scheduled notice_review")
                     await runtime.run_task("notice_review", trigger="scheduled")
 
         except Exception as e:
-            print(f"[hermes] scheduler error: {e}")
+            log.exception("scheduler error: %s", e)
 
         await asyncio.sleep(300)
 
@@ -958,10 +958,10 @@ async def monitor_loop(runtime: HermesRuntime, hub: Any = None) -> None:
                             last_ts = datetime.fromisoformat(last["created_at"])
                             diff_min = (n - last_ts).total_seconds() / 60
                             should_run = diff_min >= interval
-                        except Exception:
-                            pass
+                        except Exception as exc:  # noqa: BLE001 — 时间解析失败按需执行
+                            log.debug("parse last monitor timestamp failed: %s", exc)
                     if should_run:
-                        print(f"[monitor] tick at {n.strftime('%H:%M')}")
+                        log.info("monitor tick at %s", n.strftime("%H:%M"))
                         result = await runtime.run_monitor_tick(trigger="scheduled")
                         if result.get("success") and hub:
                             await hub.broadcast("monitor_update", {
@@ -971,7 +971,7 @@ async def monitor_loop(runtime: HermesRuntime, hub: Any = None) -> None:
                                 "trigger": "scheduled",
                             })
         except Exception as e:
-            print(f"[monitor] loop error: {e}")
+            log.exception("monitor loop error: %s", e)
         await asyncio.sleep(30)
 
 
