@@ -11,7 +11,7 @@ import pandas as pd
 from app.services.data_provider import AkshareDataProvider, to_float
 from app.services.kline_store import KlineSQLiteStore
 from app.services.market_data_client import EastmoneyMarketDataClient
-from app.services.time_utils import now_cn
+from app.services.time_utils import now_cn, now_cn_naive, parse_cn_datetime
 
 
 _CONCURRENCY = 8
@@ -204,11 +204,11 @@ class KlineCacheService:
         if state.get("attempt_trade_date") == trade_date:
             updated_raw = str(state.get("updated_at") or "")
             try:
-                last_attempt = datetime.fromisoformat(updated_raw)
+                last_attempt = parse_cn_datetime(updated_raw)
                 elapsed = (now - last_attempt).total_seconds()
                 if 0 <= elapsed < _ATTEMPT_RETRY_COOLDOWN_SEC:
                     return None
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
 
         # D1：未收盘定型时不发起自动同步
@@ -1327,68 +1327,6 @@ class KlineCacheService:
     def get_sync_log_detail(self, task_id: str) -> dict[str, Any] | None:
         return self.store.get_sync_task_detail(task_id)
 
-    def build_snapshot_for_screen(self, trade_date: str) -> pd.DataFrame:
-        rows = []
-        import sqlite3
-
-        conn = sqlite3.connect(str(self.store.db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            all_rows = conn.execute(
-                """
-                SELECT symbol, trade_date, open, high, low, close, volume, amount
-                FROM kline_daily
-                WHERE trade_date <= ?
-                ORDER BY symbol ASC, trade_date ASC
-                """,
-                (trade_date,),
-            ).fetchall()
-            if not all_rows:
-                return pd.DataFrame()
-        finally:
-            conn.close()
-
-        latest_map: dict[str, dict[str, Any]] = {}
-        prev_close_map: dict[str, float] = {}
-        for row in all_rows:
-            symbol = str(row["symbol"])
-            if symbol in latest_map:
-                prev_close_map[symbol] = float(latest_map[symbol]["close"])
-            latest_map[symbol] = {
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-                "volume": float(row["volume"]),
-                "amount": float(row["amount"]),
-            }
-
-        # build_snapshot_for_screen is called from sync context in funnel_service;
-        # provider.get_symbol_name_map is now async, so use cached data if available.
-        name_map: dict[str, str] = {}
-        if self.provider.symbol_name_cache is not None:
-            _, name_map = self.provider.symbol_name_cache
-        for symbol, item in latest_map.items():
-            close = float(item["close"])
-            pre_close = float(prev_close_map.get(symbol, close))
-            pct = ((close / max(pre_close, 0.01)) - 1) * 100
-            rows.append(
-                {
-                    "代码": symbol,
-                    "名称": name_map.get(symbol, symbol),
-                    "今开": float(item["open"]),
-                    "昨收": pre_close,
-                    "最新价": close,
-                    "最高": float(item["high"]),
-                    "最低": float(item["low"]),
-                    "成交量": float(item["volume"]),
-                    "成交额": float(item["amount"]),
-                    "涨跌幅": pct,
-                    "总市值": pd.NA,
-                }
-            )
-        return pd.DataFrame(rows)
-
     # ── 数据完整性检查 ─────────────────────────────────────
 
     async def check_data_integrity(self, days: int = 30) -> dict[str, Any]:
@@ -1510,7 +1448,8 @@ class KlineCacheService:
             try:
                 name_map = self.store.load_symbol_names()
                 if name_map:
-                    self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                    # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                    self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
             except Exception as exc:
                 print(f"[kline_cache] load_symbol_names failed: {exc}")
                 name_map = {}
@@ -1521,7 +1460,8 @@ class KlineCacheService:
                 try:
                     name_map = await fetch_symbol_names()
                     if name_map:
-                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
                 except Exception as exc:
                     print(f"[kline_cache] fetch symbol names from primary source failed: {exc}")
@@ -1536,7 +1476,8 @@ class KlineCacheService:
                         if r.get("代码") and r.get("名称")
                     }
                     if name_map:
-                        self.provider.symbol_name_cache = (datetime.now(), dict(name_map))
+                        # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
+                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
             except Exception as exc:
                 print(f"[kline_cache] fetch symbol names from eastmoney failed: {exc}")
