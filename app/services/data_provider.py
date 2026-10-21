@@ -10,6 +10,8 @@ from typing import Any
 import akshare as ak
 import pandas as pd
 
+from app.services.blocking_io import run_blocking
+
 
 def _live_market_data_enabled() -> bool:
     return os.getenv("ENABLE_LIVE_MARKET_DATA", "true").strip().lower() not in {
@@ -75,7 +77,7 @@ class AkshareDataProvider:
     async def _fetch_spot_em(self) -> pd.DataFrame:
         """拉取东财全市场 spot 快照（真正的实时接口），失败自动降级到 sina。"""
         try:
-            df = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+            df = await run_blocking(ak.stock_zh_a_spot_em, name="akshare.stock_zh_a_spot_em")
             payload = self._normalize_snapshot(df)
             if not payload.empty:
                 await self._ensure_names_from_snapshot(payload)
@@ -84,7 +86,7 @@ class AkshareDataProvider:
             print(f"[data_provider] _fetch_spot_em failed: {exc}")
         # 兜底：新浪 spot
         try:
-            df = await asyncio.to_thread(ak.stock_zh_a_spot)
+            df = await run_blocking(ak.stock_zh_a_spot, name="akshare.stock_zh_a_spot")
             payload = self._normalize_snapshot(df)
             if not payload.empty:
                 await self._ensure_names_from_snapshot(payload)
@@ -220,7 +222,7 @@ class AkshareDataProvider:
         last_exc: Exception | None = None
         for idx in range(retries + 1):
             try:
-                df = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+                df = await run_blocking(ak.stock_zh_a_spot_em, name="akshare.stock_zh_a_spot_em")
                 payload = self._normalize_snapshot(df)
                 if not payload.empty:
                     self.realtime_snapshot_cache = (datetime.now(), payload)
@@ -262,7 +264,7 @@ class AkshareDataProvider:
         if not _live_market_data_enabled():
             return pd.DataFrame({"trade_date": db_dates}) if db_dates else pd.DataFrame(columns=["trade_date"])
         try:
-            df = await asyncio.to_thread(ak.tool_trade_date_hist_sina)
+            df = await run_blocking(ak.tool_trade_date_hist_sina, name="akshare.tool_trade_date_hist_sina")
             if df is None or df.empty:
                 return pd.DataFrame({"trade_date": db_dates}) if db_dates else pd.DataFrame(columns=["trade_date"])
             return df.copy()
@@ -310,13 +312,14 @@ class AkshareDataProvider:
             return pd.DataFrame()
 
         try:
-            df = await asyncio.to_thread(
+            df = await run_blocking(
                 ak.stock_zh_a_hist,
                 symbol=symbol,
                 period="daily",
                 start_date=start_date,
                 end_date=end_date,
                 adjust=adjust,
+                name="akshare.stock_zh_a_hist",
             )
             if df is None or df.empty:
                 raise ValueError("empty from stock_zh_a_hist")
@@ -325,12 +328,13 @@ class AkshareDataProvider:
             print(f"[data_provider] get_hist failed for {symbol}: {exc}")
         try:
             tx_symbol = _to_tx_symbol(symbol)
-            tx_df = await asyncio.to_thread(
+            tx_df = await run_blocking(
                 ak.stock_zh_a_hist_tx,
                 symbol=tx_symbol,
                 start_date=start_date,
                 end_date=end_date,
                 adjust=adjust,
+                name="akshare.stock_zh_a_hist_tx",
             )
             if tx_df is None or tx_df.empty:
                 return pd.DataFrame()
@@ -362,7 +366,7 @@ class AkshareDataProvider:
                 return cached.copy()
 
         try:
-            df = await asyncio.to_thread(ak.stock_board_industry_summary_ths)
+            df = await run_blocking(ak.stock_board_industry_summary_ths, name="akshare.stock_board_industry_summary_ths")
             if df is not None and not df.empty:
                 result = _normalize_ths_industry(df)
                 if not result.empty:
@@ -397,7 +401,7 @@ class AkshareDataProvider:
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
-                df = await asyncio.to_thread(ak.stock_board_concept_name_em)
+                df = await run_blocking(ak.stock_board_concept_name_em, name="akshare.stock_board_concept_name_em")
                 if df is not None and not df.empty:
                     return df.copy(), "em"
             except Exception as exc:
@@ -406,7 +410,7 @@ class AkshareDataProvider:
                     await asyncio.sleep(base_delay_sec * (attempt + 1))
         print(f"[data_provider] stock_board_concept_name_em failed after {retries} tries: {last_exc}")
         try:
-            ths = await asyncio.to_thread(ak.stock_board_concept_name_ths)
+            ths = await run_blocking(ak.stock_board_concept_name_ths, name="akshare.stock_board_concept_name_ths")
         except Exception as exc2:
             if last_exc is not None:
                 raise last_exc from exc2
@@ -432,7 +436,9 @@ class AkshareDataProvider:
         em_attempts = 5
         for attempt in range(em_attempts):
             try:
-                df = await asyncio.to_thread(ak.stock_board_concept_cons_em, symbol=concept_name)
+                df = await run_blocking(
+                    ak.stock_board_concept_cons_em, symbol=concept_name, name="akshare.stock_board_concept_cons_em"
+                )
                 if df is not None and not df.empty:
                     break
             except Exception as exc:
@@ -443,7 +449,11 @@ class AkshareDataProvider:
             ind_attempts = 3
             for attempt in range(ind_attempts):
                 try:
-                    df = await asyncio.to_thread(ak.stock_board_industry_cons_em, symbol=concept_name)
+                    df = await run_blocking(
+                        ak.stock_board_industry_cons_em,
+                        symbol=concept_name,
+                        name="akshare.stock_board_industry_cons_em",
+                    )
                     if df is not None and not df.empty:
                         break
                 except Exception as exc:
@@ -528,7 +538,7 @@ class AkshareDataProvider:
 
         # 2) 兜底：同花顺创新高榜（"涨跌幅"是当日）
         try:
-            df = await asyncio.to_thread(ak.stock_rank_cxg_ths)
+            df = await run_blocking(ak.stock_rank_cxg_ths, name="akshare.stock_rank_cxg_ths")
             if df is not None and not df.empty:
                 result = _normalize_ths_cxg(df)
                 if not result.empty:
@@ -539,7 +549,7 @@ class AkshareDataProvider:
 
         # 3) 最终兜底：lxsz 连涨榜（change_pct 是累计连涨幅，字段不准，仅保证页面非空）
         try:
-            df = await asyncio.to_thread(ak.stock_rank_lxsz_ths)
+            df = await run_blocking(ak.stock_rank_lxsz_ths, name="akshare.stock_rank_lxsz_ths")
             if df is not None and not df.empty:
                 result = _normalize_ths_lxsz(df)
                 if not result.empty:
@@ -626,7 +636,7 @@ class AkshareDataProvider:
     async def _refresh_names_from_live(self) -> None:
         """后台刷新 symbol 名称映射（DB 命中后异步兜底更新）。"""
         try:
-            df = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+            df = await run_blocking(ak.stock_zh_a_spot_em, name="akshare.stock_zh_a_spot_em")
             payload = self._normalize_snapshot(df)
             if payload.empty:
                 return

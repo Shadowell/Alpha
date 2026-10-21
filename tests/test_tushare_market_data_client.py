@@ -88,3 +88,29 @@ def test_stock_basic_is_normalized_to_alpha_symbol_map():
 
     assert names == {"600000": "浦发银行", "000001": "平安银行"}
     assert client.describe()["last_operation"]["source"] == "tushare"
+
+
+def test_tushare_timeout_falls_back_to_eastmoney(monkeypatch):
+    import time
+
+    monkeypatch.setenv("ALPHA_EXTERNAL_TIMEOUT_SECONDS", "0.15")
+
+    def _slow_daily(**kwargs):
+        time.sleep(0.8)
+        return pd.DataFrame()
+
+    pro = SimpleNamespace(daily=Mock(side_effect=_slow_daily))
+    tushare = SimpleNamespace(set_token=Mock(), pro_api=Mock(return_value=pro))
+    client = TushareFirstMarketDataClient(
+        fallback=FakeFallback(), token="test-token", tushare_module=tushare
+    )
+
+    started = time.monotonic()
+    frame = _run(client.fetch_hist("600000", "20260807", "20260807"))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert frame.iloc[0]["收盘"] == 10
+    assert frame.attrs["data_source"] == "eastmoney"
+    assert frame.attrs["fallback_reason"] == "tushare_timeout"
+    assert client.describe()["last_operation"]["source"] == "eastmoney"

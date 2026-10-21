@@ -1,8 +1,10 @@
 import asyncio
+import time
 
 import pandas as pd
 
 from app.services import data_provider as provider_mod
+from app.services.blocking_io import reset_external_io_state
 from app.services.data_provider import AkshareDataProvider, _parse_percent, _parse_up_down
 
 
@@ -46,3 +48,52 @@ def test_get_hist_fallback_to_tx_when_main_source_fails(monkeypatch):
     assert not out.empty
     assert {"日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"}.issubset(set(out.columns))
     assert out.iloc[0]["日期"] == "2026-04-10"
+
+
+class _FakeKlineStore:
+    def get_latest_snapshot(self):
+        return [
+            {
+                "symbol": "000001",
+                "close": 10.2,
+                "prev_close": 10.0,
+                "open": 10.0,
+                "high": 10.3,
+                "low": 9.9,
+                "volume": 1000,
+                "amount": 10200,
+            }
+        ]
+
+
+def test_hanging_akshare_source_falls_back_to_db_and_keeps_default_executor_free(monkeypatch):
+    """永久挂起的 AkShare 调用必须在超时内降级，且不能占满默认线程池。"""
+    monkeypatch.setenv("ALPHA_EXTERNAL_TIMEOUT_SECONDS", "0.15")
+    reset_external_io_state()
+
+    def _hang(*args, **kwargs):
+        time.sleep(0.8)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(provider_mod.ak, "stock_zh_a_spot_em", _hang)
+    monkeypatch.setattr(provider_mod.ak, "stock_zh_a_spot", _hang)
+
+    provider = AkshareDataProvider(kline_store=_FakeKlineStore())
+    started = time.monotonic()
+    snapshot = asyncio.run(provider.get_realtime_snapshot(prefer_live=True, retries=0))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert not snapshot.empty
+    assert provider.realtime_snapshot_source == "db_fallback"
+
+    # 默认执行器仍然可用：并发 20 个 to_thread 任务应当很快完成。
+    async def _default_executor_probe():
+        return await asyncio.wait_for(
+            asyncio.gather(*[asyncio.to_thread(lambda: 1) for _ in range(20)]),
+            timeout=1.0,
+        )
+
+    started = time.monotonic()
+    assert asyncio.run(_default_executor_probe()) == [1] * 20
+    assert time.monotonic() - started < 1.0

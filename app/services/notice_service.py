@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -8,6 +7,7 @@ import akshare as ak
 
 from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS, VALID_POOLS
 from app.models import NoticeDetailResponse, NoticeFunnelResponse, NoticeItem
+from app.services.blocking_io import ExternalTimeoutError, run_blocking
 from app.services.notice_llm import score_with_llm
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
@@ -114,7 +114,30 @@ class NoticeService:
 
     async def run_notice_screen(self, notice_date: str | None = None, limit: int = 10, keywords: list[str] | None = None) -> dict[str, Any]:
         yyyymmdd, display_date = _normalize_notice_date(notice_date)
-        df = await asyncio.to_thread(ak.stock_notice_report, symbol="全部", date=yyyymmdd)
+        try:
+            df = await run_blocking(
+                ak.stock_notice_report,
+                symbol="全部",
+                date=yyyymmdd,
+                name="akshare.stock_notice_report",
+            )
+        except ExternalTimeoutError:
+            # 公告源超时：不清空已有公告池，返回上次结果并标记 degraded，
+            # 让前端/定时任务在本轮降级而不是整体 503。
+            self.updated_at = now_cn().isoformat()
+            has_cached = bool(self.entries)
+            if not has_cached:
+                self.source = "timeout"
+            return {
+                "success": False,
+                "degraded": True,
+                "reason": "timeout",
+                "message": "公告数据源超时，" + ("已返回上次公告池" if has_cached else "本次无可用公告"),
+                "candidate_count": len(self.entries),
+                "notice_date": display_date,
+                "source": self.source,
+                "llm_enabled": self.llm_enabled,
+            }
         if df is None or df.empty:
             self.entries = {}
             self.updated_at = now_cn().isoformat()
