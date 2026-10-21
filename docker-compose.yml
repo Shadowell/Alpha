@@ -3,8 +3,11 @@ services:
     build: .
     image: alpha:latest
     container_name: alpha
-    # 安全默认：仅本机可访问。如需局域网/外网访问，改为 "18888:18888"
-    # 并务必配置鉴权（当前版本 API 无鉴权，见 README「安全提示」）。
+    # 安全默认：仅本机可访问。如需局域网/外网访问，必须同时完成两步：
+    #   1) 端口映射改为 "18888:18888"
+    #   2) 设置 ALPHA_EDGE_EXPOSURE: "public" 并配置 ALPHA_WRITE_TOKEN
+    #      （所有写请求需携带 X-Alpha-Token；只改端口不配 token 会在启动时
+    #      被 deployment_guard 直接 fail-fast 拒绝启动）。
     ports:
       - "127.0.0.1:18888:18888"
     env_file:
@@ -13,9 +16,14 @@ services:
       # 容器内必须绑 0.0.0.0（宿主机暴露面由上面的端口映射控制）
       HOST: 0.0.0.0
       PORT: "18888"
+      # 端口暴露面声明：loopback = 只通过宿主机回环地址发布（当前默认）；
+      # public = 发布到局域网/公网，必须同时配置 ALPHA_WRITE_TOKEN。
+      # 未知取值按 public 处理（fail-closed）。
+      ALPHA_EDGE_EXPOSURE: "loopback"
       # 写防护适配：经 docker-proxy NAT 后容器内看不到真实来源 IP，
       # 信任宿主机的端口绑定（默认仅 127.0.0.1）作为访问边界。
-      # ⚠️ 若把端口映射改为 "18888:18888" 暴露到局域网，请删除此项并改配 ALPHA_WRITE_TOKEN。
+      # ⚠️ 仅绑定回环时可用；若改为 "18888:18888" 对外发布，必须配置
+      # ALPHA_WRITE_TOKEN（否则启动失败），推荐同时删除本项改用 token 模式。
       ALPHA_TRUST_EDGE: "1"
     volumes:
       # ⚠️ 数据库必须放命名卷（VM 内 ext4）：macOS VirtioFS bind mount 上的
@@ -28,7 +36,9 @@ services:
       - alpha_hf_cache:/root/.cache/huggingface
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/', timeout=5)\""]
+      # /api/health 汇总 SQLite、后台任务、Kronos、数据新鲜度状态（P2a 实现）；
+      # 根路径只返回静态页面，无法反映依赖是否健康。
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/api/health', timeout=5)\""]
       interval: 30s
       timeout: 10s
       retries: 3
