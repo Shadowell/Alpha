@@ -407,19 +407,20 @@ async def minute_sync_loop(
 
 def _backup_all_sqlite() -> list[str]:
     import glob as _glob
-    import os as _os
     import sqlite3 as _sqlite3
 
+    from app.services.paths import DATA_DIR, FUNNEL_DB_PATH, KLINE_DB_PATH
     from app.services.time_utils import now_cn
 
     backed_up: list[str] = []
-    backup_dir = "data/backups"
-    _os.makedirs(backup_dir, exist_ok=True)
-    for src in ("data/funnel_state.db", "data/market_kline.db"):
-        if not _os.path.exists(src):
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for src_path in (FUNNEL_DB_PATH, KLINE_DB_PATH):
+        src = str(src_path)
+        if not src_path.exists():
             continue
-        stem = _os.path.splitext(_os.path.basename(src))[0]
-        dst = _os.path.join(backup_dir, f"{stem}-{now_cn().strftime('%Y%m%d-%H%M%S')}.db")
+        stem = Path(src).stem
+        dst = str(backup_dir / f"{stem}-{now_cn().strftime('%Y%m%d-%H%M%S')}.db")
         try:
             conn = _sqlite3.connect(src, timeout=30)
             dest = _sqlite3.connect(dst)
@@ -429,10 +430,10 @@ def _backup_all_sqlite() -> list[str]:
             conn.close()
             backed_up.append(dst)
             # 每个库只保留最近 7 份
-            olds = sorted(_glob.glob(_os.path.join(backup_dir, f"{stem}-*.db")))
+            olds = sorted(_glob.glob(str(backup_dir / f"{stem}-*.db")))
             for old in olds[:-7]:
                 try:
-                    _os.remove(old)
+                    Path(old).unlink()
                 except OSError:
                     pass
         except Exception as exc:  # noqa: BLE001 — 单库备份失败继续下一个

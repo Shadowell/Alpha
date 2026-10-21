@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.container import ServiceContainer
 from app.dependencies import get_container
 from app.models import MovePoolRequest
+from app.services.error_response import error_detail
 
 router = APIRouter(tags=["公告"])
 
@@ -38,7 +39,12 @@ async def run_notice_screen(
             notice_date=notice_date, limit=limit, keywords=kw_list
         )
     except Exception as exc:  # noqa: BLE001 — 上游公告源失败映射 503
-        raise HTTPException(status_code=503, detail=f"公告选股执行失败: {exc}")
+        return error_detail(
+            "公告选股执行失败，请稍后重试",
+            exc,
+            status_code=503,
+            context="notice screen failed",
+        )
 
 
 @router.post("/notice/pool/move")

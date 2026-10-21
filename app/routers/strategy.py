@@ -10,6 +10,7 @@ from app.dependencies import get_container
 from app.models import CustomStrategyUpsert
 from app.routers.jobs import accepted_response, conflict_response
 from app.services.custom_strategy import CustomStrategy
+from app.services.error_response import error_detail
 from app.services.jobs import JobConflict
 from app.services.quiet_breakout_scanner import QuietBreakoutConfig
 from app.services.strategy_rules import list_rules as list_strategy_rules
@@ -137,7 +138,11 @@ async def scan_custom_strategy(
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except Exception as exc:  # noqa: BLE001 — 旧同步接口保持 500 语义
-            raise HTTPException(status_code=500, detail=f"扫描失败: {exc}")
+            return error_detail(
+                "扫描失败，请稍后重试",
+                exc,
+                context="custom strategy scan failed",
+            )
 
     async def runner(ctx) -> dict:
         ctx.progress(10.0, "准备扫描")
@@ -196,7 +201,11 @@ async def backtest_custom_strategy(
         try:
             return await run_backtest()
         except Exception as exc:  # noqa: BLE001 — 旧同步接口保持 500 语义
-            raise HTTPException(status_code=500, detail=f"回测失败: {exc}")
+            return error_detail(
+                "回测失败，请稍后重试",
+                exc,
+                context="custom strategy backtest failed",
+            )
 
     try:
         job = await container.job_manager.submit(
@@ -251,4 +260,8 @@ async def scan_quiet_breakout(
         return await scanner.scan(cfg, limit=limit)
     except Exception as exc:  # noqa: BLE001 — 兼容接口保持 500 语义
         log.exception("quiet breakout scan failed")
-        raise HTTPException(status_code=500, detail=f"扫描失败: {exc}")
+        return error_detail(
+            "扫描失败，请稍后重试",
+            exc,
+            context="quiet breakout scan failed",
+        )

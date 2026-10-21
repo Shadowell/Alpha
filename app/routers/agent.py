@@ -7,6 +7,7 @@ from app.container import ServiceContainer
 from app.dependencies import get_container
 from app.models import AgentRunRequest, MonitorConfigUpdate
 from app.routers.jobs import accepted_response, conflict_response
+from app.services.error_response import error_detail
 from app.services.jobs import JobConflict
 
 router = APIRouter(tags=["Agent"])
@@ -29,7 +30,12 @@ async def run_agent_task(
     if sync:
         result = await runtime.run_task(body.task_type, trigger="manual", params=body.params)
         if not result.get("success"):
-            raise HTTPException(status_code=503, detail=result.get("message", "任务执行失败"))
+            return error_detail(
+                "Agent 任务执行失败，请稍后重试",
+                RuntimeError(str(result.get("message", "任务执行失败"))),
+                status_code=503,
+                context="agent task failed (sync)",
+            )
         return result
 
     async def runner(ctx) -> dict:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+
+from app.services.time_utils import now_cn
 from typing import Any
 
 from app.services.sqlite_migrations import FUNNEL_DB_MIGRATIONS, migrate_database
@@ -41,7 +43,7 @@ class SQLiteStateStore:
                 INSERT INTO kv_store (key, value_json, updated_at) VALUES (?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
                 """,
-                (key, self._dumps_json(value), datetime.now().isoformat()),
+                (key, self._dumps_json(value), now_cn().isoformat()),
             )
             conn.commit()
 
@@ -197,7 +199,7 @@ class SQLiteStateStore:
             import uuid
 
             sid = uuid.uuid4().hex
-        now = datetime.now().isoformat(timespec="seconds")
+        now = now_cn().isoformat(timespec="seconds")
         with self._connect() as conn:
             existing = conn.execute(
                 "SELECT id, created_at, is_builtin FROM custom_strategies WHERE id = ?",
@@ -268,7 +270,7 @@ class SQLiteStateStore:
         from datetime import datetime
 
         inserted = 0
-        now = datetime.now().isoformat(timespec="seconds")
+        now = now_cn().isoformat(timespec="seconds")
         with self._connect() as conn:
             for s in defaults:
                 sid = str(s.get("id") or "").strip()

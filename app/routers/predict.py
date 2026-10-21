@@ -7,6 +7,7 @@ from app.container import ServiceContainer
 from app.dependencies import get_container
 from app.models import HotStockAIConfigUpdate, MovePoolRequest, PredictFunnelConfigUpdate
 from app.services.data_provider import normalize_symbol
+from app.services.error_response import error_detail
 
 router = APIRouter(tags=["预测"])
 
@@ -33,11 +34,25 @@ async def predict_kronos(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail=f"Kronos 运行环境未就绪: {exc}")
+        return error_detail(
+            "Kronos 运行环境未就绪，请检查模型依赖",
+            exc,
+            status_code=503,
+            context="kronos dependencies missing",
+        )
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        return error_detail(
+            "Kronos 服务暂不可用，请稍后重试",
+            exc,
+            status_code=503,
+            context="kronos predict runtime error",
+        )
     except Exception as exc:  # noqa: BLE001 — 预测内部异常映射为 500
-        raise HTTPException(status_code=500, detail=f"预测失败: {exc}")
+        return error_detail(
+            "预测失败，请稍后重试",
+            exc,
+            context="kronos predict failed",
+        )
 
 
 # ── 预测选股 ──

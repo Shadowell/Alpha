@@ -26,6 +26,7 @@ from app.services.hermes_memory import HermesMemory
 from app.services.hermes_runtime import HermesRuntime
 from app.services.hot_stock_ai_service import HotStockAIService
 from app.services.job_store import JobStore
+from app.services.paths import DATA_DIR
 from app.services.jobs import JobManager
 from app.services.kline_cache_service import KlineCacheService
 from app.services.kline_store import KlineSQLiteStore
@@ -95,8 +96,8 @@ LOOP_TASK_KEYS = (
 
 
 def resolve_data_dir(data_dir: str | Path | None = None) -> Path:
-    raw = data_dir or os.getenv(DATA_DIR_ENV, "data")
-    resolved = Path(raw)
+    raw = data_dir or os.getenv(DATA_DIR_ENV, "").strip()
+    resolved = Path(raw).expanduser().resolve() if raw else DATA_DIR
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved
 
