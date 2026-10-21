@@ -25,7 +25,7 @@ from app.services.concept_engine import (
 from app.services.data_provider import AkshareDataProvider
 from app.services.strategy_engine import apply_transition_rules, compute_intraday_score, get_last_n_trade_window
 from app.services.sqlite_store import SQLiteStateStore
-from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn, now_cn_naive, parse_cn_datetime
+from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn, parse_cn_datetime
 
 
 class FunnelService:
@@ -172,9 +172,7 @@ class FunnelService:
                 merged[symbol] = n
 
         if merged:
-            # 兼容边界：provider.symbol_name_cache 仍以 naive 时间做 TTL 比较，
-            # 因此这里写入上海墙钟 naive 值；data_provider 迁移到 aware 后一并切换。
-            self.provider.symbol_name_cache = (now_cn_naive(), merged)
+            self.provider.symbol_name_cache = (now_cn(), merged)
 
     async def backfill_names(self) -> int:
         """刷新名称缓存，并把缺名 entries 回填。返回被回填数量。"""

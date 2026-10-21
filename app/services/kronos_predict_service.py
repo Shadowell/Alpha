@@ -23,11 +23,11 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
+from app.services.time_utils import now_cn
 log = logging.getLogger(__name__)
 
 _MODEL_ID = "NeoQuasar/Kronos-base"
@@ -488,5 +488,5 @@ class KronosPredictService:
             "predicted_kline": predicted_kline,
             "merged_kline": merged_kline,
             "prediction_start_index": len(history_kline),
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "generated_at": now_cn().isoformat(timespec="seconds"),
         }

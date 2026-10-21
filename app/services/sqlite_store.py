@@ -35,7 +35,6 @@ class SQLiteStateStore:
             return self._loads_json(row["value_json"], default=None)
 
     def set_kv(self, key: str, value: Any) -> None:
-        from datetime import datetime
 
         with self._connect() as conn:
             conn.execute(
@@ -192,7 +191,6 @@ class SQLiteStateStore:
             return self._strategy_row_to_dict(row) if row else None
 
     def upsert_custom_strategy(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from datetime import datetime
 
         sid = str(payload.get("id") or "").strip()
         if not sid:
@@ -267,7 +265,6 @@ class SQLiteStateStore:
 
     def ensure_builtin_custom_strategies(self, defaults: list[dict[str, Any]]) -> int:
         """幂等写入内置策略：仅当 id 不存在时插入（保留用户修改）。返回新插入条数。"""
-        from datetime import datetime
 
         inserted = 0
         now = now_cn().isoformat(timespec="seconds")

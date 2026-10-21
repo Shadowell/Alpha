@@ -23,6 +23,7 @@ from app.services.strategy_rules import (
     RuleSpec,
     get_rule,
 )
+from app.services.time_utils import now_cn
 
 log = logging.getLogger("custom_strategy")
 
@@ -124,7 +125,7 @@ class StrategyHit:
 
 def _builtin_strategies_seed() -> list[CustomStrategy]:
     """系统预置的 3 条策略（id 固定，方便幂等写入）。"""
-    ts = datetime.now().isoformat(timespec="seconds")
+    ts = now_cn().isoformat(timespec="seconds")
     return [
         CustomStrategy(
             id="builtin_quiet_breakout",
@@ -247,7 +248,7 @@ class CustomStrategyScanner:
             payload = {
                 "strategy_id": strategy.id,
                 "strategy_name": strategy.name,
-                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "generated_at": now_cn().isoformat(timespec="seconds"),
                 "total_scanned": 0,
                 "total_hits": 0,
                 "elapsed_seconds": 0.0,
@@ -339,7 +340,7 @@ class CustomStrategyScanner:
         payload = {
             "strategy_id": strategy.id,
             "strategy_name": strategy.name,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "generated_at": now_cn().isoformat(timespec="seconds"),
             "total_scanned": len(symbols),
             "total_hits": len(hits),
             "elapsed_seconds": round(time.time() - t0, 2),

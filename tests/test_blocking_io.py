@@ -7,7 +7,6 @@ import time
 
 import pytest
 
-from app.services import blocking_io
 from app.services.blocking_io import (
     ExternalCircuitOpenError,
     ExternalTimeoutError,

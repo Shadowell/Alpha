@@ -1,7 +1,7 @@
 """Hermes Agent / 智能监控路由。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.container import ServiceContainer
 from app.dependencies import get_container

@@ -18,11 +18,11 @@ import asyncio
 import logging
 import statistics
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from app.services.kline_store import KlineSQLiteStore
 
+from app.services.time_utils import now_cn
 log = logging.getLogger("quiet_breakout")
 
 
@@ -193,7 +193,7 @@ class QuietBreakoutScanner:
                 self.last_snapshot["running"] = False
 
     async def _scan_impl(self, cfg: QuietBreakoutConfig, limit: int | None) -> dict[str, Any]:
-        t0 = datetime.now()
+        t0 = now_cn()
         symbols = await asyncio.to_thread(self.store.get_all_symbols)
         symbols = [s for s in symbols if _is_a_main(s)]
         if cfg.exclude_st:
@@ -236,7 +236,7 @@ class QuietBreakoutScanner:
 
         hits.sort(key=lambda h: (-h.score, -h.vol_spike))
         payload = {
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "generated_at": now_cn().isoformat(timespec="seconds"),
             "config": {
                 "lookback_days": cfg.lookback_days,
                 "amp_threshold": cfg.amp_threshold,
@@ -246,7 +246,7 @@ class QuietBreakoutScanner:
             },
             "total_scanned": len(symbols),
             "total_hits": len(hits),
-            "elapsed_seconds": round((datetime.now() - t0).total_seconds(), 2),
+            "elapsed_seconds": round((now_cn() - t0).total_seconds(), 2),
             "hits": [h.to_dict() for h in hits],
             "running": False,
         }

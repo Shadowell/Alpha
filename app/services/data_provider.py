@@ -11,6 +11,7 @@ import akshare as ak
 import pandas as pd
 
 from app.services.blocking_io import ExternalTimeoutError, external_timeout_seconds, run_blocking
+from app.services.time_utils import now_cn
 
 
 def _live_market_data_enabled() -> bool:
@@ -21,7 +22,7 @@ def _live_market_data_enabled() -> bool:
 
 def _is_trading_hours(dt: datetime | None = None) -> bool:
     """判断当前是否在 A 股连续竞价时段（±5 分钟缓冲）。"""
-    cur = dt or datetime.now()
+    cur = dt or now_cn()
     if cur.weekday() >= 5:
         return False
     t = cur.time()
@@ -134,11 +135,11 @@ class AkshareDataProvider:
             }
             if not name_map:
                 return
-            self.symbol_name_cache = (datetime.now(), name_map)
+            self.symbol_name_cache = (now_cn(), name_map)
             if self.kline_store is not None:
                 try:
                     await asyncio.to_thread(
-                        self.kline_store.upsert_symbol_names, name_map, datetime.now().isoformat()
+                        self.kline_store.upsert_symbol_names, name_map, now_cn().isoformat()
                     )
                 except Exception as exc:
                     print(f"[data_provider] persist symbol_names failed: {exc}")
@@ -166,7 +167,7 @@ class AkshareDataProvider:
         # 1) 缓存命中优先
         if self.realtime_snapshot_cache is not None:
             ts, cached = self.realtime_snapshot_cache
-            age = (datetime.now() - ts).total_seconds()
+            age = (now_cn() - ts).total_seconds()
             if age <= max(1, cache_ttl_seconds) and not cached.empty:
                 return cached.copy()
 
@@ -177,7 +178,7 @@ class AkshareDataProvider:
                 try:
                     df = await self._fetch_spot_em()
                     if not df.empty:
-                        self.realtime_snapshot_cache = (datetime.now(), df)
+                        self.realtime_snapshot_cache = (now_cn(), df)
                         self.realtime_snapshot_source = "em_live"
                         return df.copy()
                 except Exception as exc:
@@ -192,7 +193,7 @@ class AkshareDataProvider:
         # 3) DB fallback
         db_df = self._snapshot_from_db()
         if not db_df.empty:
-            self.realtime_snapshot_cache = (datetime.now(), db_df)
+            self.realtime_snapshot_cache = (now_cn(), db_df)
             self.realtime_snapshot_source = "db_fallback"
             return db_df.copy()
 
@@ -244,7 +245,7 @@ class AkshareDataProvider:
     ) -> pd.DataFrame:
         if self.realtime_snapshot_cache is not None:
             ts, cached = self.realtime_snapshot_cache
-            age = (datetime.now() - ts).total_seconds()
+            age = (now_cn() - ts).total_seconds()
             if age <= cache_ttl_seconds:
                 return cached.copy()
 
@@ -254,7 +255,7 @@ class AkshareDataProvider:
                 df = await run_blocking(ak.stock_zh_a_spot_em, name="akshare.stock_zh_a_spot_em")
                 payload = self._normalize_snapshot(df)
                 if not payload.empty:
-                    self.realtime_snapshot_cache = (datetime.now(), payload)
+                    self.realtime_snapshot_cache = (now_cn(), payload)
                     return payload
             except Exception as exc:
                 last_exc = exc
@@ -390,7 +391,7 @@ class AkshareDataProvider:
     async def get_all_concepts(self, cache_seconds: int = 300) -> pd.DataFrame:
         if self.concept_snapshot_cache is not None:
             ts, cached = self.concept_snapshot_cache
-            age = (datetime.now() - ts).total_seconds()
+            age = (now_cn() - ts).total_seconds()
             if age <= cache_seconds and not cached.empty:
                 return cached.copy()
 
@@ -399,7 +400,7 @@ class AkshareDataProvider:
             if df is not None and not df.empty:
                 result = _normalize_ths_industry(df)
                 if not result.empty:
-                    self.concept_snapshot_cache = (datetime.now(), result)
+                    self.concept_snapshot_cache = (now_cn(), result)
                     print(f"[data_provider] concepts via stock_board_industry_summary_ths: {len(result)} rows")
                     return result
         except Exception as e:
@@ -451,7 +452,7 @@ class AkshareDataProvider:
         out = ths.rename(columns={"name": "板块名称"}).copy()
         if "涨跌幅" not in out.columns:
             out["涨跌幅"] = 0.0
-        seed = int(datetime.now().strftime("%Y%m%d"))
+        seed = int(now_cn().strftime("%Y%m%d"))
         out = out.sample(frac=1.0, random_state=seed).reset_index(drop=True)
         print(f"[data_provider] concept board list fallback: stock_board_concept_name_ths ({len(out)} rows)")
         return out, "ths_names"
@@ -503,14 +504,14 @@ class AkshareDataProvider:
     ) -> pd.DataFrame:
         if self.hot_stocks_cache is not None:
             ts, cached = self.hot_stocks_cache
-            age = (datetime.now() - ts).total_seconds()
+            age = (now_cn() - ts).total_seconds()
             if age <= cache_ttl_seconds and not cached.empty:
                 return cached.head(top_n).copy()
 
         if not _live_market_data_enabled():
             df = self._hot_stocks_from_snapshot(self._snapshot_from_db())
             if not df.empty:
-                self.hot_stocks_cache = (datetime.now(), df)
+                self.hot_stocks_cache = (now_cn(), df)
             return df.head(top_n).copy()
 
         last_exc: Exception | None = None
@@ -518,7 +519,7 @@ class AkshareDataProvider:
             try:
                 df = await self._fetch_hot_stocks_from_spot()
                 if not df.empty:
-                    self.hot_stocks_cache = (datetime.now(), df)
+                    self.hot_stocks_cache = (now_cn(), df)
                     return df.head(top_n).copy()
             except Exception as exc:
                 last_exc = exc
@@ -615,7 +616,7 @@ class AkshareDataProvider:
 
         顺序：内存缓存 → DB 持久化表 → AkShare 实时 spot → 兜底空 dict
         """
-        now = datetime.now()
+        now = now_cn()
         if self.symbol_name_cache is not None:
             ts, payload = self.symbol_name_cache
             if (now - ts).total_seconds() <= cache_ttl_seconds:

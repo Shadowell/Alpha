@@ -11,7 +11,7 @@ import pandas as pd
 from app.services.data_provider import AkshareDataProvider, to_float
 from app.services.kline_store import KlineSQLiteStore
 from app.services.market_data_client import EastmoneyMarketDataClient
-from app.services.time_utils import now_cn, now_cn_naive, parse_cn_datetime
+from app.services.time_utils import now_cn, parse_cn_datetime
 
 
 _CONCURRENCY = 8
@@ -1459,7 +1459,7 @@ class KlineCacheService:
                 name_map = self.store.load_symbol_names()
                 if name_map:
                     # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
-                    self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
+                    self.provider.symbol_name_cache = (now_cn(), dict(name_map))
             except Exception as exc:
                 print(f"[kline_cache] load_symbol_names failed: {exc}")
                 name_map = {}
@@ -1471,7 +1471,7 @@ class KlineCacheService:
                     name_map = await fetch_symbol_names()
                     if name_map:
                         # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
-                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
+                        self.provider.symbol_name_cache = (now_cn(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
                 except Exception as exc:
                     print(f"[kline_cache] fetch symbol names from primary source failed: {exc}")
@@ -1487,7 +1487,7 @@ class KlineCacheService:
                     }
                     if name_map:
                         # 兼容边界：provider 缓存仍按 naive 时间比较，待其迁移后改 now_cn()。
-                        self.provider.symbol_name_cache = (now_cn_naive(), dict(name_map))
+                        self.provider.symbol_name_cache = (now_cn(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
             except Exception as exc:
                 print(f"[kline_cache] fetch symbol names from eastmoney failed: {exc}")
