@@ -196,6 +196,7 @@ class KlineCacheService:
 
         state = self.store.get_sync_state()
         if state.get("last_success_trade_date") == trade_date:
+            await self._retry_pending_enrichment(trade_date)
             return None
 
         # D2：当日已尝试且未封账（partial/failed）时按冷却节流，避免调度循环高频重试；
@@ -438,6 +439,7 @@ class KlineCacheService:
         )
         if sealed:
             self._spawn_auto_recheck()
+            await self._run_enrichment_safely(target_trade_date, trigger_mode)
         return {
             "success": completed > 0,
             "sealed": sealed,
@@ -702,6 +704,7 @@ class KlineCacheService:
         )
         if sealed:
             self._spawn_auto_recheck()
+            await self._run_enrichment_safely(target_trade_date, trigger_mode)
         return {
             "success": completed > 0,
             "sealed": sealed,
@@ -713,6 +716,266 @@ class KlineCacheService:
             "synced_symbols": success_count + failed_count,
             "missing_filled": completed,
             "mode": "incremental",
+        }
+
+    # ── Tushare 增强数据（日频/资金流/指数/分钟线）────────────
+
+    @staticmethod
+    def _is_trading_session(now: datetime | None = None) -> bool:
+        cur = now or now_cn()
+        if cur.weekday() >= 5:
+            return False
+        current = cur.timetz().replace(tzinfo=None)
+        return (time(9, 30) <= current <= time(11, 30)) or (
+            time(13, 0) <= current <= time(15, 0)
+        )
+
+    async def _run_enrichment_safely(self, trade_date: str, trigger_mode: str) -> None:
+        try:
+            await self.sync_enrichment(trade_date, trigger_mode=trigger_mode)
+        except Exception as exc:
+            print(f"[kline-cache] enrichment failed: {exc!r}")
+
+    async def _retry_pending_enrichment(self, trade_date: str) -> None:
+        if not getattr(self.market_data_client, "is_ready", False):
+            return
+        try:
+            overview = await asyncio.to_thread(self.store.get_enrichment_overview)
+        except Exception as exc:
+            print(f"[kline-cache] enrichment overview failed: {exc!r}")
+            return
+        pending = [
+            item["dataset"]
+            for item in overview
+            if item["dataset"] != "minute"
+            and (item["trade_date"] != trade_date or item["status"] != "success")
+        ]
+        if pending:
+            await self._run_enrichment_safely(trade_date, "auto")
+
+    async def _run_enrichment_dataset(
+        self,
+        dataset: str,
+        fetch: Any,
+        store_method: Any,
+        trade_date: str,
+        updated_at: str,
+    ) -> dict[str, Any]:
+        try:
+            frame = await fetch()
+            if frame is None or frame.empty:
+                raise RuntimeError("tushare_empty_response")
+            rows = await asyncio.to_thread(
+                store_method, frame.to_dict("records"), updated_at
+            )
+            status = "success"
+            message = "ok"
+        except Exception as exc:
+            rows = 0
+            status = "failed"
+            message = f"{type(exc).__name__}: {exc}"[:300]
+        self.store.set_enrichment_state(
+            dataset,
+            trade_date=trade_date,
+            status=status,
+            row_count=rows,
+            message=message,
+            updated_at=updated_at,
+        )
+        return {
+            "dataset": dataset,
+            "status": status,
+            "rows": rows,
+            "message": message,
+        }
+
+    async def sync_enrichment(
+        self,
+        trade_date: str | None = None,
+        trigger_mode: str = "manual",
+    ) -> dict[str, Any]:
+        target = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        if not target:
+            return {"success": False, "message": "无法确定交易日", "trade_date": ""}
+        if not self._date_settled(target):
+            return {
+                "success": False,
+                "skipped_intraday": True,
+                "message": f"{target} 尚未收盘定型，暂不写入增强数据",
+                "trade_date": target,
+            }
+        if not getattr(self.market_data_client, "is_ready", False):
+            return {
+                "success": False,
+                "message": "Tushare 未配置，跳过增强数据同步",
+                "trade_date": target,
+            }
+
+        updated_at = now_cn().isoformat()
+        results: list[dict[str, Any]] = []
+
+        extra_rows = 0
+        extra_errors: list[str] = []
+        for dataset, method_name in (
+            ("daily_basic", "fetch_daily_basic_by_trade_date"),
+            ("price_limits", "fetch_price_limits_by_trade_date"),
+            ("adj_factor", "fetch_adj_factors_by_trade_date"),
+        ):
+            try:
+                method = getattr(self.market_data_client, method_name, None)
+                if method is None:
+                    raise RuntimeError("unsupported")
+                frame = await method(target)
+                if frame is None or frame.empty:
+                    raise RuntimeError("tushare_empty_response")
+                extra_rows += await asyncio.to_thread(
+                    self.store.upsert_daily_extras, frame.to_dict("records"), updated_at
+                )
+            except Exception as exc:
+                extra_errors.append(f"{dataset}:{type(exc).__name__}")
+        extra_status = "success" if not extra_errors else ("partial" if extra_rows else "failed")
+        extra_message = "ok" if not extra_errors else ",".join(extra_errors)
+        self.store.set_enrichment_state(
+            "daily_extras",
+            trade_date=target,
+            status=extra_status,
+            row_count=extra_rows,
+            message=extra_message,
+            updated_at=updated_at,
+        )
+        results.append(
+            {
+                "dataset": "daily_extras",
+                "status": extra_status,
+                "rows": extra_rows,
+                "message": extra_message,
+            }
+        )
+
+        results.append(
+            await self._run_enrichment_dataset(
+                "moneyflow",
+                lambda: self.market_data_client.fetch_moneyflow_by_trade_date(target),
+                self.store.upsert_moneyflow,
+                target,
+                updated_at,
+            )
+        )
+        results.append(
+            await self._run_enrichment_dataset(
+                "hsgt",
+                lambda: self.market_data_client.fetch_moneyflow_hsgt(target, target),
+                self.store.upsert_market_capital_flow,
+                target,
+                updated_at,
+            )
+        )
+        results.append(
+            await self._run_enrichment_dataset(
+                "index_daily",
+                lambda: self.market_data_client.fetch_index_daily(target),
+                self.store.upsert_index_daily,
+                target,
+                updated_at,
+            )
+        )
+
+        success = all(item["status"] == "success" for item in results)
+        return {
+            "success": success,
+            "trade_date": target,
+            "trigger_mode": trigger_mode,
+            "datasets": results,
+        }
+
+    async def sync_buy_pool_minutes(
+        self,
+        symbols: list[str],
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        now = now_cn()
+        trade_date = now.date().isoformat()
+        unique = sorted({str(symbol).strip() for symbol in symbols if str(symbol).strip()})
+        if not unique:
+            return {"success": False, "message": "买入池为空", "trade_date": trade_date, "row_count": 0}
+        if not force and not self._is_trading_session(now):
+            return {
+                "success": False,
+                "skipped_off_hours": True,
+                "message": "非交易时段，跳过分钟线同步",
+                "trade_date": trade_date,
+                "row_count": 0,
+            }
+        if not getattr(self.market_data_client, "is_ready", False):
+            return {
+                "success": False,
+                "message": "Tushare 未配置，跳过分钟线同步",
+                "trade_date": trade_date,
+                "row_count": 0,
+            }
+
+        updated_at = now.isoformat()
+        semaphore = asyncio.Semaphore(2)
+        errors: list[str] = []
+
+        async def fetch_one(symbol: str) -> int:
+            async with semaphore:
+                try:
+                    frame = await self.market_data_client.fetch_rt_min(symbol)
+                    rows: list[dict[str, Any]] = []
+                    if frame is not None and not frame.empty:
+                        rows = frame.to_dict("records")
+                    else:
+                        quote = await self.market_data_client.fetch_realtime_quote(symbol)
+                        if quote and quote.get("bar_time") and quote.get("price"):
+                            rows = [
+                                {
+                                    "symbol": quote["symbol"],
+                                    "bar_time": quote["bar_time"],
+                                    "trade_date": quote["bar_time"][:10],
+                                    "open": quote["price"],
+                                    "high": quote["price"],
+                                    "low": quote["price"],
+                                    "close": quote["price"],
+                                    "volume": 0.0,
+                                    "amount": 0.0,
+                                    "source": quote["source"],
+                                }
+                            ]
+                    if not rows:
+                        errors.append(f"{symbol}:empty")
+                        return 0
+                    return await asyncio.to_thread(
+                        self.store.upsert_minute_bars, rows, updated_at
+                    )
+                except Exception as exc:
+                    errors.append(f"{symbol}:{type(exc).__name__}")
+                    return 0
+
+        written = sum(await asyncio.gather(*(fetch_one(symbol) for symbol in unique)))
+        if written and not errors:
+            status = "success"
+        elif written:
+            status = "partial"
+        else:
+            status = "failed"
+        message = "ok" if not errors else ",".join(errors)[:300]
+        self.store.set_enrichment_state(
+            "minute",
+            trade_date=trade_date,
+            status=status,
+            row_count=written,
+            message=message,
+            updated_at=updated_at,
+        )
+        return {
+            "success": written > 0,
+            "trade_date": trade_date,
+            "symbols": unique,
+            "row_count": written,
+            "errors": errors,
+            "status": status,
         }
 
     async def _batch_fill_from_market_daily(

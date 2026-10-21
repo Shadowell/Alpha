@@ -686,16 +686,18 @@ function renderHotStocks() {
 let _dcTaskPage = 1;
 
 async function loadDataCenter() {
-  const [statsRes, statusRes, reportRes, logsRes] = await Promise.allSettled([
+  const [statsRes, statusRes, reportRes, logsRes, enrichmentRes] = await Promise.allSettled([
     request('/api/jobs/kline-cache/stats'),
     request('/api/jobs/kline-cache/status'),
     request('/api/jobs/kline-cache/report'),
     request('/api/jobs/kline-cache/logs?page=' + _dcTaskPage + '&page_size=15'),
+    request('/api/jobs/kline-cache/enrichment-status'),
   ]);
   const stats = statsRes.status === 'fulfilled' ? statsRes.value : {};
   const syncStatus = statusRes.status === 'fulfilled' ? statusRes.value : {};
   const report = reportRes.status === 'fulfilled' ? reportRes.value : null;
   const logs = logsRes.status === 'fulfilled' ? logsRes.value : { items: [], total: 0 };
+  const enrichment = enrichmentRes.status === 'fulfilled' ? enrichmentRes.value : { items: [] };
 
   state.syncStatus = syncStatus;
   state.syncLogs = logs;
@@ -703,11 +705,50 @@ async function loadDataCenter() {
   state.dcReport = report;
 
   renderDcStats(stats, syncStatus, report);
+  renderDcEnrichment(enrichment);
   renderDcProgress(syncStatus);
   renderDcReport(report);
   renderDcTaskList(logs);
   renderDcLogStream(logs);
   renderDataSummary();
+}
+
+function renderDcEnrichment(payload) {
+  const grid = document.getElementById('dcEnrichmentGrid');
+  if (!grid) return;
+  const items = payload?.items || [];
+  if (!items.length) {
+    grid.innerHTML = '<div class="detail-empty">暂无增强数据，等待盘后自动同步</div>';
+    return;
+  }
+  const statusMeta = {
+    success: ['已同步', 'success'],
+    partial: ['部分成功', 'warning'],
+    failed: ['失败', 'error'],
+    empty: ['无数据', 'warning'],
+    none: ['未同步', ''],
+  };
+  grid.innerHTML = items.map((item) => {
+    const [statusLabel, statusCls] = statusMeta[item.status] || [item.status || '--', ''];
+    const isMinute = item.dataset === 'minute';
+    const latest = isMinute
+      ? (item.latest_bar_time || '--')
+      : (item.latest_trade_date || '--');
+    const rows = isMinute ? Number(item.row_count || 0) : Number(item.total_rows || 0);
+    const detail = item.message && item.status !== 'success'
+      ? ` · ${esc(String(item.message))}`
+      : '';
+    return `
+      <div class="dc-enrichment-item">
+        <div class="dc-enrichment-top">
+          <span class="dc-enrichment-label">${esc(item.label || item.dataset || '--')}</span>
+          <span class="dc-enrichment-status ${statusCls}">${statusLabel}</span>
+        </div>
+        <div class="dc-enrichment-date" title="${esc(latest)}">${esc(latest)}</div>
+        <div class="dc-enrichment-meta" title="${esc(String(rows))} 条${detail}">${rows.toLocaleString()} 条${detail}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function _dcHealthLevel(coverage) {

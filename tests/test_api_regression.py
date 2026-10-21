@@ -220,6 +220,38 @@ class TestKlineCache:
         r = client.get("/api/jobs/kline-cache/report")
         assert r.status_code == 200
 
+    def test_enrichment_status(self, client):
+        r = client.get("/api/jobs/kline-cache/enrichment-status")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data.get("items"), list)
+        assert len(data["items"]) == 5
+
+    def test_kline_extras(self, client):
+        r = client.get(f"/api/kline/{TEST_SYMBOL}/extras?days=30")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("items"), list)
+
+    def test_kline_moneyflow(self, client):
+        r = client.get(f"/api/kline/{TEST_SYMBOL}/moneyflow?days=30")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("items"), list)
+
+    def test_kline_minute(self, client):
+        r = client.get(f"/api/kline/{TEST_SYMBOL}/minute?limit=60")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("items"), list)
+
+    def test_market_capital_flow(self, client):
+        r = client.get("/api/market/capital-flow?days=30")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("items"), list)
+
+    def test_market_index_daily(self, client):
+        r = client.get("/api/market/index-daily?ts_code=000001.SH&days=30")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("items"), list)
+
 
 # ─────────────────────────────────────────────
 # 6. 公告

@@ -145,6 +145,14 @@ class FunnelService:
             pools[pool_name].sort(key=lambda x: x.get("score", 0), reverse=True)
         return pools
 
+    async def get_pool_symbols(self, pool: str) -> list[str]:
+        async with self.lock:
+            return [
+                str(entry.get("symbol"))
+                for entry in self.entries.values()
+                if entry.get("pool") == pool and entry.get("symbol")
+            ]
+
     async def ensure_trade_date(self, trade_date: str | None = None) -> None:
         date_str = trade_date or now_cn().date().isoformat()
         if date_str != self.trade_date:

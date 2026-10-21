@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 from pathlib import Path
@@ -120,6 +121,108 @@ class KlineSQLiteStore:
             CREATE TABLE IF NOT EXISTS symbol_names (
                 symbol TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kline_daily_extras (
+                symbol TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                pe_ttm REAL,
+                pb REAL,
+                ps_ttm REAL,
+                turnover_rate REAL,
+                turnover_rate_f REAL,
+                volume_ratio REAL,
+                total_mv REAL,
+                circ_mv REAL,
+                up_limit REAL,
+                down_limit REAL,
+                adj_factor REAL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (symbol, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS moneyflow_daily (
+                symbol TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                buy_sm_amount REAL,
+                sell_sm_amount REAL,
+                buy_md_amount REAL,
+                sell_md_amount REAL,
+                buy_lg_amount REAL,
+                sell_lg_amount REAL,
+                buy_elg_amount REAL,
+                sell_elg_amount REAL,
+                net_mf_amount REAL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (symbol, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_capital_flow (
+                trade_date TEXT PRIMARY KEY,
+                hgt REAL,
+                sgt REAL,
+                north_money REAL,
+                south_money REAL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS index_daily (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                pre_close REAL,
+                change REAL,
+                pct_chg REAL,
+                volume REAL,
+                amount REAL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kline_minute (
+                symbol TEXT NOT NULL,
+                bar_time TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume REAL,
+                amount REAL,
+                source TEXT NOT NULL DEFAULT 'tushare',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (symbol, bar_time)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_kline_minute_symbol_date ON kline_minute(symbol, trade_date)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS enrichment_sync_state (
+                dataset TEXT PRIMARY KEY,
+                trade_date TEXT,
+                status TEXT NOT NULL,
+                row_count INTEGER NOT NULL DEFAULT 0,
+                message TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             )
             """
@@ -693,6 +796,478 @@ class KlineSQLiteStore:
                 for row in details
             ],
         }
+
+    # ── 日频增强 / 资金流 / 指数 / 分钟线 ──────────────────
+
+    @staticmethod
+    def _optional_float(row: dict[str, Any], key: str) -> float | None:
+        value = row.get(key)
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return None if math.isnan(number) else number
+
+    def upsert_daily_extras(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+        payload = [
+            (
+                str(row.get("symbol", "")),
+                str(row.get("trade_date", "")),
+                self._optional_float(row, "pe_ttm"),
+                self._optional_float(row, "pb"),
+                self._optional_float(row, "ps_ttm"),
+                self._optional_float(row, "turnover_rate"),
+                self._optional_float(row, "turnover_rate_f"),
+                self._optional_float(row, "volume_ratio"),
+                self._optional_float(row, "total_mv"),
+                self._optional_float(row, "circ_mv"),
+                self._optional_float(row, "up_limit"),
+                self._optional_float(row, "down_limit"),
+                self._optional_float(row, "adj_factor"),
+                updated_at,
+            )
+            for row in rows
+            if str(row.get("symbol", "")) and str(row.get("trade_date", ""))
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO kline_daily_extras(
+                    symbol, trade_date, pe_ttm, pb, ps_ttm, turnover_rate,
+                    turnover_rate_f, volume_ratio, total_mv, circ_mv,
+                    up_limit, down_limit, adj_factor, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    pe_ttm=COALESCE(excluded.pe_ttm, kline_daily_extras.pe_ttm),
+                    pb=COALESCE(excluded.pb, kline_daily_extras.pb),
+                    ps_ttm=COALESCE(excluded.ps_ttm, kline_daily_extras.ps_ttm),
+                    turnover_rate=COALESCE(excluded.turnover_rate, kline_daily_extras.turnover_rate),
+                    turnover_rate_f=COALESCE(excluded.turnover_rate_f, kline_daily_extras.turnover_rate_f),
+                    volume_ratio=COALESCE(excluded.volume_ratio, kline_daily_extras.volume_ratio),
+                    total_mv=COALESCE(excluded.total_mv, kline_daily_extras.total_mv),
+                    circ_mv=COALESCE(excluded.circ_mv, kline_daily_extras.circ_mv),
+                    up_limit=COALESCE(excluded.up_limit, kline_daily_extras.up_limit),
+                    down_limit=COALESCE(excluded.down_limit, kline_daily_extras.down_limit),
+                    adj_factor=COALESCE(excluded.adj_factor, kline_daily_extras.adj_factor),
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
+    def upsert_moneyflow(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+        fields = [
+            "buy_sm_amount", "sell_sm_amount", "buy_md_amount", "sell_md_amount",
+            "buy_lg_amount", "sell_lg_amount", "buy_elg_amount", "sell_elg_amount",
+            "net_mf_amount",
+        ]
+        payload = [
+            (
+                str(row.get("symbol", "")),
+                str(row.get("trade_date", "")),
+                *[self._optional_float(row, field) for field in fields],
+                updated_at,
+            )
+            for row in rows
+            if str(row.get("symbol", "")) and str(row.get("trade_date", ""))
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                f"""
+                INSERT INTO moneyflow_daily(
+                    symbol, trade_date, {", ".join(fields)}, updated_at
+                ) VALUES ({", ".join(["?"] * (len(fields) + 3))})
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    {", ".join(f"{field}=excluded.{field}" for field in fields)},
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
+    def upsert_market_capital_flow(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+        payload = [
+            (
+                str(row.get("trade_date", "")),
+                self._optional_float(row, "hgt"),
+                self._optional_float(row, "sgt"),
+                self._optional_float(row, "north_money"),
+                self._optional_float(row, "south_money"),
+                updated_at,
+            )
+            for row in rows
+            if str(row.get("trade_date", ""))
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO market_capital_flow(
+                    trade_date, hgt, sgt, north_money, south_money, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trade_date) DO UPDATE SET
+                    hgt=excluded.hgt,
+                    sgt=excluded.sgt,
+                    north_money=excluded.north_money,
+                    south_money=excluded.south_money,
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
+    def upsert_index_daily(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+        payload = [
+            (
+                str(row.get("ts_code", "")),
+                str(row.get("trade_date", "")),
+                self._optional_float(row, "open"),
+                self._optional_float(row, "high"),
+                self._optional_float(row, "low"),
+                self._optional_float(row, "close"),
+                self._optional_float(row, "pre_close"),
+                self._optional_float(row, "change"),
+                self._optional_float(row, "pct_chg"),
+                self._optional_float(row, "volume"),
+                self._optional_float(row, "amount"),
+                updated_at,
+            )
+            for row in rows
+            if str(row.get("ts_code", "")) and str(row.get("trade_date", ""))
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO index_daily(
+                    ts_code, trade_date, open, high, low, close, pre_close,
+                    change, pct_chg, volume, amount, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ts_code, trade_date) DO UPDATE SET
+                    open=excluded.open,
+                    high=excluded.high,
+                    low=excluded.low,
+                    close=excluded.close,
+                    pre_close=excluded.pre_close,
+                    change=excluded.change,
+                    pct_chg=excluded.pct_chg,
+                    volume=excluded.volume,
+                    amount=excluded.amount,
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
+    def upsert_minute_bars(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+        payload = [
+            (
+                str(row.get("symbol", "")),
+                str(row.get("bar_time", "")),
+                str(row.get("trade_date", "")),
+                self._optional_float(row, "open"),
+                self._optional_float(row, "high"),
+                self._optional_float(row, "low"),
+                self._optional_float(row, "close"),
+                self._optional_float(row, "volume"),
+                self._optional_float(row, "amount"),
+                str(row.get("source") or "tushare.rt_min"),
+                updated_at,
+            )
+            for row in rows
+            if str(row.get("symbol", "")) and str(row.get("bar_time", ""))
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.executemany(
+                """
+                INSERT INTO kline_minute(
+                    symbol, bar_time, trade_date, open, high, low, close,
+                    volume, amount, source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, bar_time) DO UPDATE SET
+                    trade_date=excluded.trade_date,
+                    open=excluded.open,
+                    high=excluded.high,
+                    low=excluded.low,
+                    close=excluded.close,
+                    volume=excluded.volume,
+                    amount=excluded.amount,
+                    source=excluded.source,
+                    updated_at=excluded.updated_at
+                """,
+                payload,
+            )
+            conn.commit()
+            return len(payload)
+
+    def set_enrichment_state(
+        self,
+        dataset: str,
+        *,
+        trade_date: str,
+        status: str,
+        row_count: int,
+        message: str,
+        updated_at: str,
+    ) -> None:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO enrichment_sync_state(
+                    dataset, trade_date, status, row_count, message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset) DO UPDATE SET
+                    trade_date=excluded.trade_date,
+                    status=excluded.status,
+                    row_count=excluded.row_count,
+                    message=excluded.message,
+                    updated_at=excluded.updated_at
+                """,
+                (dataset, trade_date, status, int(row_count), message, updated_at),
+            )
+            conn.commit()
+
+    def get_daily_extras(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
+        query_days = max(1, min(days, 365))
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT trade_date, pe_ttm, pb, ps_ttm, turnover_rate, turnover_rate_f,
+                       volume_ratio, total_mv, circ_mv, up_limit, down_limit, adj_factor
+                FROM kline_daily_extras
+                WHERE symbol = ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (symbol, query_days),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row["trade_date"],
+                "pe_ttm": row["pe_ttm"],
+                "pb": row["pb"],
+                "ps_ttm": row["ps_ttm"],
+                "turnover_rate": row["turnover_rate"],
+                "turnover_rate_f": row["turnover_rate_f"],
+                "volume_ratio": row["volume_ratio"],
+                "total_mv": row["total_mv"],
+                "circ_mv": row["circ_mv"],
+                "up_limit": row["up_limit"],
+                "down_limit": row["down_limit"],
+                "adj_factor": row["adj_factor"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def get_moneyflow(self, symbol: str, days: int = 30) -> list[dict[str, Any]]:
+        query_days = max(1, min(days, 365))
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT * FROM moneyflow_daily
+                WHERE symbol = ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (symbol, query_days),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row["trade_date"],
+                "buy_sm_amount": row["buy_sm_amount"],
+                "sell_sm_amount": row["sell_sm_amount"],
+                "buy_md_amount": row["buy_md_amount"],
+                "sell_md_amount": row["sell_md_amount"],
+                "buy_lg_amount": row["buy_lg_amount"],
+                "sell_lg_amount": row["sell_lg_amount"],
+                "buy_elg_amount": row["buy_elg_amount"],
+                "sell_elg_amount": row["sell_elg_amount"],
+                "net_mf_amount": row["net_mf_amount"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def get_market_capital_flow(self, days: int = 30) -> list[dict[str, Any]]:
+        query_days = max(1, min(days, 365))
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT trade_date, hgt, sgt, north_money, south_money
+                FROM market_capital_flow
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (query_days,),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row["trade_date"],
+                "hgt": row["hgt"],
+                "sgt": row["sgt"],
+                "north_money": row["north_money"],
+                "south_money": row["south_money"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def get_index_daily(self, ts_code: str, days: int = 30) -> list[dict[str, Any]]:
+        query_days = max(1, min(days, 365))
+        with self._connect() as conn:
+            self._init_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT trade_date, open, high, low, close, pre_close, change,
+                       pct_chg, volume, amount
+                FROM index_daily
+                WHERE ts_code = ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (ts_code, query_days),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row["trade_date"],
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "pre_close": row["pre_close"],
+                "change": row["change"],
+                "pct_chg": row["pct_chg"],
+                "volume": row["volume"],
+                "amount": row["amount"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def get_minute_bars(
+        self,
+        symbol: str,
+        trade_date: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        query_limit = max(1, min(limit, 2000))
+        with self._connect() as conn:
+            self._init_schema(conn)
+            if trade_date:
+                rows = conn.execute(
+                    """
+                    SELECT bar_time, trade_date, open, high, low, close, volume, amount, source
+                    FROM kline_minute
+                    WHERE symbol = ? AND trade_date = ?
+                    ORDER BY bar_time DESC
+                    LIMIT ?
+                    """,
+                    (symbol, trade_date, query_limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT bar_time, trade_date, open, high, low, close, volume, amount, source
+                    FROM kline_minute
+                    WHERE symbol = ?
+                    ORDER BY bar_time DESC
+                    LIMIT ?
+                    """,
+                    (symbol, query_limit),
+                ).fetchall()
+        return [
+            {
+                "bar_time": row["bar_time"],
+                "trade_date": row["trade_date"],
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+                "amount": row["amount"],
+                "source": row["source"],
+            }
+            for row in reversed(rows)
+        ]
+
+    def get_enrichment_overview(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            self._init_schema(conn)
+            states = {
+                str(row["dataset"]): dict(row)
+                for row in conn.execute("SELECT * FROM enrichment_sync_state").fetchall()
+            }
+            table_stats = {
+                "daily_extras": conn.execute(
+                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM kline_daily_extras"
+                ).fetchone(),
+                "moneyflow": conn.execute(
+                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM moneyflow_daily"
+                ).fetchone(),
+                "hsgt": conn.execute(
+                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM market_capital_flow"
+                ).fetchone(),
+                "index_daily": conn.execute(
+                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM index_daily"
+                ).fetchone(),
+            }
+            minute_row = conn.execute(
+                "SELECT MAX(trade_date) AS latest_date, MAX(bar_time) AS latest_bar, COUNT(*) AS total FROM kline_minute"
+            ).fetchone()
+
+        labels = {
+            "daily_extras": "日频增强",
+            "moneyflow": "个股资金流",
+            "hsgt": "北向资金",
+            "index_daily": "基准指数",
+            "minute": "买入池分钟线",
+        }
+        overview: list[dict[str, Any]] = []
+        for dataset, label in labels.items():
+            state = states.get(dataset, {})
+            if dataset == "minute":
+                stats_row = minute_row
+                latest_date = stats_row["latest_date"] if stats_row else ""
+                extra = {"latest_bar_time": stats_row["latest_bar"] if stats_row else ""}
+            else:
+                stats_row = table_stats.get(dataset)
+                latest_date = stats_row["latest_date"] if stats_row else ""
+                extra = {}
+            overview.append(
+                {
+                    "dataset": dataset,
+                    "label": label,
+                    "trade_date": state.get("trade_date") or "",
+                    "status": state.get("status") or "none",
+                    "row_count": int(state.get("row_count") or 0),
+                    "message": state.get("message") or "",
+                    "updated_at": state.get("updated_at") or "",
+                    "latest_trade_date": latest_date or "",
+                    "total_rows": int(stats_row["total"] or 0) if stats_row else 0,
+                    **extra,
+                }
+            )
+        return overview
 
     # ── 数据统计 ─────────────────────────────────────────────
 

@@ -185,6 +185,90 @@ async def get_cached_kline(symbol: str, days: int = 30):
     }
 
 
+@router.get("/kline/{symbol}/extras")
+async def get_cached_kline_extras(symbol: str, days: int = 30):
+    clean_symbol = normalize_symbol(symbol)
+    items = await asyncio.to_thread(
+        _kline_cache_service.store.get_daily_extras, clean_symbol, days
+    )
+    return {
+        "symbol": clean_symbol,
+        "days": max(1, min(days, 365)),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/kline/{symbol}/moneyflow")
+async def get_cached_kline_moneyflow(symbol: str, days: int = 30):
+    clean_symbol = normalize_symbol(symbol)
+    items = await asyncio.to_thread(
+        _kline_cache_service.store.get_moneyflow, clean_symbol, days
+    )
+    return {
+        "symbol": clean_symbol,
+        "days": max(1, min(days, 365)),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/kline/{symbol}/minute")
+async def get_cached_kline_minute(
+    symbol: str,
+    trade_date: str | None = None,
+    limit: int = 500,
+):
+    clean_symbol = normalize_symbol(symbol)
+    items = await asyncio.to_thread(
+        _kline_cache_service.store.get_minute_bars,
+        clean_symbol,
+        trade_date,
+        limit,
+    )
+    return {
+        "symbol": clean_symbol,
+        "trade_date": trade_date or "",
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/market/capital-flow")
+async def get_market_capital_flow(days: int = 30):
+    items = await asyncio.to_thread(
+        _kline_cache_service.store.get_market_capital_flow, days
+    )
+    return {"days": max(1, min(days, 365)), "count": len(items), "items": items}
+
+
+@router.get("/market/index-daily")
+async def get_market_index_daily(ts_code: str = "000001.SH", days: int = 30):
+    items = await asyncio.to_thread(
+        _kline_cache_service.store.get_index_daily, ts_code, days
+    )
+    return {
+        "ts_code": ts_code,
+        "days": max(1, min(days, 365)),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.get("/jobs/kline-cache/enrichment-status")
+async def get_enrichment_status():
+    items = await asyncio.to_thread(_kline_cache_service.store.get_enrichment_overview)
+    return {"count": len(items), "items": items}
+
+
+@router.post("/jobs/kline-cache/enrichment-sync")
+async def run_enrichment_sync(trade_date: str | None = None):
+    result = await _kline_cache_service.sync_enrichment(
+        trade_date=trade_date, trigger_mode="manual"
+    )
+    return result
+
+
 # ── 后台定时同步任务 ──────────────────────────────────────
 
 
@@ -224,6 +308,35 @@ async def kline_cache_loop(kline_cache_service: KlineCacheService) -> None:
             print(f"[kline-cache] daily backup failed: {exc}")
 
         await asyncio.sleep(600)
+
+
+async def minute_sync_loop(
+    kline_cache_service: KlineCacheService,
+    funnel_service: object,
+) -> None:
+    """交易时段每分钟同步一次买入池分钟线；非交易时段空转。"""
+    from app.config import POOL_BUY
+
+    await asyncio.sleep(20)
+    while True:
+        try:
+            if (
+                kline_cache_service._is_trading_session()
+                and not kline_cache_service._syncing
+            ):
+                symbols = await funnel_service.get_pool_symbols(POOL_BUY)
+                if symbols:
+                    result = await kline_cache_service.sync_buy_pool_minutes(symbols)
+                    if result.get("row_count"):
+                        print(
+                            f"[minute-sync] {result.get('trade_date')} "
+                            f"{result.get('row_count')} bars for {len(symbols)} symbols"
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[minute-sync] error: {exc!r}")
+        await asyncio.sleep(60)
 
 
 def _backup_all_sqlite() -> list[str]:

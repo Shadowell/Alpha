@@ -40,7 +40,7 @@ from app.services.custom_strategy import (
 from app.services.strategy_rules import RULE_REGISTRY, list_rules as list_strategy_rules
 from app.services.backtest_lab import BacktestLab
 
-from app.routers.kline import init_kline_router, kline_cache_loop
+from app.routers.kline import init_kline_router, kline_cache_loop, minute_sync_loop
 from app.routers.first_limit_alpha import init_first_limit_alpha_router
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -278,6 +278,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.backfill_task = asyncio.create_task(_startup_backfill())
     app.state.ticker_task = asyncio.create_task(_ticker_loop())
     app.state.kline_cache_task = asyncio.create_task(kline_cache_loop(kline_cache_service))
+    app.state.minute_sync_task = asyncio.create_task(
+        minute_sync_loop(kline_cache_service, service)
+    )
     app.state.hermes_task = asyncio.create_task(hermes_scheduler_loop(hermes_runtime))
     app.state.monitor_task = asyncio.create_task(monitor_loop(hermes_runtime, hub))
     app.state.predict_funnel_task = asyncio.create_task(_predict_funnel_scheduler_loop())
@@ -287,8 +290,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 再执行 WAL checkpoint —— 否则 checkpoint 与活跃写入竞态会静默失败，
     # WAL 不截断，进程可能在退出 fsync 时卡入 UEs。
     for key in [
-        "backfill_task", "ticker_task", "kline_cache_task", "hermes_task", "monitor_task",
-        "predict_funnel_task", "hot_stock_ai_task",
+        "backfill_task", "ticker_task", "kline_cache_task", "minute_sync_task",
+        "hermes_task", "monitor_task", "predict_funnel_task", "hot_stock_ai_task",
     ]:
         task = getattr(app.state, key, None)
         if task:

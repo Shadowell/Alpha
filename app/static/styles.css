@@ -1078,6 +1078,33 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .btn-outline:hover { border-color: var(--brand); color: var(--brand); background: rgba(99,102,241,0.06); }
 
+/* 数据增强覆盖 */
+.dc-enrichment { padding: 12px 14px; margin-bottom: 12px; }
+.dc-enrichment-grid {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;
+}
+.dc-enrichment-item {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 8px 10px; background: rgba(255, 255, 255, 0.015);
+}
+.dc-enrichment-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dc-enrichment-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.dc-enrichment-status {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap;
+}
+.dc-enrichment-status.success { color: #22c55e; border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.08); }
+.dc-enrichment-status.warning { color: #f59e0b; border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); }
+.dc-enrichment-status.error { color: #ef4444; border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08); }
+.dc-enrichment-date {
+  margin-top: 6px; font-size: 12px; font-family: var(--font-mono);
+  color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dc-enrichment-meta {
+  margin-top: 2px; font-size: 10px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .dc-progress-section { margin-bottom: 10px; }
 .dc-progress-text {
   font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;

@@ -1,0 +1,97 @@
+name: Deploy Alpha
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deploy even if this main SHA is already recorded on the server'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, alpha-production]
+    timeout-minutes: 60
+
+    steps:
+      - name: Require main branch
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      - name: Check deployment gate
+        id: gate
+        env:
+          FORCE_DEPLOY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_deploy == true }}
+        run: |
+          set -euo pipefail
+          current_sha="${GITHUB_SHA}"
+          last_sha="$(cat /opt/alpha/deploy/last_deployed_sha 2>/dev/null | tr -d '[:space:]' || true)"
+          echo "current_sha=${current_sha}"
+          echo "last_deployed_sha=${last_sha:-<none>}"
+          if [ "${FORCE_DEPLOY}" = "true" ]; then
+            echo "should_deploy=true" >> "${GITHUB_OUTPUT}"
+          elif [ "${last_sha}" = "${current_sha}" ]; then
+            echo "should_deploy=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "should_deploy=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Deployment skipped
+        if: ${{ steps.gate.outputs.should_deploy != 'true' }}
+        run: echo "main SHA already deployed"
+
+      - name: Checkout exact commit
+        if: ${{ steps.gate.outputs.should_deploy == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          clean: true
+
+      - name: Sync code to /opt/alpha
+        if: ${{ steps.gate.outputs.should_deploy == 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/alpha
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.env' \
+            --exclude='data/' \
+            --exclude='logs/' \
+            --exclude='deploy/last_deployed_sha' \
+            "${GITHUB_WORKSPACE}/" /opt/alpha/
+
+      - name: Deploy with docker compose
+        if: ${{ steps.gate.outputs.should_deploy == 'true' }}
+        run: |
+          set -euo pipefail
+          chmod +x /opt/alpha/deploy/deploy.sh
+          bash /opt/alpha/deploy/deploy.sh
+
+      - name: Verify deployed service
+        if: ${{ steps.gate.outputs.should_deploy == 'true' }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 10 http://127.0.0.1:18888/ >/dev/null
+          curl -fsS --max-time 10 http://127.0.0.1:18888/api/jobs/kline-cache/enrichment-status >/dev/null
+          curl -fsS --max-time 10 http://127.0.0.1:18888/api/strategy/rules >/dev/null
+          echo "alpha smoke checks passed"
+
+      - name: Record deployed SHA
+        if: ${{ steps.gate.outputs.should_deploy == 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/alpha/deploy
+          printf '%s\n' "${GITHUB_SHA}" > /opt/alpha/deploy/last_deployed_sha
+          cat /opt/alpha/deploy/last_deployed_sha
