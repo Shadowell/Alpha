@@ -4,23 +4,6 @@ const state = {
   chart: null,
 };
 
-// 公告数据来自外部披露平台抓取，属不可信输入，所有 DOM 插值必须转义
-function esc(v) {
-  return String(v ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-// 外链仅允许 http(s)，拦截 javascript: 等伪协议
-function safeUrl(v) {
-  const s = String(v || '').trim();
-  if (/^https?:\/\//i.test(s)) return esc(s);
-  return '#';
-}
-
 function fmtNum(v, digits = 2) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n.toFixed(digits) : '0.00';
@@ -229,7 +212,7 @@ async function selectSymbol(symbol) {
       <div class="metrics">类型: ${esc(first.notice_type || '-')}</div>
       <div class="metrics">理由: ${esc(detail.reason || '-')}</div>
       <div class="metrics">风险: ${esc(detail.risk || '-')}</div>
-      <div class="metrics"><a href="${safeUrl(first.url)}" target="_blank" rel="noopener noreferrer">公告链接</a></div>
+      <div class="metrics">${safeLinkHtml(first.url, '公告链接')}</div>
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
     renderKlineChart(kline);

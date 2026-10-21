@@ -147,7 +147,7 @@ function setStatus(text, tone = 'info') {
 /* ==================== Page Summary Bars ==================== */
 
 function _psItem(label, value, cls = '') {
-  return `<span class="ps-item">${label} <span class="ps-value ${cls}">${value}</span></span>`;
+  return `<span class="ps-item">${esc(label)} <span class="ps-value ${esc(cls)}">${esc(value)}</span></span>`;
 }
 function _psSep() { return '<span class="ps-sep">|</span>'; }
 
@@ -164,7 +164,7 @@ function renderMarketSummary() {
   el.innerHTML = [
     _psItem('上涨概念', `${upCount}/${concepts.length}`, upCount >= 5 ? 'success' : 'warning'),
     _psSep(),
-    _psItem('龙头', `${esc(leader)} ${topChg >= 0 ? '+' : ''}${fmtNum(topChg, 2)}%`, topChg >= 0 ? 'up' : 'down'),
+    _psItem('龙头', `${leader} ${topChg >= 0 ? '+' : ''}${fmtNum(topChg, 2)}%`, topChg >= 0 ? 'up' : 'down'),
     _psSep(),
     _psItem('市场情绪', mood, moodCls),
   ].join('');
@@ -421,17 +421,17 @@ function renderPool(poolName, list) {
     const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
     const conceptTags = stock.concept_tags || [];
     const tags = conceptTags
-      .map((tag) => `<span class="tag" style="background:${esc(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
+      .map((tag) => `<span class="tag" style="background:${safeCssColor(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${safeInt(tag.limit_up_count)}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${safeInt(tag.limit_up_count)}</span>`)
       .join('');
     const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
     const badge = stock.recommended_pool
       ? `<span class="badge ${stock.recommended_pool === 'buy' ? 'buy' : 'focus'}">建议进入${stock.recommended_pool === 'buy' ? '买入池' : '重点池'}</span>`
       : '';
     const btns = cardActions(stock)
-      .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
+      .map(([txt, pool]) => `<button data-pool="${esc(pool)}" data-symbol="${esc(stock.symbol)}">${esc(txt)}</button>`)
       .join('');
     const simBuyBtn = poolName === 'buy'
-      ? `<button class="btn-sim-buy" data-symbol="${esc(stock.symbol)}" data-name="${esc(stock.name)}" data-price="${stock.price || stock.breakout_level || 0}">模拟买入</button>`
+      ? `<button class="btn-sim-buy" data-symbol="${esc(stock.symbol)}" data-name="${esc(stock.name)}" data-price="${Number(stock.price || stock.breakout_level) || 0}">模拟买入</button>`
       : '';
     const pct = Number(stock.pct_change || 0);
     const pctCls = _chgCls(pct);
@@ -468,17 +468,17 @@ function renderPool(poolName, list) {
     const hint = state.selectedConcept
       ? `当前概念「${state.selectedConcept}」下无匹配股票`
       : '当前暂无系统候选';
-    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
+    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${esc(hint)}</div></div>`;
   }
 }
 
 function _renderCompositeSection(title, hint, bodyHtml, count, kind = '') {
-  const countHtml = `<span class="composite-section-count">${count}</span>`;
+  const countHtml = `<span class="composite-section-count">${esc(count)}</span>`;
   return `
-    <section class="composite-section ${kind}">
+    <section class="composite-section ${esc(kind)}">
       <div class="composite-section-head">
-        <div class="composite-section-title">${title}${countHtml}</div>
-        <div class="composite-section-hint">${hint}</div>
+        <div class="composite-section-title">${esc(title)}${countHtml}</div>
+        <div class="composite-section-hint">${esc(hint)}</div>
       </div>
       <div class="composite-section-body">${bodyHtml}</div>
     </section>
@@ -492,9 +492,9 @@ function _strategyHitCardHtml(hit) {
     `<span class="sc-hit-tag">${esc(rh.title)}: ${esc(String(rh.label || '✓'))}</span>`
   )).join('');
   return `
-    <div class="qb-card sc-hit-card sc-hit-card-inline" data-symbol="${hit.symbol}" data-name="${esc(hit.name || '')}">
+    <div class="qb-card sc-hit-card sc-hit-card-inline" data-symbol="${esc(hit.symbol)}" data-name="${esc(hit.name || '')}">
       <div class="qb-card-top">
-        <div class="qb-card-name">${esc(hit.name || '--')}<small>${hit.symbol}</small></div>
+        <div class="qb-card-name">${esc(hit.name || '--')}<small>${esc(hit.symbol)}</small></div>
         <div class="qb-card-pct ${cls}">${sign}${fmtNum(hit.change_pct, 2)}%</div>
       </div>
       <div class="qb-card-meta">
@@ -541,14 +541,14 @@ function renderCompositeCandidatePool(root, systemCandidates) {
       const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
       const conceptTags = stock.concept_tags || [];
       const tags = conceptTags
-        .map((tag) => `<span class="tag" style="background:${esc(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${tag.limit_up_count}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${tag.limit_up_count}</span>`)
+        .map((tag) => `<span class="tag" style="background:${safeCssColor(tag.color)}" title="热度:${esc(tag.heat)} 涨幅:${fmtNum(tag.change_pct)} 涨停:${safeInt(tag.limit_up_count)}">${esc(tag.name)} ${fmtNum(tag.change_pct, 1)}%/${safeInt(tag.limit_up_count)}</span>`)
         .join('');
       const tagsHtml = tags ? `<div class="tags">${tags}</div>` : '';
       const badge = stock.recommended_pool
         ? `<span class="badge ${stock.recommended_pool === 'buy' ? 'buy' : 'focus'}">建议进入${stock.recommended_pool === 'buy' ? '买入池' : '重点池'}</span>`
         : '';
       const btns = cardActions(stock)
-        .map(([txt, pool]) => `<button data-pool="${pool}" data-symbol="${stock.symbol}">${txt}</button>`)
+        .map(([txt, pool]) => `<button data-pool="${esc(pool)}" data-symbol="${esc(stock.symbol)}">${esc(txt)}</button>`)
         .join('');
       const pct = Number(stock.pct_change || 0);
       const pctCls = _chgCls(pct);
@@ -591,7 +591,7 @@ function renderCompositeCandidatePool(root, systemCandidates) {
     parts.push(_renderCompositeSection(
       '系统候选',
       '来自系统漏斗的调整期候选',
-      `<div class="empty-state compact-empty"><div class="empty-state-text">${hint}</div></div>`,
+      `<div class="empty-state compact-empty"><div class="empty-state-text">${esc(hint)}</div></div>`,
       0,
       'system',
     ));
@@ -645,8 +645,8 @@ function renderHotConcepts() {
     };
     div.innerHTML = `
       <div class="hot-title"><span>${esc(item.name)}</span><span class="${cls}">${sign}${fmtNum(item.change_pct, 2)}%</span></div>
-      <div class="hot-meta">热度 ${fmtNum(item.heat, 3)} · 涨停 ${item.limit_up_count} · 上涨 ${item.up_count} / 下跌 ${item.down_count}</div>
-      <div class="hot-meta">领涨 ${esc(item.leader || '-')} · 入选 ${item.selected_count}</div>
+      <div class="hot-meta">热度 ${fmtNum(item.heat, 3)} · 涨停 ${safeInt(item.limit_up_count)} · 上涨 ${safeInt(item.up_count)} / 下跌 ${safeInt(item.down_count)}</div>
+      <div class="hot-meta">领涨 ${esc(item.leader || '-')} · 入选 ${safeInt(item.selected_count)}</div>
     `;
     root.appendChild(div);
   });
@@ -669,7 +669,7 @@ function renderHotStocks() {
     card.className = `hot-stock-item ${state.selectedHotSymbol === item.symbol ? 'active' : ''}`;
     card.onclick = () => selectHotStock(item);
     card.innerHTML = `
-      <div class="hot-stock-main"><div class="hot-stock-rank">#${item.rank}</div><div class="hot-stock-name">${esc(item.name)} (${esc(item.symbol)})</div></div>
+      <div class="hot-stock-main"><div class="hot-stock-rank">#${safeInt(item.rank)}</div><div class="hot-stock-name">${esc(item.name)} (${esc(item.symbol)})</div></div>
       <div class="hot-stock-side">
         <span class="hot-stock-price">${fmtNum(item.latest_price, 2)}</span>
         <span class="${dayCls}">${daySign}${fmtNum(dayPct, 2)}%</span>
@@ -741,7 +741,7 @@ function renderDcStats(stats, syncStatus, report) {
   if (cov != null && cov < 90 && !reportStale) {
     alertBar.style.display = '';
     alertBar.className = `dc-alert-bar dc-alert-${health.cls}`;
-    alertBar.innerHTML = `<span class="dc-alert-icon">${health.icon}</span>数据覆盖率仅 ${cov.toFixed(1)}%，缺失 ${missing.toLocaleString()} 条，建议执行 <strong>全量补缺</strong>`;
+    alertBar.innerHTML = `<span class="dc-alert-icon">${esc(health.icon)}</span>数据覆盖率仅 ${Number(cov).toFixed(1)}%，缺失 ${safeInt(missing).toLocaleString()} 条，建议执行 <strong>全量补缺</strong>`;
   } else if (cov != null && cov < 90 && reportStale) {
     alertBar.style.display = '';
     alertBar.className = 'dc-alert-bar dc-alert-warning';
@@ -761,18 +761,18 @@ function renderDcStats(stats, syncStatus, report) {
     </div>
     <div class="dc-health-info">
       <div class="dc-health-title"><span class="dc-health-dot ${health.cls}"></span>数据健康: <strong class="${health.cls}">${health.label}</strong></div>
-      <div class="dc-health-sub">任务状态: <span class="${syncCls}">${syncLabel}</span>${syncStatus.updated_at ? ' · ' + fmtDateTime(syncStatus.updated_at) : ''}</div>
-      <div class="dc-health-sub">最近同步: ${syncStatus.last_success_trade_date || '--'} (${syncStatus.trigger_mode || '--'})${missing > 0 ? ' · 缺失 <strong style="color:#f59e0b">' + missing.toLocaleString() + '</strong> 条' : ''}</div>
+      <div class="dc-health-sub">任务状态: <span class="${esc(syncCls)}">${esc(syncLabel)}</span>${syncStatus.updated_at ? ' · ' + esc(fmtDateTime(syncStatus.updated_at)) : ''}</div>
+      <div class="dc-health-sub">最近同步: ${esc(syncStatus.last_success_trade_date || '--')} (${esc(syncStatus.trigger_mode || '--')})${missing > 0 ? ' · 缺失 <strong style="color:#f59e0b">' + missing.toLocaleString() + '</strong> 条' : ''}</div>
     </div>
   `;
 
   const kpiRow = document.getElementById('dcKpiRow');
   kpiRow.innerHTML = `
-    <div class="dc-kpi"><span class="dc-kpi-val">${(stats.symbol_count || 0).toLocaleString()}</span><span class="dc-kpi-label">股票数</span></div>
-    <div class="dc-kpi"><span class="dc-kpi-val">${(stats.row_count || 0).toLocaleString()}</span><span class="dc-kpi-label">K线总条数</span></div>
-    <div class="dc-kpi"><span class="dc-kpi-val">${stats.min_date || '--'}</span><span class="dc-kpi-label">最早日期</span></div>
-    <div class="dc-kpi"><span class="dc-kpi-val">${stats.max_date || '--'}</span><span class="dc-kpi-label">最新日期</span></div>
-    <div class="dc-kpi"><span class="dc-kpi-val">${stats.db_size_mb ?? '--'} MB</span><span class="dc-kpi-label">数据库</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${safeInt(stats.symbol_count).toLocaleString()}</span><span class="dc-kpi-label">股票数</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${safeInt(stats.row_count).toLocaleString()}</span><span class="dc-kpi-label">K线总条数</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${esc(stats.min_date || '--')}</span><span class="dc-kpi-label">最早日期</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${esc(stats.max_date || '--')}</span><span class="dc-kpi-label">最新日期</span></div>
+    <div class="dc-kpi"><span class="dc-kpi-val">${esc(stats.db_size_mb ?? '--')} MB</span><span class="dc-kpi-label">数据库</span></div>
   `;
 
   const hint = document.getElementById('dcSyncHint');
@@ -805,7 +805,7 @@ function renderDcReport(report) {
   const sortEl = document.getElementById('dcReportSort');
 
   if (!report || report.status === 'none' || report.status === 'error') {
-    container.innerHTML = `<div class="detail-empty">${report?.message || '暂无检查报告，点击上方按钮执行检查'}</div>`;
+    container.innerHTML = `<div class="detail-empty">${esc(report?.message || '暂无检查报告，点击上方按钮执行检查')}</div>`;
     if (sortEl) sortEl.innerHTML = '';
     return;
   }
@@ -822,13 +822,13 @@ function renderDcReport(report) {
     };
   }
 
-  let html = `<div class="dc-report-conclusion ${health.cls}">最近 ${report.trade_days_checked || 0} 个交易日覆盖率 <strong>${pct.toFixed(1)}%</strong>，${report.total_missing ? '缺失 <strong>' + (report.total_missing).toLocaleString() + '</strong> 条' : '数据完整'}${pct < 90 ? '，建议执行全量补缺' : ''}</div>`;
+  let html = `<div class="dc-report-conclusion ${esc(health.cls)}">最近 ${safeInt(report.trade_days_checked)} 个交易日覆盖率 <strong>${Number(pct).toFixed(1)}%</strong>，${safeInt(report.total_missing) ? '缺失 <strong>' + safeInt(report.total_missing).toLocaleString() + '</strong> 条' : '数据完整'}${pct < 90 ? '，建议执行全量补缺' : ''}</div>`;
 
   html += `<div class="dc-report-metrics">
-    <div class="dc-rm"><span class="dc-rm-val">${(report.total_expected || 0).toLocaleString()}</span><span class="dc-rm-label">期望条数</span></div>
-    <div class="dc-rm"><span class="dc-rm-val">${(report.total_actual || 0).toLocaleString()}</span><span class="dc-rm-label">实际条数</span></div>
-    <div class="dc-rm"><span class="dc-rm-val ${report.total_missing ? 'warning' : 'success'}">${(report.total_missing || 0).toLocaleString()}</span><span class="dc-rm-label">缺失条数</span></div>
-    <div class="dc-rm"><span class="dc-rm-val">${checkTime}</span><span class="dc-rm-label">检查时间</span></div>
+    <div class="dc-rm"><span class="dc-rm-val">${safeInt(report.total_expected).toLocaleString()}</span><span class="dc-rm-label">期望条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val">${safeInt(report.total_actual).toLocaleString()}</span><span class="dc-rm-label">实际条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val ${safeInt(report.total_missing) ? 'warning' : 'success'}">${safeInt(report.total_missing).toLocaleString()}</span><span class="dc-rm-label">缺失条数</span></div>
+    <div class="dc-rm"><span class="dc-rm-val">${esc(checkTime)}</span><span class="dc-rm-label">检查时间</span></div>
   </div>`;
 
   let missingDates = [...(report.missing_by_date || [])];
@@ -841,11 +841,11 @@ function renderDcReport(report) {
     html += `<div class="dc-missing-header">缺失日期 (${missingDates.length} 天)</div>`;
     html += '<div class="dc-missing-list">';
     for (const d of missingDates) {
-      const barPct = d.coverage_pct || 0;
+      const barPct = Math.max(0, Math.min(100, Number(d.coverage_pct) || 0));
       const barColor = barPct >= 99 ? '#22c55e' : (barPct >= 90 ? '#f59e0b' : '#ef4444');
       html += `<div class="dc-missing-row">
-          <span class="dc-missing-date">${d.date}</span>
-          <span class="dc-missing-count">缺 ${(d.missing_count || 0).toLocaleString()}</span>
+          <span class="dc-missing-date">${esc(d.date)}</span>
+          <span class="dc-missing-count">缺 ${safeInt(d.missing_count).toLocaleString()}</span>
           <div class="dc-missing-bar-wrap"><div class="dc-missing-bar-fill" style="width:${barPct}%;background:${barColor}"></div></div>
           <span class="dc-missing-pct">覆盖 ${barPct.toFixed(1)}%</span>
         </div>`;
@@ -915,12 +915,12 @@ function renderDcTaskList(logs) {
     const shortMode = rawMode.split('_')[0] || rawMode;
     return `<div class="dc-task-item">
         <span class="dc-td dc-th-status"><span class="status-dot status-dot--${dotCls}"></span></span>
-        <span class="dc-td dc-th-date">${t.trade_date}</span>
+        <span class="dc-td dc-th-date">${esc(t.trade_date)}</span>
         <span class="dc-td dc-th-mode" title="${esc(rawMode)}">${esc(shortMode)}</span>
-        <span class="dc-td dc-th-ok success">${t.success_symbols || 0}</span>
-        <span class="dc-td dc-th-fail ${(t.failed_symbols || 0) > 0 ? 'error' : ''}">${t.failed_symbols || 0}</span>
-        <span class="dc-td dc-th-total">${t.total_symbols || 0}</span>
-        <span class="dc-td dc-th-time">${time}</span>
+        <span class="dc-td dc-th-ok success">${safeInt(t.success_symbols)}</span>
+        <span class="dc-td dc-th-fail ${safeInt(t.failed_symbols) > 0 ? 'error' : ''}">${safeInt(t.failed_symbols)}</span>
+        <span class="dc-td dc-th-total">${safeInt(t.total_symbols)}</span>
+        <span class="dc-td dc-th-time">${esc(time)}</span>
         ${failRow}
       </div>`;
   }).join('');
@@ -928,14 +928,19 @@ function renderDcTaskList(logs) {
   container.innerHTML = html;
 
   const totalPages = Math.ceil((logs.total || 0) / 15);
+  pager.innerHTML = '';
   if (totalPages > 1) {
-    pager.innerHTML = `
-      <button ${_dcTaskPage <= 1 ? 'disabled' : ''} onclick="dcTaskPageNav(-1)">上一页</button>
-      <span>${_dcTaskPage}/${totalPages}</span>
-      <button ${_dcTaskPage >= totalPages ? 'disabled' : ''} onclick="dcTaskPageNav(1)">下一页</button>
-    `;
-  } else {
-    pager.innerHTML = '';
+    const prev = document.createElement('button');
+    prev.textContent = '上一页';
+    prev.disabled = _dcTaskPage <= 1;
+    prev.onclick = () => dcTaskPageNav(-1);
+    const label = document.createElement('span');
+    label.textContent = `${_dcTaskPage}/${totalPages}`;
+    const next = document.createElement('button');
+    next.textContent = '下一页';
+    next.disabled = _dcTaskPage >= totalPages;
+    next.onclick = () => dcTaskPageNav(1);
+    pager.append(prev, label, next);
   }
 }
 
@@ -955,7 +960,7 @@ function renderDcLogStream(logs) {
   }
   const showCount = state.dcLogsExpanded ? items.length : Math.min(5, items.length);
   container.innerHTML = items.slice(0, showCount).map(t => `
-    <div class="sync-log-item">[${t.status}] ${t.trade_date} ${t.synced_symbols}/${t.total_symbols} (${t.trigger_mode}) ${t.message || ''}</div>
+    <div class="sync-log-item">[${esc(t.status)}] ${esc(t.trade_date)} ${safeInt(t.synced_symbols)}/${safeInt(t.total_symbols)} (${esc(t.trigger_mode)}) ${esc(t.message || '')}</div>
   `).join('');
   if (toggleBtn) {
     toggleBtn.style.display = items.length > 5 ? '' : 'none';
@@ -1117,7 +1122,7 @@ function _klinePredictOption(merged, predStartIdx, realtimeMap) {
         const isPred = idx >= predStartIdx;
         const k = merged[idx];
         const rt = realtimeMap[k.date];
-        let html = `<div style="font-weight:600;margin-bottom:4px">${k.date}</div>`;
+        let html = `<div style="font-weight:600;margin-bottom:4px">${esc(k.date)}</div>`;
         if (isPred) {
           html += `<div style="color:#facc15;margin-bottom:3px">── 预测 ──</div>`;
           html += `<div>收: ${fmtNum(k.close,2)} &nbsp; 高: ${fmtNum(k.high,2)}</div>`;
@@ -1462,7 +1467,7 @@ function renderNoticePool(poolName, list) {
     card.className = `stock-card ${state.noticeSelectedSymbol === stock.symbol ? 'active' : ''}`;
     card.onclick = () => selectNoticeSymbol(stock.symbol);
     const actions = noticeCardActions(stock)
-      .map(([label, pool]) => `<button data-symbol="${stock.symbol}" data-pool="${pool}">${label}</button>`)
+      .map(([label, pool]) => `<button data-symbol="${esc(stock.symbol)}" data-pool="${esc(pool)}">${esc(label)}</button>`)
       .join('');
     const simBuyBtn = poolName === 'buy'
       ? `<button class="btn-sim-buy" data-symbol="${esc(stock.symbol)}" data-name="${esc(stock.name)}">模拟买入</button>`
@@ -1472,10 +1477,10 @@ function renderNoticePool(poolName, list) {
         <div class="stock-name">${esc(stock.name)} (${esc(stock.symbol)})</div>
         <div class="score up">${fmtNum(stock.score)}</div>
       </div>
-      <div class="metrics">${stock.notice_type} · ${stock.notice_date}</div>
-      <div class="metrics">${stock.title}</div>
-      <div class="metrics">理由: ${stock.reason || '-'}</div>
-      <div class="metrics">风险: ${stock.risk || '-'}</div>
+      <div class="metrics">${esc(stock.notice_type)} · ${esc(stock.notice_date)}</div>
+      <div class="metrics">${esc(stock.title)}</div>
+      <div class="metrics">理由: ${esc(stock.reason || '-')}</div>
+      <div class="metrics">风险: ${esc(stock.risk || '-')}</div>
       <div class="card-actions">${actions}${simBuyBtn}</div>
     `;
     card.querySelectorAll('button[data-pool]').forEach((btn) => {
@@ -1489,7 +1494,7 @@ function renderNoticePool(poolName, list) {
   });
   if (!list.length) {
     const hint = state.activeKeywords.size > 0 ? '当前关键词下无匹配公告' : '尚未运行公告筛选';
-    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${hint}</div></div>`;
+    root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${esc(hint)}</div></div>`;
   }
 }
 
@@ -1532,10 +1537,10 @@ async function selectNoticeSymbol(symbol) {
     };
     document.getElementById('noticeDetail').innerHTML = `
       <div class="metrics"><b>${kwHighlight(first.title)}</b></div>
-      <div class="metrics">类型: ${first.notice_type || '-'}</div>
+      <div class="metrics">类型: ${esc(first.notice_type || '-')}</div>
       <div class="metrics">理由: ${kwHighlight(detail.reason)}</div>
       <div class="metrics">风险: ${kwHighlight(detail.risk)}</div>
-      <div class="metrics"><a href="${first.url || '#'}" target="_blank" style="color:var(--brand)">公告链接</a></div>
+      <div class="metrics">${safeLinkHtml(first.url, '公告链接')}</div>
     `;
     document.getElementById('stockSummary').textContent = `${detail.name}(${detail.symbol}) 30日日K`;
     if (kline.length) {
@@ -1741,10 +1746,13 @@ function renderPaperPositions(positions) {
       <div class="empty-state-text">当前无持仓</div>
       <div class="empty-state-hint">在买入池点击「模拟买入」开始模拟交易</div>
       <div class="empty-state-actions">
-        <button class="btn-primary btn-sm" onclick="switchTab('funnel')">前往策略选股</button>
-        <button class="btn-secondary btn-sm" onclick="switchTab('notice')">前往公告选股</button>
+        <button class="btn-primary btn-sm" data-goto-tab="funnel">前往策略选股</button>
+        <button class="btn-secondary btn-sm" data-goto-tab="notice">前往公告选股</button>
       </div>
     </div>`;
+    root.querySelectorAll('[data-goto-tab]').forEach((btn) => {
+      btn.onclick = () => switchTab(btn.dataset.gotoTab);
+    });
     return;
   }
   positions.forEach(p => {
@@ -1754,18 +1762,18 @@ function renderPaperPositions(positions) {
     div.className = 'paper-card';
     div.innerHTML = `
       <div class="paper-card-top">
-        <div class="paper-card-name">${p.name} (${p.symbol})</div>
+        <div class="paper-card-name">${esc(p.name)} (${esc(p.symbol)})</div>
         <div class="paper-card-pnl ${cls}">${sign}¥${fmtNum(p.pnl, 2)} (${sign}${fmtNum(p.pnl_pct, 2)}%)</div>
       </div>
       <div class="paper-card-info">
         <span>成本 ${fmtNum(p.cost_price, 2)}</span>
         <span>现价 ${fmtNum(p.current_price, 2)}</span>
-        <span>数量 ${p.qty}股</span>
+        <span>数量 ${safeInt(p.qty)}股</span>
         <span>市值 ¥${fmtNum(p.current_price * p.qty, 2)}</span>
         <span>开仓 ${fmtShortTime(p.opened_at)}</span>
       </div>
       <div class="paper-card-actions">
-        <button class="btn-sell" data-id="${p.id}" data-symbol="${esc(p.symbol)}" data-name="${esc(p.name)}">模拟卖出</button>
+        <button class="btn-sell" data-id="${esc(p.id)}" data-symbol="${esc(p.symbol)}" data-name="${esc(p.name)}">模拟卖出</button>
       </div>
     `;
     div.querySelector('.btn-sell').onclick = (e) => {
@@ -1795,13 +1803,13 @@ function renderPaperHistory(positions) {
     const sign = rpnl > 0 ? '+' : '';
     const pctStr = p.realized_pnl_pct != null ? ` (${sign}${fmtNum(p.realized_pnl_pct, 2)}%)` : '';
     html += `<tr>
-      <td class="paper-hist-name">${p.name}<br><code>${p.symbol}</code></td>
-      <td>${p.qty}</td>
+      <td class="paper-hist-name">${esc(p.name)}<br><code>${esc(p.symbol)}</code></td>
+      <td>${safeInt(p.qty)}</td>
       <td>${fmtNum(p.cost_price, 2)}</td>
       <td>${fmtNum(p.close_price, 2)}</td>
       <td class="${cls}">${sign}¥${fmtNum(rpnl, 2)}${pctStr}</td>
-      <td title="${p.opened_at || ''}">${fmtShortTime(p.opened_at)}</td>
-      <td title="${p.closed_at || ''}">${fmtShortTime(p.closed_at)}</td>
+      <td title="${esc(p.opened_at || '')}">${esc(fmtShortTime(p.opened_at))}</td>
+      <td title="${esc(p.closed_at || '')}">${esc(fmtShortTime(p.closed_at))}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -1825,10 +1833,10 @@ function renderPaperTrades(trades) {
     const actionText = t.action === 'buy' ? '买入' : '卖出';
     const time = (t.created_at || '').slice(0, 19).replace('T', ' ');
     html += `<tr>
-      <td class="paper-trade-time">${time}</td>
-      <td class="paper-hist-name">${t.name}<br><code>${t.symbol}</code></td>
-      <td><span class="${actionCls}">${actionText}</span></td>
-      <td>${t.qty}</td>
+      <td class="paper-trade-time">${esc(time)}</td>
+      <td class="paper-hist-name">${esc(t.name)}<br><code>${esc(t.symbol)}</code></td>
+      <td><span class="${esc(actionCls)}">${esc(actionText)}</span></td>
+      <td>${safeInt(t.qty)}</td>
       <td>${fmtNum(t.price, 4)}</td>
       <td>¥${fmtNum(t.fee, 2)}</td>
     </tr>`;
@@ -1878,8 +1886,6 @@ async function loadAgentStatus() {
   } catch { /* ignore */ }
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-
 async function loadAgentTasks() {
   const container = document.getElementById('agentTasks');
   try {
@@ -1899,12 +1905,12 @@ async function loadAgentTasks() {
         : '';
       return `
         <div class="agent-task-row" style="flex-wrap:wrap">
-          <span class="status-dot status-dot--${statusDotCls}"></span>
-          <span class="agent-task-type">${typeLabel}</span>
-          <span class="agent-task-status ${t.status}">${statusLabel}</span>
-          <span class="agent-task-time">${time}</span>
-          <span class="agent-task-elapsed">${elapsed}</span>
-          <span class="agent-task-time">${t.trigger || ''}</span>
+          <span class="status-dot status-dot--${esc(statusDotCls)}"></span>
+          <span class="agent-task-type">${esc(typeLabel)}</span>
+          <span class="agent-task-status ${esc(t.status)}">${esc(statusLabel)}</span>
+          <span class="agent-task-time">${esc(time)}</span>
+          <span class="agent-task-elapsed">${esc(elapsed)}</span>
+          <span class="agent-task-time">${esc(t.trigger || '')}</span>
           ${failDetail}
         </div>`;
     }).join('');
@@ -1956,6 +1962,15 @@ function renderMonitorFeed() {
     return;
   }
   container.innerHTML = msgs.map(m => _renderMonitorCard(m)).join('');
+  container.querySelectorAll('[data-summary-toggle]').forEach((el) => {
+    el.onclick = () => {
+      const detail = el.previousElementSibling;
+      if (!detail) return;
+      const hidden = detail.style.display === 'none';
+      detail.style.display = hidden ? 'block' : 'none';
+      el.textContent = hidden ? '收起' : `展开 ${el.dataset.more || ''} 条`;
+    };
+  });
   bindHoverKline(container);
 }
 
@@ -2088,7 +2103,7 @@ function _showHoverKline(symbol, name, anchorEl) {
             const chg = ((day3Close - lastClose) / lastClose * 100).toFixed(2);
             const cls = Number(chg) > 0 ? 'up' : (Number(chg) < 0 ? 'down' : 'neutral');
             const sign = Number(chg) > 0 ? '+' : '';
-            titleEl.innerHTML = `${esc(name)}(${symbol}) · <span class="${cls}">预测3日 ${sign}${chg}%</span>`;
+            titleEl.innerHTML = `${esc(name)}(${esc(symbol)}) · <span class="${cls}">预测3日 ${sign}${chg}%</span>`;
           }
         }
       } catch {}
@@ -2221,7 +2236,7 @@ function _renderMonitorCard(msg) {
   if (!themes.length) {
     return `<div class="monitor-msg-card">
       <div class="monitor-msg-header">
-        <span class="monitor-msg-time">${fullTime}</span>
+        <span class="monitor-msg-time">${esc(fullTime)}</span>
         <span class="monitor-msg-trigger ${triggerCls}">${triggerLabel}</span>
       </div>
       <div class="monitor-msg-body">${_formatPlainContent(raw)}</div>
@@ -2238,7 +2253,7 @@ function _renderMonitorCard(msg) {
       const rest = keyLines.slice(2);
       const restHtml = rest.length
         ? `<div class="monitor-summary-detail" style="display:none">${rest.map(l => `<div>· ${esc(l)}</div>`).join('')}</div>
-           <span class="monitor-summary-toggle" onclick="this.previousElementSibling.style.display=this.previousElementSibling.style.display==='none'?'block':'none';this.textContent=this.previousElementSibling.style.display==='none'?'展开 ${rest.length} 条':'收起'">展开 ${rest.length} 条</span>`
+           <span class="monitor-summary-toggle" data-summary-toggle data-more="${rest.length}">展开 ${rest.length} 条</span>`
         : '';
       summaryHtml = `<div class="monitor-summary"><b>执行摘要</b> ${preview}${restHtml}</div>`;
     }
@@ -2248,7 +2263,7 @@ function _renderMonitorCard(msg) {
     const levelCls = t.level === '高' ? 'high' : t.level.includes('高') ? 'mid-high' : t.level === '中' ? 'mid' : 'low';
     const stocksHtml = t.stocks.map(s =>
       `<div class="mtheme-stock" data-symbol="${esc(s.symbol)}" data-name="${esc(s.name)}" title="点击查看 ${esc(s.name)} K线预测">` +
-      `<code>${s.symbol}</code> <b>${esc(s.name)}</b><svg viewBox="0 0 20 20" fill="currentColor" class="mtheme-stock-arrow"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/></svg></div>`
+      `<code>${esc(s.symbol)}</code> <b>${esc(s.name)}</b><svg viewBox="0 0 20 20" fill="currentColor" class="mtheme-stock-arrow"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/></svg></div>`
     ).join('');
     const analysisHtml = t.analysis ? `<div class="mtheme-analysis">${esc(t.analysis)}</div>` : '';
     const riskHtml = t.risk ? `<div class="mtheme-risk">风险: ${esc(t.risk)}</div>` : '';
@@ -2268,7 +2283,7 @@ function _renderMonitorCard(msg) {
 
   return `<div class="monitor-msg-card">
     <div class="monitor-msg-header">
-      <span class="monitor-msg-time">${fullTime}</span>
+      <span class="monitor-msg-time">${esc(fullTime)}</span>
       <span class="monitor-msg-trigger ${triggerCls}">${triggerLabel}</span>
     </div>
     ${summaryHtml}
@@ -2318,7 +2333,9 @@ async function openPredictModal(symbol, detail, options = {}) {
   const pct = Number(m.pct_change || 0);
   const pctCls = pct >= 0 ? 'up' : 'down';
   const sign = pct >= 0 ? '+' : '';
-  const badge = options.badge ? `<span class="${options.badgeClass || 'predict-modal-badge'}">${options.badge}</span>` : '';
+  const badge = options.badge
+    ? `<span class="${esc(options.badgeClass || 'predict-modal-badge')}">${esc(options.badge)}</span>`
+    : '';
   document.getElementById('predictModalSubtitle').innerHTML = `
     <span>现价: ${fmtNum(m.price, 2)}</span>
     <span class="${pctCls}">涨跌: ${sign}${fmtNum(pct, 2)}%</span>
@@ -2344,7 +2361,7 @@ async function openPredictModal(symbol, detail, options = {}) {
     renderPredictSummary(pred);
     document.getElementById('predictStatus').innerHTML = '';
   } catch (err) {
-    document.getElementById('predictStatus').innerHTML = `<span class="error">预测失败: ${err.message}</span>`;
+    document.getElementById('predictStatus').innerHTML = `<span class="error">预测失败: ${esc(err.message)}</span>`;
     if (!kline.length) {
       const chart = ensurePredictChart();
       if (chart) {
@@ -2415,7 +2432,7 @@ function renderPredictChartFull(merged, predStartIdx) {
         const isPred = idx >= predStartIdx;
         const k = merged[idx];
         const tag = isPred ? '<span style="color:#facc15">[预测]</span>' : '[历史]';
-        let html = `<div style="font-weight:600;margin-bottom:4px">${k.date} ${tag}</div>`;
+        let html = `<div style="font-weight:600;margin-bottom:4px">${esc(k.date)} ${tag}</div>`;
         html += `<div>收: ${fmtNum(k.close, 2)} &nbsp; 高: ${fmtNum(k.high, 2)}</div>`;
         html += `<div>开: ${fmtNum(k.open, 2)} &nbsp; 低: ${fmtNum(k.low, 2)}</div>`;
         if (!isPred && k.volume) html += `<div>量: ${(k.volume / 10000).toFixed(0)}万</div>`;
@@ -2491,7 +2508,7 @@ function renderPredictSummary(pred) {
   const items = pk.map((k, i) => {
     const d = chgSign2(k.close, lastClose);
     return `<div class="predict-summary-item">
-      <span class="predict-summary-label">第${i + 1}日预测收盘 (${k.date})</span>
+      <span class="predict-summary-label">第${i + 1}日预测收盘 (${esc(k.date)})</span>
       <span class="predict-summary-value ${d.cls}">${fmtNum(k.close, 2)} ${d.txt}</span>
     </div>`;
   });
@@ -2510,7 +2527,7 @@ function renderPredictSummary(pred) {
   </div>`);
 
   items.push(`<div class="predict-summary-meta">
-    模型: ${esc(pred.model)} · 设备: ${esc(pred.device)} · 窗口: ${pred.lookback}→${pred.horizon} · 生成: ${(pred.generated_at || '').replace('T', ' ')}
+    模型: ${esc(pred.model)} · 设备: ${esc(pred.device)} · 窗口: ${safeInt(pred.lookback)}→${safeInt(pred.horizon)} · 生成: ${esc((pred.generated_at || '').replace('T', ' '))}
   </div>`);
 
   container.innerHTML = items.join('');
@@ -3050,22 +3067,22 @@ function _predictCardHtml(e) {
   const pct = Number(e.pred_max_high_pct || 0);
   const cls = _predictPctCls(pct);
   const boards = (e.boards || []).slice(0, 3)
-    .map(b => `<span class="predict-card-board-tag">${b.name}</span>`).join('');
+    .map(b => `<span class="predict-card-board-tag">${esc(b.name)}</span>`).join('');
   const sign = pct >= 0 ? '+' : '';
   return `
-    <div class="pool-card" data-symbol="${e.symbol}" onclick="openPredictDetail('${e.symbol}')">
+    <div class="pool-card" data-symbol="${esc(e.symbol)}">
       <div class="card-head">
         <div class="card-name">
-          <span class="stock-name">${e.name || e.symbol}</span>
-          <span class="stock-code">${e.symbol}</span>
+          <span class="stock-name">${esc(e.name || e.symbol)}</span>
+          <span class="stock-code">${esc(e.symbol)}</span>
         </div>
         <div class="card-score ${cls}">${sign}${pct.toFixed(1)}%</div>
       </div>
       <div class="predict-card-meta">
         <span class="predict-card-metric">今收 <b>${fmtNum(e.today_close)}</b></span>
         <span class="predict-card-metric">3日高 <b>${fmtNum(e.pred_max_high)}</b></span>
-        <span class="predict-card-metric">末日 ${(e.pred_last_close_pct >= 0 ? '+' : '')}${fmtNum(e.pred_last_close_pct, 1)}%</span>
-        <span class="predict-card-metric">均价 ${(e.pred_avg_close_pct >= 0 ? '+' : '')}${fmtNum(e.pred_avg_close_pct, 1)}%</span>
+        <span class="predict-card-metric">末日 ${(Number(e.pred_last_close_pct) >= 0 ? '+' : '')}${fmtNum(e.pred_last_close_pct, 1)}%</span>
+        <span class="predict-card-metric">均价 ${(Number(e.pred_avg_close_pct) >= 0 ? '+' : '')}${fmtNum(e.pred_avg_close_pct, 1)}%</span>
       </div>
       ${boards ? `<div class="predict-card-boards">${boards}</div>` : ''}
     </div>`;
@@ -3102,6 +3119,9 @@ function renderPredictFunnel() {
       return;
     }
     el.innerHTML = list.map(_predictCardHtml).join('');
+    el.querySelectorAll('.pool-card[data-symbol]').forEach((card) => {
+      card.onclick = () => openPredictDetail(card.dataset.symbol);
+    });
   };
   renderPool('predict-pool-candidate', pools.candidate);
   renderPool('predict-pool-focus', pools.focus);
@@ -3216,28 +3236,28 @@ function _hotAiCardHtml(e, poolName) {
   const priceHtml = price > 0 ? `<span class="stock-price">${fmtNum(price, 2)}</span>` : '';
   const pctHtml = pct !== 0 ? ` <span class="${pctCls}">${pctSign}${fmtNum(pct, 2)}%</span>` : '';
   const tags = (e.tags || []).slice(0, 4)
-    .map(tag => `<span class="tag hot-ai-tag">${tag}</span>`)
+    .map(tag => `<span class="tag hot-ai-tag">${esc(tag)}</span>`)
     .join('');
   const btns = _hotAiActions(poolName)
-    .map(([txt, pool]) => `<button data-hotai-pool="${pool}" data-symbol="${e.symbol}">${txt}</button>`)
+    .map(([txt, pool]) => `<button data-hotai-pool="${esc(pool)}" data-symbol="${esc(e.symbol)}">${esc(txt)}</button>`)
     .join('');
   const decisionHtml = ta.status === 'ok'
     ? `<div class="hot-ai-ta-row">
-        <span class="hot-ai-ta-pill ${decisionCls}">TradingAgents ${_hotAiDecisionText(decision)}</span>
-        <span class="hot-ai-ta-source">${sourceText}</span>
+        <span class="hot-ai-ta-pill ${esc(decisionCls)}">TradingAgents ${esc(_hotAiDecisionText(decision))}</span>
+        <span class="hot-ai-ta-source">${esc(sourceText)}</span>
         <span class="hot-ai-ta-bonus ${bonus >= 0 ? 'up' : 'down'}">${bonusSign}${fmtNum(bonus, 1)}分</span>
       </div>`
     : ta.status === 'failed'
-      ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill risk">讨论失败</span><span class="hot-ai-ta-source">${ta.error || '调用异常'}</span></div>`
+      ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill risk">讨论失败</span><span class="hot-ai-ta-source">${esc(ta.error || '调用异常')}</span></div>`
       : ta.status === 'skipped'
-        ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">未讨论</span><span class="hot-ai-ta-source">${ta.reason || '未进入讨论名单'}</span></div>`
+        ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">未讨论</span><span class="hot-ai-ta-source">${esc(ta.reason || '未进入讨论名单')}</span></div>`
         : ta.status === 'disabled'
           ? `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">讨论关闭</span></div>`
           : `<div class="hot-ai-ta-row"><span class="hot-ai-ta-pill hold">待讨论</span></div>`;
   return `
-    <div class="stock-card hot-ai-card ${state.selectedSymbol === e.symbol ? 'active' : ''}" data-symbol="${e.symbol}" onclick="openHotAiDetail('${e.symbol}')">
+    <div class="stock-card hot-ai-card ${state.selectedSymbol === e.symbol ? 'active' : ''}" data-hotai-symbol="${esc(e.symbol)}">
       <div class="stock-top">
-        <div class="stock-name">${e.name || e.symbol} <span class="stock-code">${e.symbol}</span></div>
+        <div class="stock-name">${esc(e.name || e.symbol)} <span class="stock-code">${esc(e.symbol)}</span></div>
         <div class="stock-price-area">${priceHtml}${pctHtml}</div>
       </div>
       ${tags ? `<div class="tags">${tags}</div>` : ''}
@@ -3246,7 +3266,7 @@ function _hotAiCardHtml(e, poolName) {
         <span class="metrics-sep">·</span>
         <span>基础分 <b>${fmtNum(baseScore, 1)}</b></span>
         <span class="metrics-sep">·</span>
-        <span>热度 #<b>${e.rank || '--'}</b></span>
+        <span>热度 #<b>${e.rank ? safeInt(e.rank) : '--'}</b></span>
         <span class="metrics-sep">·</span>
         <span>3日高 <b>${(Number(e.pred_max_high_pct || 0) >= 0 ? '+' : '')}${fmtNum(e.pred_max_high_pct, 2)}%</b></span>
       </div>
@@ -3266,10 +3286,10 @@ function _hotAiCardHtml(e, poolName) {
         <span class="metrics-sep">·</span>
         <span>风险扣分 <b>${fmtNum(e.score_breakdown?.risk_penalty, 1)}</b></span>
       </div>
-      <div class="metrics"><span>评价 <b>${evaluationText}</b></span></div>
+      <div class="metrics"><span>评价 <b>${esc(evaluationText)}</b></span></div>
       ${decisionHtml}
-      ${taSummary ? `<div class="hot-ai-ta-summary">${taSummary}</div>` : ''}
-      <div class="hot-ai-analysis">${e.analysis || '暂无分析摘要'}</div>
+      ${taSummary ? `<div class="hot-ai-ta-summary">${esc(taSummary)}</div>` : ''}
+      <div class="hot-ai-analysis">${esc(e.analysis || '暂无分析摘要')}</div>
       <div class="card-actions">${btns}</div>
     </div>`;
 }
@@ -3307,6 +3327,9 @@ function renderHotStockAI() {
       return;
     }
     el.innerHTML = list.map((item) => _hotAiCardHtml(item, id.split('-').pop())).join('');
+    el.querySelectorAll('.hot-ai-card[data-hotai-symbol]').forEach((card) => {
+      card.onclick = () => openHotAiDetail(card.dataset.hotaiSymbol);
+    });
     el.querySelectorAll('button[data-hotai-pool]').forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
@@ -3777,19 +3800,19 @@ function _renderRulesList() {
         const val = ref.params[p.key] ?? p.default;
         if (p.type === 'bool') {
           return `<label class="sc-param sc-param-bool">
-            <input type="checkbox" data-code="${spec.code}" data-key="${p.key}" data-type="bool" ${val ? 'checked' : ''} />
+            <input type="checkbox" data-code="${esc(spec.code)}" data-key="${esc(p.key)}" data-type="bool" ${val ? 'checked' : ''} />
             ${esc(p.label)}
           </label>`;
         }
         if (p.type === 'text') {
           return `<label class="sc-param">
             <span class="sc-param-label">${esc(p.label)}</span>
-            <input type="text" class="sc-input sc-param-input" data-code="${spec.code}" data-key="${p.key}" data-type="text" value="${esc(String(val))}" />
+            <input type="text" class="sc-input sc-param-input" data-code="${esc(spec.code)}" data-key="${esc(p.key)}" data-type="text" value="${esc(String(val))}" />
           </label>`;
         }
         return `<label class="sc-param">
           <span class="sc-param-label">${esc(p.label)}</span>
-          <input type="number" class="sc-input sc-param-input" data-code="${spec.code}" data-key="${p.key}" data-type="${p.type}"
+          <input type="number" class="sc-input sc-param-input" data-code="${esc(spec.code)}" data-key="${esc(p.key)}" data-type="${esc(p.type)}"
             ${p.min !== null && p.min !== undefined ? `min="${p.min}"` : ''}
             ${p.max !== null && p.max !== undefined ? `max="${p.max}"` : ''}
             ${p.step ? `step="${p.step}"` : 'step="any"'}
@@ -3797,10 +3820,10 @@ function _renderRulesList() {
         </label>`;
       }).join('');
       return `
-        <div class="sc-rule-card ${ref.enabled ? 'enabled' : ''}" data-code="${spec.code}">
+        <div class="sc-rule-card ${ref.enabled ? 'enabled' : ''}" data-code="${esc(spec.code)}">
           <div class="sc-rule-main">
             <label class="sc-switch" title="${ref.enabled ? '点击停用' : '点击启用'}">
-              <input type="checkbox" class="sc-rule-enabled" data-code="${spec.code}" ${ref.enabled ? 'checked' : ''} />
+              <input type="checkbox" class="sc-rule-enabled" data-code="${esc(spec.code)}" ${ref.enabled ? 'checked' : ''} />
               <span class="sc-switch-track"><span class="sc-switch-thumb"></span></span>
             </label>
             <div class="sc-rule-info">
@@ -3940,11 +3963,11 @@ function _renderBacktestResult(r) {
   root.innerHTML = `
     <div class="sc-bt-header">
       <h4>回测结果 · ${esc(params.strategy_name || '')}</h4>
-      <span class="sc-bt-meta">${esc(r.generated_at || '')} · ${r.elapsed_seconds}s · 规则 ${params.rules_count || '-'} 条 · 持有 ${params.hold_days}d / tp ${params.tp_pct}% / sl ${params.sl_pct}%</span>
+      <span class="sc-bt-meta">${esc(r.generated_at || '')} · ${fmtNum(r.elapsed_seconds, 2)}s · 规则 ${esc(params.rules_count ?? '-')} 条 · 持有 ${safeInt(params.hold_days)}d / tp ${fmtNum(params.tp_pct, 2)}% / sl ${fmtNum(params.sl_pct, 2)}%</span>
     </div>
     <div class="sc-bt-stats">
-      <div class="sc-bt-stat"><span class="sc-bt-label">总信号</span><span class="sc-bt-value">${r.total_signals}</span></div>
-      <div class="sc-bt-stat"><span class="sc-bt-label">胜 / 负</span><span class="sc-bt-value">${r.wins} / ${r.losses}</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">总信号</span><span class="sc-bt-value">${safeInt(r.total_signals)}</span></div>
+      <div class="sc-bt-stat"><span class="sc-bt-label">胜 / 负</span><span class="sc-bt-value">${safeInt(r.wins)} / ${safeInt(r.losses)}</span></div>
       <div class="sc-bt-stat"><span class="sc-bt-label">胜率</span><span class="sc-bt-value">${fmtNum(r.hit_rate, 2)}%</span></div>
       <div class="sc-bt-stat"><span class="sc-bt-label">累计收益</span><span class="sc-bt-value ${pnlCls}">${r.total_pnl_pct >= 0 ? '+' : ''}${fmtNum(r.total_pnl_pct, 2)}%</span></div>
       <div class="sc-bt-stat"><span class="sc-bt-label">最大回撤</span><span class="sc-bt-value ${mddCls}">${fmtNum(r.max_drawdown_pct, 2)}%</span></div>

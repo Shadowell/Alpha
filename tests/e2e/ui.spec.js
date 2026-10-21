@@ -24,6 +24,8 @@ const IGNORED_ERRORS = [
   /WebSocket/i,
   /Failed to load resource.*status of 404/,  // 静态资源偶发
   /net::ERR_INTERNET_DISCONNECTED/,
+  // meta 里的 frame-ancestors 会被浏览器忽略并告警（应由响应头下发），非 JS 错误
+  /Content Security Policy directive 'frame-ancestors' is ignored/i,
 ];
 
 function isCriticalError(msg) {
