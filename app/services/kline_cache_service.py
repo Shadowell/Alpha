@@ -1064,68 +1064,6 @@ class KlineCacheService:
     def get_sync_log_detail(self, task_id: str) -> dict[str, Any] | None:
         return self.store.get_sync_task_detail(task_id)
 
-    def build_snapshot_for_screen(self, trade_date: str) -> pd.DataFrame:
-        rows = []
-        import sqlite3
-
-        conn = sqlite3.connect(str(self.store.db_path))
-        conn.row_factory = sqlite3.Row
-        try:
-            all_rows = conn.execute(
-                """
-                SELECT symbol, trade_date, open, high, low, close, volume, amount
-                FROM kline_daily
-                WHERE trade_date <= ?
-                ORDER BY symbol ASC, trade_date ASC
-                """,
-                (trade_date,),
-            ).fetchall()
-            if not all_rows:
-                return pd.DataFrame()
-        finally:
-            conn.close()
-
-        latest_map: dict[str, dict[str, Any]] = {}
-        prev_close_map: dict[str, float] = {}
-        for row in all_rows:
-            symbol = str(row["symbol"])
-            if symbol in latest_map:
-                prev_close_map[symbol] = float(latest_map[symbol]["close"])
-            latest_map[symbol] = {
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-                "volume": float(row["volume"]),
-                "amount": float(row["amount"]),
-            }
-
-        # build_snapshot_for_screen is called from sync context in funnel_service;
-        # provider.get_symbol_name_map is now async, so use cached data if available.
-        name_map: dict[str, str] = {}
-        if self.provider.symbol_name_cache is not None:
-            _, name_map = self.provider.symbol_name_cache
-        for symbol, item in latest_map.items():
-            close = float(item["close"])
-            pre_close = float(prev_close_map.get(symbol, close))
-            pct = ((close / max(pre_close, 0.01)) - 1) * 100
-            rows.append(
-                {
-                    "代码": symbol,
-                    "名称": name_map.get(symbol, symbol),
-                    "今开": float(item["open"]),
-                    "昨收": pre_close,
-                    "最新价": close,
-                    "最高": float(item["high"]),
-                    "最低": float(item["low"]),
-                    "成交量": float(item["volume"]),
-                    "成交额": float(item["amount"]),
-                    "涨跌幅": pct,
-                    "总市值": pd.NA,
-                }
-            )
-        return pd.DataFrame(rows)
-
     # ── 数据完整性检查 ─────────────────────────────────────
 
     async def check_data_integrity(self, days: int = 30) -> dict[str, Any]:

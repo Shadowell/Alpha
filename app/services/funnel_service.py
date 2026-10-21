@@ -151,25 +151,6 @@ class FunnelService:
             self._reset_state(date_str)
             self._save_state()
 
-    def _build_cache_snapshot(self, trade_date: str) -> pd.DataFrame:
-        if self.kline_cache_service is None:
-            return pd.DataFrame()
-        try:
-            return self.kline_cache_service.build_snapshot_for_screen(trade_date)
-        except Exception:
-            return pd.DataFrame()
-
-    async def _pick_screen_snapshot(self) -> tuple[pd.DataFrame, str]:
-        # P3：build_snapshot_for_screen 会全表扫描数十万行并做 Python 循环，
-        # 放线程执行避免阻塞事件循环（此前所有 API/WS 在漏斗刷新时卡顿数秒）
-        cache_df = await asyncio.to_thread(self._build_cache_snapshot, self.trade_date)
-        if not cache_df.empty:
-            return cache_df, "history_cache"
-        snapshot_df = await self.provider.get_realtime_snapshot()
-        if not snapshot_df.empty:
-            return snapshot_df, "db_snapshot"
-        return pd.DataFrame(), "none"
-
     async def _warmup_name_cache(self) -> None:
         """预热股票代码→名称映射：优先 provider 缓存；不足时从 entries 补齐。"""
         try:

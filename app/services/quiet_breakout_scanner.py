@@ -11,6 +11,7 @@
 输出每只候选股包含：横盘振幅、缩量 CV、当日涨幅、放量倍数、close、signals 等，
 便于前端排序/筛选。
 """
+# 兼容保留路径：/api/strategy/quiet-breakout 与前端缩量启动仍在使用；删除需同步 README/前端。
 from __future__ import annotations
 
 import asyncio
