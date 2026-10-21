@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
+
+from fastapi.responses import JSONResponse
 
 ERROR_ID_PREFIX = "err_"
 DEFAULT_ERROR_MESSAGE = "服务暂时不可用，请稍后重试"
@@ -47,3 +50,46 @@ def log_exception(
         exc_info=exc,
     )
     return eid
+
+
+def _safe_detail_message(message: str, exc: BaseException | None) -> str:
+    text = (message or "").strip()
+    if not text:
+        return DEFAULT_ERROR_MESSAGE
+    # 防御误用：调用方若拼了 f"...: {exc}"，整体回退为通用消息。
+    if exc is not None:
+        raw = str(exc).strip()
+        if raw and raw in text:
+            return DEFAULT_ERROR_MESSAGE
+    return text
+
+
+def error_detail(
+    message: str,
+    exc: BaseException | None = None,
+    status_code: int = 500,
+    *,
+    logger: logging.Logger | None = None,
+    context: str | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """构造对外安全的错误响应。
+
+    message 必须是静态通用文案（不要拼接用户输入或 str(exc)）；异常细节只写入
+    服务端日志，并通过 error_id 关联。返回体固定为
+    ``{"detail": <通用消息>, "error_id": <id>}``，同时带 X-Error-ID 响应头。
+
+    路由内可直接 ``return error_detail("预测失败，请稍后重试", exc)``。
+    """
+    safe_message = _safe_detail_message(message, exc)
+    active_logger = logger or _logger
+    level = logging.ERROR if status_code >= 500 else logging.WARNING
+    eid = log_exception(active_logger, context or safe_message, exc, level=level)
+    response_headers = {"X-Error-ID": eid}
+    if headers:
+        response_headers.update(headers)
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": safe_message, "error_id": eid},
+        headers=response_headers,
+    )
