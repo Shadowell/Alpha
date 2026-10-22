@@ -109,7 +109,6 @@ def _notice(tmp_path, pool="candidate"):
 
 @pytest.mark.parametrize("factory", [_funnel, _notice], ids=["funnel", "notice"])
 def test_cross_level_promotion_rejected_identically(tmp_path, factory):
-    funnel_msg = ""
     service = factory(tmp_path)
 
     async def _move():

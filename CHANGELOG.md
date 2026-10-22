@@ -17,6 +17,8 @@
 - `app/services/error_response.py`：5xx 仅返回通用消息与 error id，异常细节写服务端日志（#19）。
 - CI：ruff lint/format、scoped mypy、pytest coverage 门禁、Playwright E2E workflow、Dependabot 和精确依赖 pin（#13）。
 - 前端安全模块、22 个 classic script 模块与统一轮询调度器；两个页面增加 CSP（#8 #12）。
+- `app/services/trading_day_utils.py`：交易日窗口计算（日历缺失时按工作日近似回退），用于热门智能分析的 K 线新鲜度判定（#51）。
+- `app/services/pool_transition.py`：策略池 / 公告池共享的手动迁池层级校验器（逐级晋升、跨级非法、统一文案与 trigger reason）（#56）。
 
 ### Removed
 
@@ -32,6 +34,9 @@
 - 时间戳统一使用 aware Asia/Shanghai；`hot_stocks_updated_at` 可持久化并在重启后恢复；checkpoint/备份路径不再依赖启动 cwd（#21）。
 - Docker 运行用户降为 uid/gid 10001，root entrypoint 仅修复挂载权限后通过 gosu 启动应用；compose 注释与安全边界同步（#19 #10）。
 - 写令牌使用 `hmac.compare_digest` 常量时间比较（#19）。
+- 候选→重点、重点→买入按 README 规则自动迁移，手动迁池仍可覆盖；自动进入买入池受容量限制且日志区分 manual/auto（#48）。
+- 热门股票智能分析（#51 #52）：快照 `trade_date` 改为「决策交易日」（`meta.realtime_trade_date`），逐股暴露 `kline_max_date` / `stale_kline` / `realtime_bar_appended` / `amount_base_date`；Kronos 无预测分量时三池改用「排名分位数（买入 top 10%、重点 top 30%）+ 候选阈值下限」降级分层，`meta.prediction_enabled` / `prediction_available` / `pred_missing_count` / `pool_tier_mode` 可见；有预测时保持原绝对阈值（8 / 11.5 / 14.5）语义不变。
+- 手动迁池层级统一（#56）：新增 `app/services/pool_transition.py` 共享校验器，`POST /api/pool/move` 与 `POST /api/notice/pool/move` 同语义——晋升必须逐级（候选→重点→买入）、跨级晋升与非法池名返回一致 400（detail 文案相同）、降级与同级迁移幂等成功、买入池容量口径同源（5 只）；`/api/pool/move` 失败从「200 + success:false」改为 400，两侧 trigger 日志统一记录 `手动迁移: <from> -> <to>`。
 
 ### Fixed
 
@@ -41,10 +46,8 @@
 - 外部数据源无响应时占满 asyncio 默认线程池、拖垮 API/Kronos 的可靠性问题（#9）。
 - enrichment 路由依赖全局 service、容器化后返回 500 的集成缺口（#11）。
 - Tushare 客户端补回 `asyncio` 导入，避免增强数据调用被异常吞掉后返回空结果（#9 #11）。
-
-### Changed
-
-- 候选→重点、重点→买入按 README 规则自动迁移，手动迁池仍可覆盖；自动进入买入池受容量限制且日志区分 manual/auto（#48）。
+- 热门股票智能分析不再把实时价与陈旧本地 K 线混算评分（#51）：K 线恰好落后一个交易日且实时价昨收口径可对账（偏差 ≤2%）时追加可验证的当日实时 bar 后统一计算均线/振幅；落后超过容忍窗口或对账失败时整只跳过并计入 `meta.skipped_stale`（含 `stale_kline` 标记与 `stale_kline_count`），杜绝「今日 +10% 与 距MA20 +77%」同卡的跨期指标。
+- Kronos 未加载/无预测结果时重点池、买入池静默恒空的问题（#52）：无预测分量时启用可解释的分位数降级分层，不再用含 prediction 上限贡献的绝对阈值判层。
 
 ## [0.1.0] - 2026-07-22
 
