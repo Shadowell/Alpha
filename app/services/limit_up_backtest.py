@@ -60,12 +60,16 @@ class FeeConfig:
 
     def buy_costs(self, gross_amount: float) -> dict[str, float]:
         commission = max(gross_amount * self.commission_rate, self.min_commission)
-        transfer = gross_amount * self.transfer_fee_rate if self.transfer_fee_enabled else 0.0
+        transfer = (
+            gross_amount * self.transfer_fee_rate if self.transfer_fee_enabled else 0.0
+        )
         return {"commission": commission, "transfer_fee": transfer, "stamp_tax": 0.0}
 
     def sell_costs(self, gross_amount: float) -> dict[str, float]:
         commission = max(gross_amount * self.commission_rate, self.min_commission)
-        transfer = gross_amount * self.transfer_fee_rate if self.transfer_fee_enabled else 0.0
+        transfer = (
+            gross_amount * self.transfer_fee_rate if self.transfer_fee_enabled else 0.0
+        )
         stamp = gross_amount * self.stamp_tax_rate
         return {"commission": commission, "transfer_fee": transfer, "stamp_tax": stamp}
 
@@ -451,7 +455,9 @@ class BoardContext:
         return None
 
 
-def build_board_context(view: MarketDataView, symbol: str, date: str, name: str | None) -> BoardContext:
+def build_board_context(
+    view: MarketDataView, symbol: str, date: str, name: str | None
+) -> BoardContext:
     """组装 (symbol, date) 上下文；缺 up_limit 时用 prev_close×涨停幅度推算并标注。"""
     kline = view.kline(symbol)
     bar = kline.get(date)
@@ -466,7 +472,9 @@ def build_board_context(view: MarketDataView, symbol: str, date: str, name: str 
         if extras_row.get("up_limit") is not None:
             up_limit = float(extras_row["up_limit"])
             down_limit = (
-                float(extras_row["down_limit"]) if extras_row.get("down_limit") is not None else None
+                float(extras_row["down_limit"])
+                if extras_row.get("down_limit") is not None
+                else None
             )
     pct = _limit_pct_for(symbol, name or (board_row or {}).get("name"))
     if bar is not None:
@@ -499,7 +507,9 @@ def build_board_context(view: MarketDataView, symbol: str, date: str, name: str 
 # ──────────────────────────── 成交概率模型 ────────────────────────────
 
 
-def queue_fill_probability(ctx: BoardContext, cfg: QueueFillConfig = QueueFillConfig()) -> float | None:
+def queue_fill_probability(
+    ctx: BoardContext, cfg: QueueFillConfig = QueueFillConfig()
+) -> float | None:
     """T 日涨停价排队成交概率（0~1）。
 
     返回 ``None`` 表示不可评估（缺封单/成交额数据 → 不造数）。
@@ -562,7 +572,9 @@ class TradePlan:
     fail_reason: str | None = None
     entry_date: str | None = None
     entry_price: float | None = None
-    entry_price_source: str | None = None  # "limit_queue" | "open_proxy" | "auction" ...
+    entry_price_source: str | None = (
+        None  # "limit_queue" | "open_proxy" | "auction" ...
+    )
     exit_date: str | None = None
     exit_price: float | None = None
     exit_price_source: str | None = None
@@ -587,7 +599,16 @@ def _simulate_entry(
     mode: str,
     seed: int,
     queue_cfg: QueueFillConfig | None = None,
-) -> tuple[bool, str | None, str | None, float | None, str | None, list[str], float | None, float | None]:
+) -> tuple[
+    bool,
+    str | None,
+    str | None,
+    float | None,
+    str | None,
+    list[str],
+    float | None,
+    float | None,
+]:
     """返回 (filled, fail_reason, entry_date, entry_price, price_source, assumptions, prob, draw)。"""
     queue_cfg = queue_cfg or QueueFillConfig()
     assumptions: list[str] = []
@@ -597,30 +618,113 @@ def _simulate_entry(
         if ctx.suspended:
             return False, "t_day_suspended", None, None, None, assumptions, prob, None
         if ctx.up_limit is None:
-            return False, "missing_price_limits", None, None, None, assumptions, prob, None
+            return (
+                False,
+                "missing_price_limits",
+                None,
+                None,
+                None,
+                assumptions,
+                prob,
+                None,
+            )
         if signal_date not in view.calendar:
-            return False, "signal_date_not_in_calendar", None, None, None, assumptions, prob, None
+            return (
+                False,
+                "signal_date_not_in_calendar",
+                None,
+                None,
+                None,
+                assumptions,
+                prob,
+                None,
+            )
         if not (ctx.sealed_at_close or ctx.zhaban):
-            return False, "t_day_not_limit_up", None, None, None, assumptions, prob, None
+            return (
+                False,
+                "t_day_not_limit_up",
+                None,
+                None,
+                None,
+                assumptions,
+                prob,
+                None,
+            )
         draw = _rng_for(seed, symbol, signal_date, "queue").random()
         if prob is None:
             # 缺封单质量数据 → strict/loose 都按未确认处理（不造数）
-            return False, "queue_fill_unassessable(no_seal_data)", None, None, None, assumptions, prob, None
+            return (
+                False,
+                "queue_fill_unassessable(no_seal_data)",
+                None,
+                None,
+                None,
+                assumptions,
+                prob,
+                None,
+            )
         if ctx.zhaban:
             assumptions.append("炸板未封：涨停价排队在开板期间成交（确定性假设）")
-            return True, None, signal_date, ctx.up_limit, "limit_queue", assumptions, prob, draw
+            return (
+                True,
+                None,
+                signal_date,
+                ctx.up_limit,
+                "limit_queue",
+                assumptions,
+                prob,
+                draw,
+            )
         if mode == "strict":
-            return False, "sealed_board_strict", None, None, None, assumptions, prob, draw
+            return (
+                False,
+                "sealed_board_strict",
+                None,
+                None,
+                None,
+                assumptions,
+                prob,
+                draw,
+            )
         if draw <= prob:
-            assumptions.append(f"一字/回封板 loose 模式按模型概率成交 (p={prob:.3f}, draw={draw:.3f})")
-            return True, None, signal_date, ctx.up_limit, "limit_queue", assumptions, prob, draw
-        return False, "queue_not_filled(prob)", None, None, None, assumptions, prob, draw
+            assumptions.append(
+                f"一字/回封板 loose 模式按模型概率成交 (p={prob:.3f}, draw={draw:.3f})"
+            )
+            return (
+                True,
+                None,
+                signal_date,
+                ctx.up_limit,
+                "limit_queue",
+                assumptions,
+                prob,
+                draw,
+            )
+        return (
+            False,
+            "queue_not_filled(prob)",
+            None,
+            None,
+            None,
+            assumptions,
+            prob,
+            draw,
+        )
 
     # T+1 竞价 / 开盘买入
     t_ctx = build_board_context(view, symbol, signal_date, name)
     entry_date = view.next_trade_day(signal_date)
     if entry_date is None:
-        return False, "no_next_trade_day(data_end)", None, None, None, assumptions, None, None
+        return (
+            False,
+            "no_next_trade_day(data_end)",
+            None,
+            None,
+            None,
+            assumptions,
+            None,
+            None,
+        )
     ctx = build_board_context(view, symbol, entry_date, name)
     if ctx.suspended or ctx.bar is None:
         return False, "t1_suspended", None, None, None, assumptions, None, None
@@ -633,15 +737,42 @@ def _simulate_entry(
         return False, "t1_yizhi_unbuyable", None, None, None, assumptions, None, None
     if at_limit_open:
         if mode == "strict":
-            return False, "t1_open_at_limit_strict", None, None, None, assumptions, None, None
+            return (
+                False,
+                "t1_open_at_limit_strict",
+                None,
+                None,
+                None,
+                assumptions,
+                None,
+                None,
+            )
         # loose：竞价挂涨停价，只有开盘后炸板才可能成交——但"是否炸板"是盘后才知
         # 的信息（未来函数），因此用当日竞价量占比估计，缺数据则不成交。
         prob = 0.30  # 模型假设：竞价买在涨停价的平均成交率
         draw = _rng_for(seed, symbol, entry_date, "auction").random()
         if draw <= prob:
             assumptions.append(f"竞价买在涨停价 loose 成交 (p={prob}, draw={draw:.3f})")
-            return True, None, entry_date, ctx.up_limit, "auction_limit", assumptions, prob, draw
-        return False, "t1_auction_at_limit_not_filled", None, None, None, assumptions, prob, draw
+            return (
+                True,
+                None,
+                entry_date,
+                ctx.up_limit,
+                "auction_limit",
+                assumptions,
+                prob,
+                draw,
+            )
+        return (
+            False,
+            "t1_auction_at_limit_not_filled",
+            None,
+            None,
+            None,
+            assumptions,
+            prob,
+            draw,
+        )
     source = "open_proxy(auction_missing)"
     assumptions.append("无 stk_auction 数据，竞价成交价用开盘价代理")
     return True, None, entry_date, open_price, source, assumptions, None, None
@@ -708,10 +839,28 @@ def _simulate_exit(
                 if mode == "strict":
                     defers.append(f"{day}:open_at_down_limit_strict")
                     continue
-                assumptions.append("开盘价即跌停价，loose 按开盘价成交（模型假设，成交确认存疑）")
-                return day, open_price, "planned_open_loose", "open_proxy", len(defers), defers, assumptions
+                assumptions.append(
+                    "开盘价即跌停价，loose 按开盘价成交（模型假设，成交确认存疑）"
+                )
+                return (
+                    day,
+                    open_price,
+                    "planned_open_loose",
+                    "open_proxy",
+                    len(defers),
+                    defers,
+                    assumptions,
+                )
             assumptions.append("无 stk_auction 数据，竞价卖出成交价用开盘价代理")
-            return day, open_price, "planned_open", "open_proxy", len(defers), defers, assumptions
+            return (
+                day,
+                open_price,
+                "planned_open",
+                "open_proxy",
+                len(defers),
+                defers,
+                assumptions,
+            )
         # 收盘价离场场景（next_close / hold_days）
         # ── 日内止盈优先（严格在计划离场日之前，或计划日盘中先于收盘触发）──
         if tp_price is not None:
@@ -720,28 +869,60 @@ def _simulate_exit(
                 trig = ctx.up_limit  # 止盈价被涨停价封顶，触发条件同步降为涨停价
             if float(bar["high"]) >= trig:
                 if trig < tp_price - 1e-9:
-                    assumptions.append("止盈价高于涨停价，按涨停价卖出（涨停有买方排队，卖出可成交）")
+                    assumptions.append(
+                        "止盈价高于涨停价，按涨停价卖出（涨停有买方排队，卖出可成交）"
+                    )
                 return day, trig, "tp", "tp_trigger", len(defers), defers, assumptions
         if sl_price is not None and float(bar["low"]) <= sl_price:
-            if ctx.down_limit is not None and sl_price < ctx.down_limit - 1e-6:
-                # 跳空跌破止损价，价格只可能在跌停价（更差）或根本卖不出
-                if ctx.yizhi_down or ctx.down_sealed_at_close:
+            if open_price <= sl_price + 1e-9:
+                # 开盘跳空低于止损价：成交价只能是开盘价（更差），不能按止损价乐观成交
+                if ctx.yizhi_down or (
+                    ctx.down_limit is not None
+                    and abs(open_price - ctx.down_limit) < 1e-6
+                ):
+                    # 开盘即封跌停：卖不出
                     if mode == "strict":
-                        defers.append(f"{day}:down_limit_gap_strict")
+                        defers.append(f"{day}:gap_down_open_down_limit_strict")
                         continue
-                    assumptions.append("跳空跌穿止损价：loose 按跌停价成交（模型假设）")
-                    return day, ctx.down_limit, "sl_gap_down_limit_loose", "down_limit", len(defers), defers, assumptions
-                price = max(sl_price, ctx.down_limit)
-                assumptions.append("止损成交价不低于当日跌停价")
-                return day, price, "sl", "sl_trigger", len(defers), defers, assumptions
-            return day, sl_price, "sl", "sl_trigger", len(defers), defers, assumptions
+                    assumptions.append(
+                        "开盘封跌停跳空穿止损：loose 按跌停价成交（模型假设，实际确认存疑）"
+                    )
+                    return (
+                        day,
+                        ctx.down_limit,
+                        "sl_gap_down_limit_loose",
+                        "down_limit",
+                        len(defers),
+                        defers,
+                        assumptions,
+                    )
+                assumptions.append("跳空低开穿越止损价，按开盘价成交（非止损价）")
+                return (
+                    day,
+                    open_price,
+                    "sl_gap_open",
+                    "open",
+                    len(defers),
+                    defers,
+                    assumptions,
+                )
+            price = max(sl_price, ctx.down_limit) if ctx.down_limit else sl_price
+            return day, price, "sl", "sl_trigger", len(defers), defers, assumptions
         # ── 计划离场尝试 ──
         if attempts >= target_idx:
             if ctx.down_sealed_at_close:
                 defers.append(f"{day}:down_limit_close_defer")
                 continue
             reason = "planned_close" if exit_scene == "next_close" else "hold_end"
-            return day, float(bar["close"]), reason, "close", len(defers), defers, assumptions
+            return (
+                day,
+                float(bar["close"]),
+                reason,
+                "close",
+                len(defers),
+                defers,
+                assumptions,
+            )
         attempts += 1
     return None, None, "open_at_end", None, len(defers), defers, assumptions
 
@@ -761,10 +942,18 @@ def _normalize_signals(signals: Any) -> list[dict[str, Any]]:
     for rec in records:
         rec = dict(rec)
         symbol = str(rec.get("symbol") or rec.get("code") or "").strip()
-        date = str(rec.get("signal_date") or rec.get("trade_date") or rec.get("date") or "").strip()
+        date = str(
+            rec.get("signal_date") or rec.get("trade_date") or rec.get("date") or ""
+        ).strip()
         if not symbol or not date:
             raise ValueError(f"信号缺少 symbol/signal_date: {rec!r}")
-        rows.append({"symbol": symbol.zfill(6), "signal_date": date, "name": str(rec.get("name") or "")})
+        rows.append(
+            {
+                "symbol": symbol.zfill(6),
+                "signal_date": date,
+                "name": str(rec.get("name") or ""),
+            }
+        )
     return rows
 
 
@@ -838,12 +1027,21 @@ def run_limit_up_backtest(
             filled=False,
         )
         filled, fail, e_date, e_price, e_src, e_assump, prob, draw = _simulate_entry(
-            view, sig["symbol"], sig["name"], sig["signal_date"], entry_scene, mode, seed, queue_fill
+            view,
+            sig["symbol"],
+            sig["name"],
+            sig["signal_date"],
+            entry_scene,
+            mode,
+            seed,
+            queue_fill,
         )
         plan.queue_fill_prob = prob
         plan.queue_fill_draw = draw
         plan.assumptions.extend(e_assump)
-        ctx_t = build_board_context(view, sig["symbol"], sig["signal_date"], sig["name"])
+        ctx_t = build_board_context(
+            view, sig["symbol"], sig["signal_date"], sig["name"]
+        )
         plan.board_snapshot = {
             "limit_flag": (ctx_t.board_row or {}).get("limit_flag"),
             "first_time": (ctx_t.board_row or {}).get("first_time"),
@@ -887,12 +1085,22 @@ def run_limit_up_backtest(
         plan.exit_price_source = x_src
         if x_date is not None:
             plan.hold_days = _trading_days_between(view, e_date, x_date)
-            plan.raw_return_pct = _adjusted_return_pct(view, sig["symbol"], e_date, e_price, x_date, x_price, use_adj_factor)
+            plan.raw_return_pct = _adjusted_return_pct(
+                view, sig["symbol"], e_date, e_price, x_date, x_price, use_adj_factor
+            )
         plans.append(plan)
 
     # ── 2. 组合资金曲线（等权仓位 + 容量 + 费用 + 滑点 + 除权股数修正） ──
     portfolio = _run_portfolio(
-        view, plans, initial_capital, position_size_pct, fees, slippage, capacity, data_notes, use_adj_factor
+        view,
+        plans,
+        initial_capital,
+        position_size_pct,
+        fees,
+        slippage,
+        capacity,
+        data_notes,
+        use_adj_factor,
     )
 
     # ── 3. 绩效指标 ──
@@ -901,12 +1109,18 @@ def run_limit_up_backtest(
     premium = _premium_metrics(view, signal_rows, data_notes)
     fill_stats = _compute_fill_stats(plans, portfolio["executed"])
     layered = _layered_metrics(portfolio["executed"], regime_by_date)
-    benchmarks, bench_skips = _benchmark_metrics(view, portfolio["nav_series"], benchmark_ts_codes, include_equal_weight_benchmark)
+    benchmarks, bench_skips = _benchmark_metrics(
+        view,
+        portfolio["nav_series"],
+        benchmark_ts_codes,
+        include_equal_weight_benchmark,
+    )
 
     report: dict[str, Any] = {
         "engine": "limit_up_backtest/v1",
         "mode": mode,
-        "generated_at": generated_at or datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "generated_at": generated_at
+        or datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "params": {
             "as_of": as_of,
             "entry_scene": entry_scene,
@@ -926,7 +1140,9 @@ def run_limit_up_backtest(
             "benchmark_ts_codes": list(benchmark_ts_codes),
             "include_equal_weight_benchmark": include_equal_weight_benchmark,
         },
-        "assumptions": _assumption_block(fees, slippage, capacity, queue_fill, entry_scene, mode),
+        "assumptions": _assumption_block(
+            fees, slippage, capacity, queue_fill, entry_scene, mode
+        ),
         "fill_stats": fill_stats,
         "capacity": portfolio["capacity"],
         "metrics": metrics,
@@ -949,12 +1165,18 @@ def run_limit_up_backtest(
     }
     if persist_path:
         Path(persist_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(persist_path).write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        Path(persist_path).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
     return report
 
 
 def _signals_hash(rows: list[dict[str, Any]]) -> str:
-    payload = "|".join(f"{r['symbol']}:{r['signal_date']}" for r in sorted(rows, key=lambda x: (x["signal_date"], x["symbol"])))
+    payload = "|".join(
+        f"{r['symbol']}:{r['signal_date']}"
+        for r in sorted(rows, key=lambda x: (x["signal_date"], x["symbol"]))
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -966,7 +1188,13 @@ def _trading_days_between(view: MarketDataView, d1: str, d2: str) -> int:
 
 
 def _adjusted_return_pct(
-    view: MarketDataView, symbol: str, e_date: str, e_price: float, x_date: str, x_price: float | None, use_adj_factor: bool
+    view: MarketDataView,
+    symbol: str,
+    e_date: str,
+    e_price: float,
+    x_date: str,
+    x_price: float | None,
+    use_adj_factor: bool,
 ) -> float | None:
     """价格收益（%），若可用则用 adj_factor 做除权修正（复权口径）。"""
     if x_price is None or e_price <= 0:
@@ -991,7 +1219,9 @@ def _layer_keys(
     mcap_buckets: tuple[float, ...],
 ) -> dict[str, Any]:
     layers: dict[str, Any] = {}
-    layers["regime"] = (regime_by_date or {}).get(sig["signal_date"], "unknown" if regime_by_date is None else "missing")
+    layers["regime"] = (regime_by_date or {}).get(
+        sig["signal_date"], "unknown" if regime_by_date is None else "missing"
+    )
     height = ctx_t.limit_times
     if height is None and ctx_t.board_row is None:
         layers["height"] = "unknown"
@@ -1019,9 +1249,14 @@ def _layer_keys(
                 break
         else:
             bucket = len(mcap_buckets)
-        labels = [f"<{mcap_buckets[0]:.0e}"] + [
-            f"{mcap_buckets[i]:.0e}-{mcap_buckets[i + 1]:.0e}" for i in range(len(mcap_buckets) - 1)
-        ] + [f">={mcap_buckets[-1]:.0e}"]
+        labels = (
+            [f"<{mcap_buckets[0]:.0e}"]
+            + [
+                f"{mcap_buckets[i]:.0e}-{mcap_buckets[i + 1]:.0e}"
+                for i in range(len(mcap_buckets) - 1)
+            ]
+            + [f">={mcap_buckets[-1]:.0e}"]
+        )
         layers["mcap"] = labels[bucket]
     layers["theme"] = (ctx_t.board_row or {}).get("theme") or "unknown"
     return layers
@@ -1081,10 +1316,14 @@ def _run_portfolio(
             pos = open_pos.pop(plan, None)
             if pos is None:
                 continue
-            net_proceeds = _sell(plan, pos, day, view, fees, slippage, executed, capacity, data_notes)
+            net_proceeds = _sell(
+                plan, pos, day, view, fees, slippage, executed, capacity, data_notes
+            )
             cash += net_proceeds
         # 3) 入场
-        day_nav_prev = cash + sum(p["shares"] * p["last_close"] for p in open_pos.values())
+        day_nav_prev = cash + sum(
+            p["shares"] * p["last_close"] for p in open_pos.values()
+        )
         for plan in sorted(entries_by_day.get(day, []), key=lambda p: str(p.symbol)):
             bar = view.kline(plan.symbol).get(day)
             if bar is None:
@@ -1102,23 +1341,43 @@ def _run_portfolio(
                     capacity_hits += 1
                     if capacity.action == "skip":
                         capacity_skips += 1
-                        executed.append(_failed_exec_record(plan, "capacity_skip", cap_notional, target_value))
+                        executed.append(
+                            _failed_exec_record(
+                                plan, "capacity_skip", cap_notional, target_value
+                            )
+                        )
                         continue
                     target_value = cap_notional
             if price <= 0:
                 continue
             approx_shares = math.floor(target_value / price / 100) * 100
             if approx_shares <= 0:
-                executed.append(_failed_exec_record(plan, "insufficient_capacity_or_cash", cap_notional, target_value))
+                executed.append(
+                    _failed_exec_record(
+                        plan,
+                        "insufficient_capacity_or_cash",
+                        cap_notional,
+                        target_value,
+                    )
+                )
                 plan.filled = False
                 plan.fail_reason = "insufficient_capacity_or_cash"
                 continue
-            participation = min(approx_shares * price / day_amount, 1.0) if day_amount > 0 else 1.0
+            participation = (
+                min(approx_shares * price / day_amount, 1.0) if day_amount > 0 else 1.0
+            )
             slip = _slippage_pct(slippage, participation)
             buy_eff_price = price * (1.0 + slip)
-            shares = math.floor(min(target_value, max(cash, 0.0)) / buy_eff_price / 100) * 100
+            shares = (
+                math.floor(min(target_value, max(cash, 0.0)) / buy_eff_price / 100)
+                * 100
+            )
             if shares <= 0:
-                executed.append(_failed_exec_record(plan, "insufficient_cash", cap_notional, target_value))
+                executed.append(
+                    _failed_exec_record(
+                        plan, "insufficient_cash", cap_notional, target_value
+                    )
+                )
                 plan.filled = False
                 plan.fail_reason = "insufficient_cash"
                 continue
@@ -1127,10 +1386,18 @@ def _run_portfolio(
             total_cost = gross + sum(cost_items.values())
             if total_cost > cash:
                 # 费用预留后重新缩量（保守：不为凑整手透支现金）
-                eff = buy_eff_price * (1 + fees.commission_rate + (fees.transfer_fee_rate if fees.transfer_fee_enabled else 0.0))
+                eff = buy_eff_price * (
+                    1
+                    + fees.commission_rate
+                    + (fees.transfer_fee_rate if fees.transfer_fee_enabled else 0.0)
+                )
                 shares = math.floor(cash / eff / 100) * 100
                 if shares <= 0:
-                    executed.append(_failed_exec_record(plan, "insufficient_cash", cap_notional, target_value))
+                    executed.append(
+                        _failed_exec_record(
+                            plan, "insufficient_cash", cap_notional, target_value
+                        )
+                    )
                     plan.filled = False
                     plan.fail_reason = "insufficient_cash"
                     continue
@@ -1138,7 +1405,11 @@ def _run_portfolio(
                 cost_items = fees.buy_costs(gross)
                 total_cost = gross + sum(cost_items.values())
                 if total_cost > cash:
-                    executed.append(_failed_exec_record(plan, "insufficient_cash", cap_notional, target_value))
+                    executed.append(
+                        _failed_exec_record(
+                            plan, "insufficient_cash", cap_notional, target_value
+                        )
+                    )
                     plan.filled = False
                     plan.fail_reason = "insufficient_cash"
                     continue
@@ -1181,7 +1452,9 @@ def _run_portfolio(
         "action": capacity.action,
         "capacity_hit_count": capacity_hits,
         "capacity_skip_count": capacity_skips,
-        "capped_gross_vs_target": round(capacity_capped_gross / capacity_total_gross, 4) if capacity_total_gross else None,
+        "capped_gross_vs_target": round(capacity_capped_gross / capacity_total_gross, 4)
+        if capacity_total_gross
+        else None,
     }
     return {
         "nav_series": nav_series,
@@ -1191,7 +1464,9 @@ def _run_portfolio(
     }
 
 
-def _apply_ex_rights(pos: dict[str, Any], day: str, view: MarketDataView, data_notes: list[str]) -> None:
+def _apply_ex_rights(
+    pos: dict[str, Any], day: str, view: MarketDataView, data_notes: list[str]
+) -> None:
     """除权除息近似：adj_factor 变化 → 按因子比值等效调整持仓股数。
 
     无逐笔分红/送股事件表，用复权因子比值近似股数调整（现金分红并入该近似）；
@@ -1206,7 +1481,9 @@ def _apply_ex_rights(pos: dict[str, Any], day: str, view: MarketDataView, data_n
         return
     ratio = factor / prev
     new_shares = pos["shares"] * ratio
-    data_notes.append(f"{symbol}@{day}:ex_rights_adj_ratio={ratio:.6f}(shares adjusted)")
+    data_notes.append(
+        f"{symbol}@{day}:ex_rights_adj_ratio={ratio:.6f}(shares adjusted)"
+    )
     pos["shares"] = new_shares
     pos["ex_rights_adjusted"] = True
     pos["prev_adj"] = factor
@@ -1267,12 +1544,17 @@ def _sell(
             "sell_costs": {k: round(v, 2) for k, v in cost_items.items()},
             "net_pnl": round(net_pnl, 2),
             "net_pnl_pct": round(ret_pct, 4),
-            "gross_return_pct": (round(plan.raw_return_pct, 4) if plan.raw_return_pct is not None else None),
+            "gross_return_pct": (
+                round(plan.raw_return_pct, 4)
+                if plan.raw_return_pct is not None
+                else None
+            ),
             "hold_days": plan.hold_days,
             "defer_days": plan.defer_days,
             "defer_reasons": plan.defer_reasons,
             "layers": plan.layers,
-            "capacity_capped": bool(pos["cap_notional"]) and pos["buy_gross"] < 0.999 * pos["target_value"],
+            "capacity_capped": bool(pos["cap_notional"])
+            and pos["buy_gross"] < 0.999 * pos["target_value"],
             "board_snapshot": plan.board_snapshot,
             "assumptions": plan.assumptions,
         }
@@ -1280,7 +1562,9 @@ def _sell(
     return net_proceeds
 
 
-def _failed_exec_record(plan: TradePlan, reason: str, cap: float | None, target: float) -> dict[str, Any]:
+def _failed_exec_record(
+    plan: TradePlan, reason: str, cap: float | None, target: float
+) -> dict[str, Any]:
     return {
         "symbol": plan.symbol,
         "name": plan.name,
@@ -1333,7 +1617,11 @@ def _performance_metrics(nav_series: list[dict[str, float]]) -> dict[str, Any]:
     var = sum((r - mean) ** 2 for r in rets) / max(len(rets) - 1, 1)
     std = math.sqrt(var)
     downside = [r for r in rets if r < 0]
-    dstd = math.sqrt(sum(r**2 for r in downside) / max(len(rets) - 1, 1)) if downside else 0.0
+    dstd = (
+        math.sqrt(sum(r**2 for r in downside) / max(len(rets) - 1, 1))
+        if downside
+        else 0.0
+    )
     sharpe = mean / std * math.sqrt(TRADING_DAYS_PER_YEAR) if std > 0 else None
     sortino = mean / dstd * math.sqrt(TRADING_DAYS_PER_YEAR) if dstd > 0 else None
     calmar = ann / abs(mdd) if mdd < 0 else None
@@ -1354,7 +1642,14 @@ def _performance_metrics(nav_series: list[dict[str, float]]) -> dict[str, Any]:
 def _trade_stats(executed: list[dict[str, Any]]) -> dict[str, Any]:
     closed = [t for t in executed if t.get("status") == "filled"]
     if not closed:
-        return {"closed_trades": 0, "win_rate_pct": None, "payoff_ratio": None, "avg_hold_days": None, "fee_ratio": None, "total_fees": 0.0}
+        return {
+            "closed_trades": 0,
+            "win_rate_pct": None,
+            "payoff_ratio": None,
+            "avg_hold_days": None,
+            "fee_ratio": None,
+            "total_fees": 0.0,
+        }
     wins = [t for t in closed if t["net_pnl"] > 0]
     losses = [t for t in closed if t["net_pnl"] <= 0]
     avg_win = sum(t["net_pnl"] for t in wins) / len(wins) if wins else 0.0
@@ -1370,7 +1665,9 @@ def _trade_stats(executed: list[dict[str, Any]]) -> dict[str, Any]:
         "losses": len(losses),
         "win_rate_pct": round(len(wins) / len(closed) * 100.0, 2),
         "payoff_ratio": round(avg_win / avg_loss, 4) if avg_loss > 0 else None,
-        "avg_hold_days": round(sum(t["hold_days"] or 0 for t in closed) / len(closed), 2),
+        "avg_hold_days": round(
+            sum(t["hold_days"] or 0 for t in closed) / len(closed), 2
+        ),
         "avg_defer_days": round(sum(t["defer_days"] for t in closed) / len(closed), 2),
         "total_fees": round(total_fees, 2),
         "fee_ratio_of_buy_pct": round(total_fees / total_buy * 100.0, 4),
@@ -1380,7 +1677,9 @@ def _trade_stats(executed: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _premium_metrics(view: MarketDataView, signals: list[dict[str, Any]], data_notes: list[str]) -> dict[str, Any]:
+def _premium_metrics(
+    view: MarketDataView, signals: list[dict[str, Any]], data_notes: list[str]
+) -> dict[str, Any]:
     """次日竞价(开盘价代理)溢价、开盘溢价、3/5 日收益 —— 对全部信号统计（与成交无关）。"""
     next_open: list[float] = []
     r3: list[float] = []
@@ -1404,10 +1703,18 @@ def _premium_metrics(view: MarketDataView, signals: list[dict[str, Any]], data_n
             if day_n and day_n in kline:
                 acc.append((float(kline[day_n]["close"]) / t_close - 1.0) * 100.0)
     if missing:
-        data_notes.append(f"premium_metrics: {missing} 个信号缺少 T 日 K 线，未计入溢价统计")
+        data_notes.append(
+            f"premium_metrics: {missing} 个信号缺少 T 日 K 线，未计入溢价统计"
+        )
+
     def _s(vals: list[float]) -> dict[str, Any]:
         if not vals:
-            return {"count": 0, "mean_pct": None, "median_pct": None, "note": "数据不足，skip（不造数）"}
+            return {
+                "count": 0,
+                "mean_pct": None,
+                "median_pct": None,
+                "note": "数据不足，skip（不造数）",
+            }
         s = sorted(vals)
         return {
             "count": len(vals),
@@ -1432,7 +1739,9 @@ def _nth_trade_day_after(view: MarketDataView, date: str, n: int) -> str | None:
     return cal[target] if target < len(cal) else None
 
 
-def _compute_fill_stats(plans: list[TradePlan], executed: list[dict[str, Any]]) -> dict[str, Any]:
+def _compute_fill_stats(
+    plans: list[TradePlan], executed: list[dict[str, Any]]
+) -> dict[str, Any]:
     attempted = len(plans)
     filled = [p for p in plans if p.filled]
     failed = [p for p in plans if not p.filled]
@@ -1455,20 +1764,37 @@ def _compute_fill_stats(plans: list[TradePlan], executed: list[dict[str, Any]]) 
         "sell_defer_days": defers,
         "sell_defer_reasons": defer_reason_counter,
         "portfolio_skips_after_fill": skipped_by_portfolio,
-        "fill_rate_pct": round(len(filled) / attempted * 100.0, 2) if attempted else None,
+        "fill_rate_pct": round(len(filled) / attempted * 100.0, 2)
+        if attempted
+        else None,
     }
 
 
-def _layered_metrics(executed: list[dict[str, Any]], regime_by_date: dict[str, str] | None) -> dict[str, Any]:
+def _layered_metrics(
+    executed: list[dict[str, Any]], regime_by_date: dict[str, str] | None
+) -> dict[str, Any]:
     closed = [t for t in executed if t.get("status") == "filled"]
-    out: dict[str, Any] = {"_note": "分层基于信号日可知的板型/市值/连板高度/regime；缺数记 unknown，不伪造"}
+    out: dict[str, Any] = {
+        "_note": "分层基于信号日可知的板型/市值/连板高度/regime；缺数记 unknown，不伪造"
+    }
     if regime_by_date is None:
-        out["_regime_layer"] = "skipped: 未提供 regime_by_date（#25 表未接入），不伪造分层"
+        out["_regime_layer"] = (
+            "skipped: 未提供 regime_by_date（#25 表未接入），不伪造分层"
+        )
     for dim in ("regime", "board_type", "mcap", "height", "theme"):
         buckets: dict[str, dict[str, Any]] = {}
         for t in closed:
             key = str((t.get("layers") or {}).get(dim, "unknown"))
-            b = buckets.setdefault(key, {"trades": 0, "wins": 0, "sum_pnl": 0.0, "sum_pnl_pct": 0.0, "max_dd_proxy_pct": 0.0})
+            b = buckets.setdefault(
+                key,
+                {
+                    "trades": 0,
+                    "wins": 0,
+                    "sum_pnl": 0.0,
+                    "sum_pnl_pct": 0.0,
+                    "max_dd_proxy_pct": 0.0,
+                },
+            )
             b["trades"] += 1
             b["wins"] += 1 if t["net_pnl"] > 0 else 0
             b["sum_pnl"] += t["net_pnl"]
@@ -1498,9 +1824,15 @@ def _benchmark_metrics(
     windows = [x["date"] for x in nav_series]
     for code in ts_codes:
         rows = view.index_daily(code)
-        series = [rows[d]["close"] for d in windows if d in rows and rows[d].get("close") is not None]
+        series = [
+            rows[d]["close"]
+            for d in windows
+            if d in rows and rows[d].get("close") is not None
+        ]
         if len(series) < max(2, int(len(windows) * 0.8)):
-            skips.append(f"{code}: index_daily 数据不足（覆盖 {len(series)}/{len(windows)} 天），skip，不造数")
+            skips.append(
+                f"{code}: index_daily 数据不足（覆盖 {len(series)}/{len(windows)} 天），skip，不造数"
+            )
             continue
         bench_total = series[-1] / series[0] - 1.0
         benchmarks.append(
@@ -1514,7 +1846,9 @@ def _benchmark_metrics(
         eq = view.equal_weight_returns(start, end)
         coverage = len(eq) / max(len(windows), 1)
         if coverage < 0.8:
-            skips.append(f"equal_weight: 全市场等权日收益覆盖不足（{len(eq)}/{len(windows)}），skip，不造数")
+            skips.append(
+                f"equal_weight: 全市场等权日收益覆盖不足（{len(eq)}/{len(windows)}），skip，不造数"
+            )
         else:
             navs = [x["nav"] for x in nav_series]
             strat_total = navs[-1] / navs[0] - 1.0 if navs[0] > 0 else 0.0
@@ -1526,7 +1860,9 @@ def _benchmark_metrics(
                 {
                     "name": "equal_weight_all_market",
                     "total_return_pct": round((eq_total - 1.0) * 100.0, 4),
-                    "strategy_excess_pct": round((strat_total - (eq_total - 1.0)) * 100.0, 4),
+                    "strategy_excess_pct": round(
+                        (strat_total - (eq_total - 1.0)) * 100.0, 4
+                    ),
                     "coverage": round(coverage, 4),
                 }
             )
@@ -1534,13 +1870,20 @@ def _benchmark_metrics(
 
 
 def _assumption_block(
-    fees: FeeConfig, slippage: SlippageConfig, capacity: CapacityConfig, queue_fill: QueueFillConfig, entry_scene: str, mode: str
+    fees: FeeConfig,
+    slippage: SlippageConfig,
+    capacity: CapacityConfig,
+    queue_fill: QueueFillConfig,
+    entry_scene: str,
+    mode: str,
 ) -> dict[str, Any]:
     return {
         "commission": f"万 {fees.commission_rate * 1e4:.2f}，最低 {fees.min_commission} 元/笔",
         "stamp_tax": f"卖出万 {fees.stamp_tax_rate * 1e4:.2f}",
         "transfer_fee": (
-            f"双边万 {fees.transfer_fee_rate * 1e4:.2f}" if fees.transfer_fee_enabled else "关闭（可配置）"
+            f"双边万 {fees.transfer_fee_rate * 1e4:.2f}"
+            if fees.transfer_fee_enabled
+            else "关闭（可配置）"
         ),
         "slippage": f"基准 {slippage.base_bps}bps + 参与率冲击（{slippage.ref_participation:.0%} 时 +{slippage.impact_bps_at_ref}bps，上限 ×{slippage.max_multiplier}）",
         "capacity": f"单票单日参与率上限 {capacity.max_participation:.0%}，超限动作={capacity.action}",
@@ -1573,11 +1916,19 @@ def run_strict_loose_comparison(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """同批信号 strict / loose 双口径对照报告（口径差异 = 概率模型成交的增量）。"""
-    strict = run_limit_up_backtest(signals, db_path=db_path, as_of=as_of, mode="strict", **kwargs)
-    loose = run_limit_up_backtest(signals, db_path=db_path, as_of=as_of, mode="loose", **kwargs)
+    strict = run_limit_up_backtest(
+        signals, db_path=db_path, as_of=as_of, mode="strict", **kwargs
+    )
+    loose = run_limit_up_backtest(
+        signals, db_path=db_path, as_of=as_of, mode="loose", **kwargs
+    )
 
     def _by_key(rep: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-        return {(t["symbol"], t["signal_date"]): t for t in rep["trades"] if t.get("status") == "filled"}
+        return {
+            (t["symbol"], t["signal_date"]): t
+            for t in rep["trades"]
+            if t.get("status") == "filled"
+        }
 
     s_map, l_map = _by_key(strict), _by_key(loose)
     only_loose = [f"{k[0]}@{k[1]}" for k in l_map.keys() - s_map.keys()]
@@ -1591,7 +1942,9 @@ def run_strict_loose_comparison(
         "explanation": "loose 相对 strict 多出的成交全部来自排队/竞价概率模型（seed 可复现），非确认成交",
     }
     if None not in (delta["strict_total_return_pct"], delta["loose_total_return_pct"]):
-        delta["return_delta_pct"] = round(delta["loose_total_return_pct"] - delta["strict_total_return_pct"], 4)
+        delta["return_delta_pct"] = round(
+            delta["loose_total_return_pct"] - delta["strict_total_return_pct"], 4
+        )
     return {"strict": strict, "loose": loose, "delta": delta}
 
 
@@ -1606,9 +1959,13 @@ def capacity_curve(
     """资金规模 vs 收益 / 换手 的容量曲线（每个规模独立完整跑一遍引擎）。"""
     rows: list[dict[str, Any]] = []
     for cap in capitals:
-        rep = run_limit_up_backtest(signals, db_path=db_path, as_of=as_of, initial_capital=float(cap), **kwargs)
+        rep = run_limit_up_backtest(
+            signals, db_path=db_path, as_of=as_of, initial_capital=float(cap), **kwargs
+        )
         closed = [t for t in rep["trades"] if t.get("status") == "filled"]
-        turnover = sum(t["buy_gross"] + t["sell_gross"] for t in closed) / cap if cap else None
+        turnover = (
+            sum(t["buy_gross"] + t["sell_gross"] for t in closed) / cap if cap else None
+        )
         rows.append(
             {
                 "initial_capital": float(cap),
@@ -1624,7 +1981,9 @@ def capacity_curve(
     return {"curve": rows, "params": dict(kwargs), "as_of": as_of}
 
 
-def legacy_lab_diff_report(legacy_samples: Any, report: dict[str, Any]) -> dict[str, Any]:
+def legacy_lab_diff_report(
+    legacy_samples: Any, report: dict[str, Any]
+) -> dict[str, Any]:
     """与旧 BacktestLab（无条件次日开盘买入 + 单笔相加）在同批信号上的差异对照。
 
     纯函数：不修改旧模块，只把旧 samples(list[dict]) 与新报告 trades 对齐比较。
@@ -1633,24 +1992,35 @@ def legacy_lab_diff_report(legacy_samples: Any, report: dict[str, Any]) -> dict[
         legacy = list(legacy_samples.to_dict(orient="records"))
     else:
         legacy = list(legacy_samples or [])
-    l_map = {(str(r["symbol"]).zfill(6), str(r.get("signal_date", ""))): r for r in legacy}
+    l_map = {
+        (str(r["symbol"]).zfill(6), str(r.get("signal_date", ""))): r for r in legacy
+    }
     n_map = {
         (str(t["symbol"]), str(t["signal_date"])): t
         for t in report.get("trades", [])
         if t.get("status") == "filled"
     }
     skipped_new = [
-        (str(d["symbol"]), str(d["signal_date"]), d.get("fail_reason") or "entry_not_filled")
+        (
+            str(d["symbol"]),
+            str(d["signal_date"]),
+            d.get("fail_reason") or "entry_not_filled",
+        )
         for d in report.get("signal_details", [])
         if not d.get("filled")
     ] + [
-        (str(t["symbol"]), str(t["signal_date"]), t.get("fail_reason") or t.get("status"))
+        (
+            str(t["symbol"]),
+            str(t["signal_date"]),
+            t.get("fail_reason") or t.get("status"),
+        )
         for t in report.get("trades", [])
         if t.get("status") != "filled"
     ]
     common = sorted(l_map.keys() & n_map.keys())
     diffs = [
-        round(float(n_map[k]["net_pnl_pct"]) - float(l_map[k].get("pnl_pct", 0.0)), 4) for k in common
+        round(float(n_map[k]["net_pnl_pct"]) - float(l_map[k].get("pnl_pct", 0.0)), 4)
+        for k in common
     ]
     legacy_only = [f"{k[0]}@{k[1]}" for k in sorted(l_map.keys() - n_map.keys())]
     new_only = [f"{k[0]}@{k[1]}" for k in sorted(n_map.keys() - l_map.keys())]
@@ -1663,7 +2033,9 @@ def legacy_lab_diff_report(legacy_samples: Any, report: dict[str, Any]) -> dict[
         "legacy_only_signals": legacy_only,
         "new_only_signals": new_only,
         "legacy_only_note": "旧口径计入但这些信号实际买不到（一字/停牌/strict 未确认），系统性高估来源",
-        "mean_pnl_diff_pct(new-legacy)": round(sum(diffs) / len(diffs), 4) if diffs else None,
+        "mean_pnl_diff_pct(new-legacy)": round(sum(diffs) / len(diffs), 4)
+        if diffs
+        else None,
         "legacy_sum_single_trade_pct": round(legacy_sum, 4),
         "new_nav_total_return_pct": report.get("metrics", {}).get("total_return_pct"),
         "nav_vs_sum_note": "新绩效为净值曲线口径；legacy_sum 是单笔收益率相加，仅作对照不作结论",
