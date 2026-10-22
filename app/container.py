@@ -347,7 +347,11 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
 
     name_lookup = _build_name_lookup(provider, kline_store)
     quiet_breakout_scanner = QuietBreakoutScanner(kline_store=kline_store, name_lookup=name_lookup)
-    custom_strategy_scanner = CustomStrategyScanner(kline_store=kline_store, name_lookup=name_lookup)
+    custom_strategy_scanner = CustomStrategyScanner(
+        kline_store=kline_store,
+        name_lookup=name_lookup,
+        state_store=funnel_service.state_store,
+    )
     backtest_lab = BacktestLab(kline_store=kline_store, name_lookup=name_lookup)
 
     hermes_memory = HermesMemory(str(directory / "funnel_state.db"))

@@ -231,8 +231,9 @@ function renderCompositeCandidatePool(root, systemCandidates) {
     const host = document.createElement('div');
     filteredSystem.forEach((stock) => {
       const div = document.createElement('div');
-      div.className = `stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
-      div.onclick = () => selectSymbol(stock.symbol);
+      div.className = `stock-card system-stock-card ${state.selectedSymbol === stock.symbol ? 'active' : ''}`;
+      div.dataset.symbol = stock.symbol;
+      div.dataset.name = stock.name || '';
       const delta = Number(stock.score_delta || 0);
       const deltaCls = _chgCls(delta);
       const deltaTxt = delta > 0 ? `+${fmtNum(delta)}` : fmtNum(delta);
@@ -269,9 +270,6 @@ function renderCompositeCandidatePool(root, systemCandidates) {
         ${badge}
         <div class="card-actions">${btns}</div>
       `;
-      div.querySelectorAll('button[data-pool]').forEach((btn) => {
-        btn.onclick = (e) => { e.stopPropagation(); movePool(btn.dataset.symbol, btn.dataset.pool); };
-      });
       host.appendChild(div);
     });
     parts.push(_renderCompositeSection(
@@ -295,6 +293,15 @@ function renderCompositeCandidatePool(root, systemCandidates) {
   }
 
   root.innerHTML = parts.join('');
+  root.querySelectorAll('.system-stock-card').forEach((card) => {
+    card.onclick = () => selectSymbol(card.dataset.symbol);
+    card.querySelectorAll('button[data-pool]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        movePool(btn.dataset.symbol, btn.dataset.pool);
+      };
+    });
+  });
   root.querySelectorAll('.sc-hit-card').forEach((el) => {
     el.onclick = (ev) => {
       ev.preventDefault();

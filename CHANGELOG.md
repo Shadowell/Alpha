@@ -35,10 +35,16 @@
 
 ### Fixed
 
-- 修复外部数据源无响应时占满 asyncio 默认线程池、拖垮 API/Kronos 的可靠性问题（#9）。
-- 修复 enrichment 路由依赖全局 service、容器化后返回 500 的集成缺口（#11）。
-- `quiet_breakout_scanner` 明确标注为兼容保留路径，删除前需同步 README 与前端（#20）。
+- GET `/api/funnel`、hot panels、stock detail 不再因历史 `trade_date` 重置当前三池；历史读取仅返回空快照/404（#46）。
+- 策略选股复合候选池的卡片和迁池按钮在 DOM 重渲染后恢复事件绑定，新增 Playwright 回归（#47）。
+- 自定义策略扫描快照持久化到 `funnel_state.db`，重启后恢复，并用 `stale` / `latest_data_date` 标识旧快照（#49）。
+- 外部数据源无响应时占满 asyncio 默认线程池、拖垮 API/Kronos 的可靠性问题（#9）。
+- enrichment 路由依赖全局 service、容器化后返回 500 的集成缺口（#11）。
 - Tushare 客户端补回 `asyncio` 导入，避免增强数据调用被异常吞掉后返回空结果（#9 #11）。
+
+### Changed
+
+- 候选→重点、重点→买入按 README 规则自动迁移，手动迁池仍可覆盖；自动进入买入池受容量限制且日志区分 manual/auto（#48）。
 
 ## [0.1.0] - 2026-07-22
 

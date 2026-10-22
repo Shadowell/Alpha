@@ -2,7 +2,7 @@
 # torch intentionally keeps a range: the Dockerfile installs the CPU wheel from
 # the PyTorch CPU index first, and an exact pin could force a multi-GB CUDA
 # wheel from PyPI. The model-tests workflow checks the installed combination.
-torch>=2.0.0
+torch>=2.14.1
 einops==0.8.2
-huggingface_hub==1.17.0
+huggingface_hub==2.2.0
 safetensors==0.8.0

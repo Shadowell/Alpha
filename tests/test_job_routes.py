@@ -51,12 +51,18 @@ class FakeScanner:
     def is_running(self, strategy_id):
         return False
 
-    async def scan(self, strategy, limit=None):
+    async def scan(self, strategy, limit=None, job_id=None):
         if self.gate is not None:
             import asyncio
 
             await asyncio.to_thread(self.gate.wait)
-        return {"strategy_id": strategy.id, "total_hits": 2, "hits": [], "total_scanned": 10}
+        return {
+            "strategy_id": strategy.id,
+            "job_id": job_id,
+            "total_hits": 2,
+            "hits": [],
+            "total_scanned": 10,
+        }
 
 
 class FakeBacktestLab:

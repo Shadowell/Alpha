@@ -216,32 +216,86 @@ def _compute_score(rule_hits: list[dict[str, Any]]) -> float:
 
 
 class CustomStrategyScanner:
-    """对全 A 股 K 线库按策略规则筛选。"""
+    """对全 A 股 K 线库按策略规则筛选，并把最新快照按策略持久化。"""
 
-    def __init__(self, kline_store: Any, name_lookup=None) -> None:
+    _SNAPSHOT_KEY_PREFIX = "custom_strategy_scan:"
+
+    def __init__(self, kline_store: Any, name_lookup=None, state_store: Any | None = None) -> None:
         self.store = kline_store
         self._name_lookup = name_lookup
+        self._state_store = state_store
         self._lock = asyncio.Lock()
         self._last_snapshots: dict[str, dict[str, Any]] = {}  # strategy_id -> payload
         self._running_strategies: set[str] = set()
 
+    def _snapshot_key(self, strategy_id: str) -> str:
+        return f"{self._SNAPSHOT_KEY_PREFIX}{strategy_id}"
+
+    def _latest_data_date(self) -> str:
+        try:
+            return str(self.store.get_stats().get("max_date") or "")
+        except Exception as exc:  # noqa: BLE001 — stale 标记失败不应影响返回可用快照
+            log.debug("latest scan data date unavailable: %s", exc)
+            return ""
+
+    def _decorate_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        decorated = dict(payload)
+        latest_date = self._latest_data_date()
+        snapshot_date = str(decorated.get("data_date") or "")
+        decorated["latest_data_date"] = latest_date
+        decorated["stale"] = bool(latest_date and snapshot_date and latest_date != snapshot_date)
+        return decorated
+
     def get_last_snapshot(self, strategy_id: str) -> dict[str, Any] | None:
-        return self._last_snapshots.get(strategy_id)
+        cached = self._last_snapshots.get(strategy_id)
+        if cached is not None:
+            return self._decorate_snapshot(cached)
+        if self._state_store is None:
+            return None
+        try:
+            stored = self._state_store.get_kv(self._snapshot_key(strategy_id))
+        except Exception as exc:  # noqa: BLE001 — 存储不可用时按未扫描处理
+            log.warning("load custom strategy snapshot id=%s failed: %s", strategy_id, exc)
+            return None
+        if isinstance(stored, dict):
+            self._last_snapshots[strategy_id] = stored
+            return self._decorate_snapshot(stored)
+        return None
 
     def is_running(self, strategy_id: str) -> bool:
         return strategy_id in self._running_strategies
 
-    async def scan(self, strategy: CustomStrategy, *, limit: int | None = None) -> dict[str, Any]:
+    def _persist_snapshot(self, strategy_id: str, payload: dict[str, Any]) -> None:
+        self._last_snapshots[strategy_id] = payload
+        if self._state_store is None:
+            return
+        try:
+            self._state_store.set_kv(self._snapshot_key(strategy_id), payload)
+        except Exception as exc:  # noqa: BLE001 — 持久化失败不推翻本次扫描结果
+            log.warning("persist custom strategy snapshot id=%s failed: %s", strategy_id, exc)
+
+    async def scan(
+        self,
+        strategy: CustomStrategy,
+        *,
+        limit: int | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
         if strategy.id in self._running_strategies:
             raise RuntimeError("该策略扫描正在进行中")
         self._running_strategies.add(strategy.id)
         try:
             async with self._lock:
-                return await self._scan_impl(strategy, limit)
+                return await self._scan_impl(strategy, limit, job_id)
         finally:
             self._running_strategies.discard(strategy.id)
 
-    async def _scan_impl(self, strategy: CustomStrategy, limit: int | None) -> dict[str, Any]:
+    async def _scan_impl(
+        self,
+        strategy: CustomStrategy,
+        limit: int | None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
         t0 = time.time()
         enabled_refs = strategy.enabled_rules()
         if not enabled_refs:
@@ -249,6 +303,9 @@ class CustomStrategyScanner:
                 "strategy_id": strategy.id,
                 "strategy_name": strategy.name,
                 "generated_at": now_cn().isoformat(timespec="seconds"),
+                "data_date": self._latest_data_date(),
+                "job_id": job_id,
+                "rules": [ref.to_dict() for ref in strategy.rules],
                 "total_scanned": 0,
                 "total_hits": 0,
                 "elapsed_seconds": 0.0,
@@ -257,8 +314,8 @@ class CustomStrategyScanner:
                 "running": False,
                 "message": "未勾选任何规则",
             }
-            self._last_snapshots[strategy.id] = payload
-            return payload
+            self._persist_snapshot(strategy.id, payload)
+            return self._decorate_snapshot(payload)
 
         # 计算需要的 K 线天数
         need_days = max((RULE_REGISTRY[r.rule_code].min_kline_days for r in enabled_refs), default=30) + 5
@@ -337,10 +394,15 @@ class CustomStrategyScanner:
                 hits.append(result)
 
         hits.sort(key=lambda h: (-h.composite_score, -abs(h.change_pct)))
+        data_dates = [h.trade_date for h in hits if h.trade_date]
         payload = {
             "strategy_id": strategy.id,
             "strategy_name": strategy.name,
             "generated_at": now_cn().isoformat(timespec="seconds"),
+            "data_date": self._latest_data_date(),
+            "latest_hit_date": max(data_dates) if data_dates else "",
+            "job_id": job_id,
+            "rules": [ref.to_dict() for ref in strategy.rules],
             "total_scanned": len(symbols),
             "total_hits": len(hits),
             "elapsed_seconds": round(time.time() - t0, 2),
@@ -348,9 +410,9 @@ class CustomStrategyScanner:
             "hits": [h.to_dict() for h in hits],
             "running": False,
         }
-        self._last_snapshots[strategy.id] = payload
+        self._persist_snapshot(strategy.id, payload)
         log.info(
             "custom_strategy scan id=%s name=%s scanned=%d hits=%d elapsed=%.2fs",
             strategy.id, strategy.name, len(symbols), len(hits), payload["elapsed_seconds"],
         )
-        return payload
+        return self._decorate_snapshot(payload)

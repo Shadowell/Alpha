@@ -147,7 +147,7 @@ async def scan_custom_strategy(
     async def runner(ctx) -> dict:
         ctx.progress(10.0, "准备扫描")
         ctx.progress(50.0, "扫描中")
-        result = await scanner.scan(strategy, limit=limit)
+        result = await scanner.scan(strategy, limit=limit, job_id=ctx.job_id)
         ctx.progress(90.0, "整理结果")
         return result
 

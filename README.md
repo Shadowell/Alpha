@@ -176,7 +176,7 @@ Tushare `daily.vol` 以“手”为单位，直接映射为 `volume`；`daily.am
 
 - **复合候选池** → **重点关注池** → **买入池**（上限 5 只）
 - **盘中评分**：突破强度（35%）+ 量能（25%）+ VWAP/开盘/回撤结构分 — 减分项（高开/冲高回落/近涨停）
-- **自动迁池**：评分 ≥ 70 立即升重点，≥ 78 + 量比 ≥ 1.3 + 突破确认升买入；评分连续 5 分钟 < 65 自动降级
+- **自动迁池**：评分 ≥ 60 连续 3 分钟或 ≥ 70 立即候选→重点；重点池评分 ≥ 78 且量比 ≥ 1.3、突破确认连续 2 分钟才自动升买入；买入池评分连续 5 分钟 < 65 自动降回重点。手动迁池仍可即时覆盖，自动升买入受 `buy_pool_max_size` 限制并写 trigger log
 - **自适应策略中心**（页面顶部主视觉，取代原"缩量启动"区块）：将选股逻辑抽象为"规则组合"，用户可自由启用 / 关闭单条规则并调参
   - **12 条原子规则**（`app/services/strategy_rules.py`）：价格区间、排除板块、当日涨跌幅、当日涨停、箱体横盘（振幅+量能 CV）、缩量倍数、放量倍数、突破 N 日高、低于 N 日高、站上均线、均线多头排列、距高点回撤
   - **3 条内置策略**（启动时自动写入，不可删除）：
@@ -184,7 +184,7 @@ Tushare `daily.vol` 以“手”为单位，直接映射为 `volume`；`daily.am
     - `builtin_adjustment_box` 调整期横盘：价格区间 + 主板 + 箱体（更宽松）+ 回撤 ≥ 15% + MA60 上方
     - `builtin_breakout_volume` 放量突破新高：价格区间 + 主板 + 均线多头 + 放量 + 突破 60 日新高
   - **规则采用 AND 组合**：所有启用规则全部命中才入选；合成分数 = 匹配率 + 量能/振幅等连续指标加权
-  - **一键扫描全 A 股**：约 30 秒扫完 5000 只，结果快照独立持久化 per-strategy
+  - **一键扫描全 A 股**：约 30 秒扫完 5000 只，结果快照按策略持久化到 `funnel_state.db`；重启后仍可读取，并返回 `stale` / `latest_data_date` 以标识数据已落后最新 K 线日期
   - **一键 180 天回测**：复用 `BacktestLab.run_custom_strategy`，返回信号数 / 胜率 / 累计收益 / 最大回撤
   - **点击命中卡片**：直接弹出 Kronos 预测 modal（无跳转 / 无刷新 / 无 `window.open`）
   - **布局重排**：策略中心放在策略页上半区；扫描命中结果并入第一个“复合候选池”，下半区继续展示三池
@@ -743,17 +743,17 @@ python3 scripts/repair_market_cache.py
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/funnel` | 漏斗三池状态 |
-| POST | `/api/pool/move` | 股票迁池 |
-| POST | `/api/score/recompute` | 重算评分 |
-| GET | `/api/stock/{symbol}/detail` | 个股详情（含 K 线） |
+| GET | `/api/funnel` | 漏斗三池状态；`trade_date` 只读，历史日期返回空快照且不会重置当前池 |
+| POST | `/api/pool/move` | 股票迁池（手动覆盖自动推荐） |
+| POST | `/api/score/recompute` | 重算评分（满足阈值时自动升/降池） |
+| GET | `/api/stock/{symbol}/detail` | 个股详情（含 K 线）；历史日期不匹配当前池时返回 404 |
 | GET | `/api/strategy/rules` | 原子规则目录（12 条，含参数 schema） |
 | GET | `/api/strategy/custom` | 自定义策略列表（3 条内置 + 用户创建） |
 | GET | `/api/strategy/custom/{id}` | 单条策略详情（含规则引用） |
 | POST | `/api/strategy/custom` | 新建 / 更新自定义策略（body 带 `id`/`name`/`description`/`rules`） |
 | DELETE | `/api/strategy/custom/{id}` | 删除策略（内置策略返回 403） |
 | POST | `/api/strategy/custom/{id}/default` | 将策略设为默认 |
-| GET | `/api/strategy/custom/{id}/scan` | 读取最近一次扫描快照 |
+| GET | `/api/strategy/custom/{id}/scan` | 读取最近一次扫描快照（重启后从 SQLite 恢复，含 `stale` / `latest_data_date`） |
 | POST | `/api/strategy/custom/{id}/scan` | 提交全 A 股扫描任务（默认 202 + `job_id`；`?sync=true` 保留旧同步响应） |
 | POST | `/api/strategy/custom/{id}/backtest` | 提交自定义策略回测任务（默认 202 + `job_id`；`?sync=true` 保留旧同步响应） |
 | GET | `/api/strategy/hot-stock-ai` | 热门股票智能分析快照（Top20 基础评分 + TradingAgents 讨论增强 + 三池结果） |
