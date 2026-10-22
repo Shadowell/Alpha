@@ -8,7 +8,23 @@ import numpy as np
 import pandas as pd
 
 from .feature_store import ensure_dir, write_dataframe, write_json
+from .microstructure_features import (
+    build_microstructure_features,
+    microstructure_factor_specs,
+    microstructure_quality_report,
+)
 from .schema import FeatureConfig
+
+# #24 向后兼容接入：日线特征（FirstLimitFeatureBuilder）行为不变；
+# 微观结构/股性因子通过下列函数独立构建，#23 dataset 可按
+# (symbol, trade_date) join。详见 FACTOR_CATALOG.md。
+__all__ = [
+    "FeatureConfig",
+    "FirstLimitFeatureBuilder",
+    "build_microstructure_features",
+    "microstructure_factor_specs",
+    "microstructure_quality_report",
+]
 
 
 def _read_kline(db_path: str | Path) -> pd.DataFrame:
