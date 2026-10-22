@@ -19,6 +19,8 @@ async function reloadFunnel() {
   renderHotConcepts();
   renderHotStocks();
   renderFunnel();
+  // #57：/api/funnel 若带 market_session / is_trading_day，状态灯切到服务端口径。
+  _updateMarketStatus();
   setMeta();
   if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {

@@ -14,12 +14,15 @@ function connectWs() {
       const msg = JSON.parse(evt.data);
       if (!msg || !msg.data) return;
       if (msg.event === 'snapshot') {
+        // #57：snapshot 若带 market_session / is_trading_day，前端状态灯改用服务端口径。
+        state.snapshot = msg.data || null;
         state.funnel = msg.data.funnel;
         state.hotConcepts = msg.data.hot_concepts;
         state.hotStocks = msg.data.hot_stocks || state.hotStocks;
         renderHotConcepts();
         renderHotStocks();
         renderFunnel();
+        _updateMarketStatus();
         setMeta();
       } else if (msg.event === 'monitor_update') {
         _appendMonitorMessage({

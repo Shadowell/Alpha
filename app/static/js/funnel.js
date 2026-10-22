@@ -37,17 +37,20 @@ function cardActions(stock) {
   return actions;
 }
 
-function _isMarketOpen() {
-  const now = new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) return false;
-  const t = now.getHours() * 60 + now.getMinutes();
-  return (t >= 570 && t < 690) || (t >= 780 && t < 900);
+// #57：闸门统一走东八区/服务端口径，不再用浏览器本地时钟。
+function _isMarketOpen(now = new Date()) {
+  return isChinaMarketOpen(now);
+}
+
+function _marketGateText(action, now = new Date()) {
+  const info = getMarketSession(now);
+  const sourceHint = info.source === 'server' ? '服务端口径' : '前端东八区兜底（不含节假日日历）';
+  return `当前非交易时段（北京时间 ${info.parts.clock} · ${info.label} · ${sourceHint}），无法模拟${action}`;
 }
 
 async function paperBuy(symbol, name, _price) {
   if (!_isMarketOpen()) {
-    setStatus('当前非交易时段，无法模拟买入', 'error');
+    setStatus(_marketGateText('买入'), 'error');
     return;
   }
   const qty = prompt(`模拟买入 ${name}(${symbol})\n将以当前实时价成交\n请输入买入股数:`, '100');
@@ -69,7 +72,7 @@ async function paperBuy(symbol, name, _price) {
 
 async function paperSell(positionId, symbol, name) {
   if (!_isMarketOpen()) {
-    setStatus('当前非交易时段，无法模拟卖出', 'error');
+    setStatus(_marketGateText('卖出'), 'error');
     return;
   }
   if (!confirm(`确认模拟卖出 ${name}(${symbol})？\n将以当前实时价成交`)) return;
