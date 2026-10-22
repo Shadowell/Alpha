@@ -42,8 +42,13 @@ FUNNEL_DB_PATH = data_path("funnel_state.db")
 KLINE_DB_PATH = data_path("market_kline.db")
 FUNNEL_STATE_JSON_PATH = data_path("funnel_state.json")
 JOBS_DB_PATH = data_path("jobs.db")
+ALT_SENTIMENT_DB_PATH = data_path("alt_sentiment.db")
 
 
 def checkpoint_paths() -> tuple[Path, ...]:
     """lifespan shutdown / 手动 checkpoint 需要处理的 SQLite 绝对路径。"""
-    return (FUNNEL_DB_PATH, KLINE_DB_PATH)
+    paths = [FUNNEL_DB_PATH, KLINE_DB_PATH]
+    # 另类情绪研究库默认关闭，只有真的落过盘才需要 checkpoint，避免 WAL 挂起 fsync。
+    if ALT_SENTIMENT_DB_PATH.exists():
+        paths.append(ALT_SENTIMENT_DB_PATH)
+    return tuple(paths)

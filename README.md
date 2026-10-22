@@ -928,3 +928,26 @@ ALPHA_TEST_BASE_URL=http://127.0.0.1:18890 npx playwright test
 ## Maintainers
 
 - Primary maintainer: [@Shadowell](https://github.com/Shadowell) (Jie Feng)
+
+
+## 打板 / 短线 Alpha 研究层
+
+数据底座（Tushare Pro，权限启动探测 + 无权限自动降级，失败隔离不影响主 K 线同步）：
+
+| 数据集 | 表 | 只读 API |
+| --- | --- | --- |
+| 涨停 / 跌停 / 炸板（封单额、首末封板时间、开板次数、连板数） | `limit_board_daily` | `GET /api/data/limit-board/{trade_date}` |
+| 连板天梯与晋级 | `limit_ladder_daily` | `GET /api/data/limit-board/status` |
+| 龙虎榜与营业部席位 | `dragon_tiger_daily`、`dragon_tiger_seat_daily` | `GET /api/data/dragon-tiger/{trade_date}` |
+| 游资席位名录 | `hot_money_seat` | `GET /api/data/tushare-capabilities`（能力矩阵，含未探测说明） |
+
+计算层（离线研究，全部 Point-in-Time、缺数显式 None + `missing_flags`，禁止填 0 当信号）：
+
+- `strategy/first_limit_alpha/label_engine.py`：T 日涨停排队 / T+1 竞价两种入场场景的多 horizon 标签，含晋级、炸板、断板、大面与可成交性。
+- `strategy/first_limit_alpha/microstructure_features.py`：封板强度、板型、股性共 46 个因子（108 列），代理口径带 `*_is_proxy`。
+- `app/services/sentiment_factors.py` + `app/services/market_regime.py`：市场情绪分与六阶段 regime（冰点/修复/发酵/高潮/分歧/退潮），盘中估算以 `intraday_` 前缀结构性隔离。
+- `app/services/limit_up_backtest.py`：可成交性回测（一字买不到、涨停排队、跌停顺延、动态滑点、5% 参与率容量上限），strict / loose 双口径。
+- `app/services/alt_sentiment/`：互动易与全市场关注度另类情绪因子，总开关 `ALPHA_ALT_SENTIMENT_ENABLED` 默认关闭。
+- `strategy/model_validation/`：基线 vs 候选模型的 walk-forward + embargo 增量验证脚手架，样本外无增量自动判「不保留」。
+
+依赖关系：另类情绪与模型验证为独立包，尚未接入容器与前端；接入需在 `app/container.py` 装配并新增路由，`data/alt_sentiment.db` 已纳入 lifespan checkpoint 清单。
