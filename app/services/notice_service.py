@@ -5,10 +5,17 @@ from typing import Any
 
 import akshare as ak
 
-from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS, VALID_POOLS
+from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS, StrategyConfig, VALID_POOLS
 from app.models import NoticeDetailResponse, NoticeFunnelResponse, NoticeItem
 from app.services.blocking_io import ExternalTimeoutError, run_blocking
 from app.services.notice_llm import score_with_llm
+from app.services.pool_transition import (
+    INVALID_TARGET_MESSAGE,
+    MISSING_ENTRY_MESSAGE,
+    buy_pool_full_message,
+    record_pool_move,
+    validate_pool_transition,
+)
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
 
@@ -294,12 +301,27 @@ class NoticeService:
         )
 
     async def move_pool(self, symbol: str, target_pool: str) -> dict[str, Any]:
-        if target_pool not in VALID_POOLS:
-            return {"success": False, "message": "非法目标池"}
+        """公告三池手动迁移。与策略池 /api/pool/move 共享 pool_transition 校验：
+        候选→重点→买入逐级晋升、跨级非法、降级与同级幂等允许、买入池容量同源。"""
+        if str(target_pool or "").strip() not in VALID_POOLS:
+            return {"success": False, "message": INVALID_TARGET_MESSAGE}
         entry = self.entries.get(symbol)
         if not entry:
-            return {"success": False, "message": "股票不存在"}
+            return {"success": False, "message": MISSING_ENTRY_MESSAGE}
+
+        current_pool = str(entry.get("pool", POOL_CANDIDATE))
+        decision = validate_pool_transition(current_pool, target_pool)
+        if not decision.allowed:
+            return {"success": False, "message": decision.message, "pool": current_pool}
+
+        if target_pool == POOL_BUY and current_pool != POOL_BUY:
+            max_size = StrategyConfig().buy_pool_max_size
+            buy_count = sum(1 for e in self.entries.values() if e.get("pool") == POOL_BUY)
+            if buy_count >= max_size:
+                return {"success": False, "message": buy_pool_full_message(max_size), "pool": current_pool}
+
         entry["pool"] = target_pool
+        record_pool_move(entry, decision.reason, now_cn().isoformat())
         entry["updated_at"] = now_cn().isoformat()
         self.updated_at = now_cn().isoformat()
         self._save_state()

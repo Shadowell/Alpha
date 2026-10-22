@@ -23,6 +23,12 @@ from app.services.concept_engine import (
     map_stock_concepts,
 )
 from app.services.data_provider import AkshareDataProvider
+from app.services.pool_transition import (
+    INVALID_TARGET_MESSAGE,
+    MISSING_ENTRY_MESSAGE,
+    buy_pool_full_message,
+    validate_pool_transition,
+)
 from app.services.strategy_engine import apply_transition_rules, compute_intraday_score, get_last_n_trade_window
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import elapsed_market_ratio, is_after_close, now_cn, parse_cn_datetime
@@ -337,23 +343,32 @@ class FunnelService:
 
     async def move_pool(self, symbol: str, target_pool: str, note: str | None = None) -> MovePoolResponse:
         async with self.lock:
-            if target_pool not in VALID_POOLS:
-                return MovePoolResponse(success=False, message="非法目标池", symbol=symbol, pool=POOL_CANDIDATE)
+            if str(target_pool or "").strip() not in VALID_POOLS:
+                return MovePoolResponse(success=False, message=INVALID_TARGET_MESSAGE, symbol=symbol, pool=POOL_CANDIDATE)
 
             entry = self.entries.get(symbol)
+            current_pool = str(entry.get("pool", POOL_CANDIDATE)) if entry else POOL_CANDIDATE
             if not entry:
-                return MovePoolResponse(success=False, message="股票不存在于当前选股池", symbol=symbol, pool=POOL_CANDIDATE)
+                return MovePoolResponse(success=False, message=MISSING_ENTRY_MESSAGE, symbol=symbol, pool=current_pool)
 
-            if target_pool == POOL_BUY and entry["pool"] != POOL_BUY:
+            decision = validate_pool_transition(current_pool, target_pool)
+            if not decision.allowed:
+                return MovePoolResponse(success=False, message=decision.message, symbol=symbol, pool=current_pool)
+
+            if target_pool == POOL_BUY and current_pool != POOL_BUY:
                 buy_count = sum(1 for e in self.entries.values() if e.get("pool") == POOL_BUY)
                 if buy_count >= self.config.buy_pool_max_size:
-                    return MovePoolResponse(success=False, message="买入池已满(5只)", symbol=symbol, pool=entry["pool"])
+                    return MovePoolResponse(
+                        success=False,
+                        message=buy_pool_full_message(self.config.buy_pool_max_size),
+                        symbol=symbol,
+                        pool=current_pool,
+                    )
 
-            old_pool = entry["pool"]
             entry["pool"] = target_pool
             entry["recommended_pool"] = None
             entry["updated_at"] = now_cn().isoformat()
-            self._record_trigger(entry, note or f"手动迁移: {old_pool} -> {target_pool}")
+            self._record_trigger(entry, note or decision.reason)
 
             await self._refresh_market_panels_unlocked(force=True)
             self.updated_at = now_cn().isoformat()
