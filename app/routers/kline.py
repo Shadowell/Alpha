@@ -231,15 +231,20 @@ async def get_cached_kline_minute(
     limit: int = 500,
 ):
     clean_symbol = normalize_symbol(symbol)
+    query_date = ""
+    if trade_date:
+        query_date = _kline_cache_service._normalize_trade_date(trade_date)
+        if not query_date:
+            raise HTTPException(status_code=400, detail="trade_date 需为 YYYY-MM-DD 或 YYYYMMDD")
     items = await asyncio.to_thread(
         _kline_cache_service.store.get_minute_bars,
         clean_symbol,
-        trade_date,
+        query_date or None,
         limit,
     )
     return {
         "symbol": clean_symbol,
-        "trade_date": trade_date or "",
+        "trade_date": query_date,
         "count": len(items),
         "items": items,
     }
