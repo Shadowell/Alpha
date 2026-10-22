@@ -11,16 +11,6 @@ on:
       - 'tests/test_first_limit_alpha.py'
       - 'requirements*.txt'
       - '.github/workflows/model-tests.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'app/services/kronos_model/**'
-      - 'app/services/kronos_predict_service.py'
-      - 'app/services/first_limit_alpha_service.py'
-      - 'strategy/first_limit_alpha/train_sequence.py'
-      - 'tests/test_first_limit_alpha.py'
-      - 'requirements*.txt'
-      - '.github/workflows/model-tests.yml'
   workflow_dispatch:
 
 permissions:
