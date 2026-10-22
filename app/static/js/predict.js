@@ -152,6 +152,8 @@ function renderPredictFunnel() {
     el.querySelectorAll('.pool-card[data-symbol]').forEach((card) => {
       card.onclick = () => openPredictDetail(card.dataset.symbol);
     });
+    // #56：预测池同样按阈值折叠长列表
+    _applyLongListCollapse(el, POOL_LIST_COLLAPSE_THRESHOLD, id);
   };
   renderPool('predict-pool-candidate', pools.candidate);
   renderPool('predict-pool-focus', pools.focus);
@@ -357,6 +359,7 @@ function renderHotStockAI() {
       return;
     }
     el.innerHTML = list.map((item) => _hotAiCardHtml(item, id.split('-').pop())).join('');
+    _applyLongListCollapse(el, POOL_LIST_COLLAPSE_THRESHOLD, id);
     el.querySelectorAll('.hot-ai-card[data-hotai-symbol]').forEach((card) => {
       card.onclick = () => openHotAiDetail(card.dataset.hotaiSymbol);
     });

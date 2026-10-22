@@ -27,7 +27,8 @@ function switchTab(tab) {
   document.getElementById('pageTitle').textContent = TAB_TITLES[tab] || 'Alpha';
   setMeta();
   if (tab === 'data') {
-    loadDataCenter();
+    // 进入数据中心即视为用户要看最新状态，强制刷新一次（后续由 dc-status / dc-detail 两个任务按 TTL 拉）
+    loadDataCenter({ force: true });
   }
   if (tab === 'funnel') {
     const chip = document.getElementById('activeConcept');

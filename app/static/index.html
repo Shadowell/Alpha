@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260825_sc_rules_layout" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261022_qa1" />
 </head>
 <body>
   <!-- ========== 左侧导航栏 ========== -->
@@ -131,7 +131,10 @@
               <span class="dc-action-sep"></span>
               <button id="btnDcCheck" class="btn-outline btn-sm">完整性检查</button>
             </div>
-            <div id="dcSyncHint" class="dc-sync-hint"></div>
+            <div class="dc-sync-hint-wrap">
+              <span id="dcPollMeta" class="dc-poll-meta"></span>
+              <div id="dcSyncHint" class="dc-sync-hint"></div>
+            </div>
           </div>
           <!-- 数据增强覆盖 -->
           <section class="dc-enrichment card panel">
@@ -242,6 +245,7 @@
               <div>
                 <h3>三池跟踪</h3>
                 <p>第一个池子合并展示策略命中与系统候选，后两池继续跟踪重点与买入。</p>
+                <p class="pool-rule-note">晋升口径：候选 → 重点 → 买入 逐级晋升；策略中心命中点「加入重点池」会先调用入池接口写入候选池，再推进重点池。</p>
               </div>
             </div>
             <div class="funnel-grid">
@@ -282,6 +286,7 @@
             <div class="funnel-grid">
               <div class="pool-column">
                 <div class="pool-header">公告候选池 <span id="notice-count-candidate" class="pool-count">0</span></div>
+                <div class="pool-rule-note">公告池与策略池同口径：候选 → 重点 → 买入 逐级晋升，不可跨级。</div>
                 <div id="notice-pool-candidate" class="pool-list"></div>
               </div>
               <div class="pool-column highlight-focus">
@@ -515,6 +520,9 @@
               <button id="btnPaperSettingsSave" class="btn-primary btn-sm">保存设置</button>
             </div>
 
+            <!-- 汇总取数失败时在此就地重试（#55），不影响持仓/成交两块 -->
+            <div id="paperSummaryBanner" class="block-error-slot"></div>
+
             <div class="paper-body">
               <div class="paper-section card-solid">
                 <h3>当前持仓 <span id="paperHoldCount" class="pool-count">0</span></h3>
@@ -573,28 +581,28 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="/static/js/security.js?v=20261022_p1"></script>
-  <script src="/static/js/core.js?v=20261022_p1"></script>
-  <script src="/static/js/summary.js?v=20261022_p1"></script>
-  <script src="/static/js/api.js?v=20261022_p1"></script>
-  <script src="/static/js/polling.js?v=20261022_p1"></script>
-  <script src="/static/js/navigation.js?v=20261022_p1"></script>
-  <script src="/static/js/funnel.js?v=20261022_p1"></script>
-  <script src="/static/js/data-center.js?v=20261022_p1"></script>
-  <script src="/static/js/charts.js?v=20261022_p1"></script>
-  <script src="/static/js/stock.js?v=20261022_p1"></script>
-  <script src="/static/js/notice-tab.js?v=20261022_p1"></script>
-  <script src="/static/js/loaders.js?v=20261022_p1"></script>
-  <script src="/static/js/paper.js?v=20261022_p1"></script>
-  <script src="/static/js/agent.js?v=20261022_p1"></script>
-  <script src="/static/js/monitor.js?v=20261022_p1"></script>
-  <script src="/static/js/hover.js?v=20261022_p1"></script>
-  <script src="/static/js/predict-modal.js?v=20261022_p1"></script>
-  <script src="/static/js/ws.js?v=20261022_p1"></script>
-  <script src="/static/js/boot-helpers.js?v=20261022_p1"></script>
-  <script src="/static/js/boot.js?v=20261022_p1"></script>
-  <script src="/static/js/predict.js?v=20261022_p1"></script>
-  <script src="/static/js/strategy.js?v=20261022_p1"></script>
-  <script src="/static/app.js?v=20261022_p1"></script>
+  <script src="/static/js/security.js?v=20261022_qa1"></script>
+  <script src="/static/js/core.js?v=20261022_qa1"></script>
+  <script src="/static/js/summary.js?v=20261022_qa1"></script>
+  <script src="/static/js/api.js?v=20261022_qa1"></script>
+  <script src="/static/js/polling.js?v=20261022_qa1"></script>
+  <script src="/static/js/navigation.js?v=20261022_qa1"></script>
+  <script src="/static/js/funnel.js?v=20261022_qa1"></script>
+  <script src="/static/js/data-center.js?v=20261022_qa1"></script>
+  <script src="/static/js/charts.js?v=20261022_qa1"></script>
+  <script src="/static/js/stock.js?v=20261022_qa1"></script>
+  <script src="/static/js/notice-tab.js?v=20261022_qa1"></script>
+  <script src="/static/js/loaders.js?v=20261022_qa1"></script>
+  <script src="/static/js/paper.js?v=20261022_qa1"></script>
+  <script src="/static/js/agent.js?v=20261022_qa1"></script>
+  <script src="/static/js/monitor.js?v=20261022_qa1"></script>
+  <script src="/static/js/hover.js?v=20261022_qa1"></script>
+  <script src="/static/js/predict-modal.js?v=20261022_qa1"></script>
+  <script src="/static/js/ws.js?v=20261022_qa1"></script>
+  <script src="/static/js/boot-helpers.js?v=20261022_qa1"></script>
+  <script src="/static/js/boot.js?v=20261022_qa1"></script>
+  <script src="/static/js/predict.js?v=20261022_qa1"></script>
+  <script src="/static/js/strategy.js?v=20261022_qa1"></script>
+  <script src="/static/app.js?v=20261022_qa1"></script>
 </body>
 </html>

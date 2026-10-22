@@ -24,6 +24,7 @@ const state = {
   predictChart: null,
   dcStats: null,
   dcReport: null,
+  dcEnrichment: null,
   dcTaskFilter: 'all',
   dcLogsExpanded: false,
   monitorConfig: null,
@@ -37,6 +38,9 @@ const state = {
   hotStockAIConfig: null,
   hotStockAIRunning: false,
   strategyScanSnapshot: null,
+  // #50：后端 POST /api/pool/enroll 未上线（404）时置位，候选计数与卡片操作区随之降级说明。
+  poolEnrollUnsupported: false,
+  poolEnrollError: '',
 };
 
 // 测试与浏览器调试入口；classic module 的顶层 const 本身不会自动成为 window 属性。
@@ -248,6 +252,115 @@ function _updateMarketStatus(now = new Date()) {
   label.dataset.session = info.session;
   label.dataset.source = info.source;
   label.title = `北京时间 ${info.parts.clock}（${info.parts.isoDate}）· 口径 ${info.source === 'server' ? '服务端' : '前端东八区兜底'}`;
+}
+
+/* ==================== 区块级失败与重试（#55） ==================== */
+// 并发区块里某一个请求挂起/失败时，只让该区块显示错误 + 独立重试按钮，
+// 其余区块照常渲染，页面不再停在整片"加载中"。
+
+function _blockErrorText(err) {
+  if (!err) return '未知错误';
+  if (err.code === 'timeout') return err.message || '接口超时';
+  if (err.code === 'network') return err.message || '后端服务不可用(连接失败)';
+  if (err.code === 'http') return err.message || `接口返回 HTTP ${err.status}`;
+  return err.message || '未知错误';
+}
+
+/**
+ * 在容器内渲染「区块加载失败 + 重试」。
+ * @param {HTMLElement|string} target 容器元素或其 id
+ * @param {Error} err request() 抛出的错误
+ * @param {Function} retry 点击重试时执行的异步函数（通常是该区块的加载函数）
+ * @param {{title?:string}} [opts]
+ */
+function showBlockError(target, err, retry, opts = {}) {
+  const el = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!el) return;
+  el.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'block-error';
+  box.dataset.block = el.id || opts.title || 'block';
+  const text = document.createElement('div');
+  text.className = 'block-error-text';
+  text.textContent = `${opts.title || '该区块'}加载失败：${_blockErrorText(err)}`;
+  const hint = document.createElement('div');
+  hint.className = 'block-error-hint';
+  hint.textContent = err && err.code === 'timeout'
+    ? '接口在超时预算内没有返回，其余区块不受影响，可单独重试。'
+    : '后端接口异常，其余区块不受影响，可单独重试。';
+  const btn = document.createElement('button');
+  btn.className = 'btn-secondary btn-sm block-retry';
+  btn.textContent = '重试该区块';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = '重试中…';
+    try { await retry(); } catch (_) { /* 重试失败由 retry 自己再次渲染错误 */ }
+    finally { btn.disabled = false; btn.textContent = '重试该区块'; }
+  };
+  box.append(text, hint, btn);
+  el.appendChild(box);
+}
+
+function clearBlockError(target) {
+  const el = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!el) return;
+  el.querySelectorAll('.block-error').forEach((node) => node.remove());
+}
+
+/**
+ * 区块取数失败的统一出口（#55）：
+ *  - 该区块从来没有数据 → 就地显示错误 + 独立重试按钮；
+ *  - 已有数据（只是刷新失败）→ 保留旧数据，只弹提示，避免把可用内容擦成错误态。
+ */
+function reportBlockFailure(targetId, err, retry, opts = {}) {
+  if (opts.hasData) {
+    setStatus(`${opts.title || '该区块'}刷新失败：${_blockErrorText(err)}（仍展示上次数据）`, 'error');
+    return;
+  }
+  showBlockError(targetId, err, retry, { title: opts.title });
+}
+
+/* ==================== 长列表折叠（#56） ==================== */
+// 候选池一次铺几十上百张卡片会拖慢首屏与滚动，这里统一按阈值折叠并保留展开入口。
+const POOL_LIST_COLLAPSE_THRESHOLD = 20;
+const _listExpandFlags = {};
+// 暴露阈值，便于调试与 E2E 断言（const 不会自动挂到 window）。
+window.POOL_LIST_COLLAPSE_THRESHOLD = POOL_LIST_COLLAPSE_THRESHOLD;
+
+/**
+ * 折叠容器内超出阈值的卡片（容器直接子元素即卡片）。
+ * @returns {{total:number, visible:number, collapsed:boolean}}
+ */
+function _applyLongListCollapse(container, threshold = POOL_LIST_COLLAPSE_THRESHOLD, expandKey = '') {
+  if (!container) return { total: 0, visible: 0, collapsed: false };
+  const key = expandKey || container.id || '';
+  const cards = Array.from(container.children).filter((node) => !node.classList.contains('list-collapse-toggle'));
+  const total = cards.length;
+  container.querySelectorAll('.list-collapse-toggle').forEach((node) => node.remove());
+  const expanded = !!_listExpandFlags[key];
+  if (total <= threshold) {
+    cards.forEach((card) => { card.style.display = ''; });
+    container.dataset.collapsed = '0';
+    container.dataset.visibleCount = String(total);
+    return { total, visible: total, collapsed: false };
+  }
+  const visible = expanded ? total : threshold;
+  cards.forEach((card, idx) => { card.style.display = idx < visible ? '' : 'none'; });
+  container.dataset.collapsed = expanded ? '0' : '1';
+  container.dataset.visibleCount = String(visible);
+  container.dataset.totalCount = String(total);
+  const btn = document.createElement('button');
+  btn.className = 'btn-secondary btn-sm list-collapse-toggle';
+  btn.textContent = expanded ? `收起列表（仅显示前 ${threshold} 条）` : `展开全部 (${total})`;
+  btn.dataset.expanded = expanded ? '1' : '0';
+  btn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _listExpandFlags[key] = !expanded;
+    _applyLongListCollapse(container, threshold, key);
+  };
+  container.appendChild(btn);
+  return { total, visible, collapsed: !expanded };
 }
 
 function setStatus(text, tone = 'info') {

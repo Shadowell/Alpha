@@ -21,6 +21,19 @@ async function reloadFunnel() {
   renderFunnel();
   // #57：/api/funnel 若带 market_session / is_trading_day，状态灯切到服务端口径。
   _updateMarketStatus();
+  // #55：区块之间互不拖累——失败的那块单独显示错误与重试，其余照常渲染。
+  if (funnelRes.status === 'rejected') {
+    reportBlockFailure('pool-candidate', funnelRes.reason, () => reloadFunnel(),
+      { title: '三池数据', hasData: !!state.funnel });
+  }
+  if (hotConceptsRes.status === 'rejected') {
+    reportBlockFailure('hotConcepts', hotConceptsRes.reason, () => reloadFunnel(),
+      { title: '热门概念', hasData: !!state.hotConcepts });
+  }
+  if (hotStocksRes.status === 'rejected') {
+    reportBlockFailure('hotStocks', hotStocksRes.reason, () => reloadFunnel(),
+      { title: '热门个股', hasData: !!state.hotStocks });
+  }
   setMeta();
   if (state.selectedHotSymbol) return;
   if (state.selectedSymbol) {
@@ -40,11 +53,19 @@ async function reloadFunnel() {
 }
 
 async function reloadNotice() {
+  let failure = null;
   try {
     state.noticeFunnel = await request('/api/notice/funnel');
-  } catch (_) {}
+  } catch (err) {
+    failure = err;
+  }
   renderNoticeFunnel();
   setMeta();
+  // #55：公告三池取数失败只标记该区块并给重试入口，不再静默停在空池。
+  if (failure) {
+    reportBlockFailure('notice-pool-candidate', failure, () => reloadNotice(),
+      { title: '公告三池数据', hasData: !!state.noticeFunnel });
+  }
   if (!state.noticeSelectedSymbol) {
     document.getElementById('noticeSummary').textContent = '点击左侧股票查看';
     document.getElementById('noticeDetail').innerHTML = '<div class="empty-state"><div class="empty-state-text">请点击左侧股票查看公告详情</div></div>';

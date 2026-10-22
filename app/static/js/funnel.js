@@ -4,27 +4,94 @@
 
 /* ==================== Funnel tab ==================== */
 
+const POOL_ENROLL_PATH = '/api/pool/enroll';
+const POOL_MOVE_PATH = '/api/pool/move';
+const POOL_LABELS = { candidate: '候选池', focus: '重点池', buy: '买入池' };
+
+function _poolLabel(pool) {
+  return POOL_LABELS[pool] || pool;
+}
+
+/* ==================== 概念筛选（#53） ==================== */
+// 口径：概念标签既可能是后端的 [{name,color,...}] 对象，也可能是 ['name'] 字符串。
+function _conceptTagNames(stock) {
+  return (stock?.concept_tags || stock?.concepts || [])
+    .map((tag) => (typeof tag === 'string' ? tag : (tag && tag.name) || ''))
+    .filter(Boolean);
+}
+
 function passConceptFilter(stock) {
   if (!state.selectedConcept) return true;
-  return (stock.concept_tags || []).some((t) => t.name === state.selectedConcept);
+  return _conceptTagNames(stock).includes(state.selectedConcept);
+}
+
+// 策略命中是否"带概念标签"决定筛选能否作用到该分区；不带标签时不假装已过滤。
+function _hitsConceptCoverage(hits) {
+  if (!hits.length) return 'empty';
+  const tagged = hits.filter((hit) => _conceptTagNames(hit).length > 0).length;
+  if (tagged === hits.length) return 'full';
+  return tagged > 0 ? 'partial' : 'none';
+}
+
+// mode 语义：off=未选概念 · filtered=已按概念裁剪 · no-tags=命中无标签不裁剪 · partial-tags=标签不全
+function _filterHitsByConcept(hits) {
+  if (!state.selectedConcept) return { items: hits, mode: 'off', coverage: _hitsConceptCoverage(hits) };
+  const coverage = _hitsConceptCoverage(hits);
+  if (coverage === 'none') return { items: hits, mode: 'no-tags', coverage };
+  if (coverage === 'partial') return { items: hits, mode: 'partial-tags', coverage };
+  return { items: hits.filter(passConceptFilter), mode: 'filtered', coverage };
+}
+
+function _conceptSectionHint(mode) {
+  if (mode === 'off') return '来自当前策略的最新扫描结果 · 与系统候选同级操作';
+  if (mode === 'filtered') return `已按概念「${state.selectedConcept}」过滤策略命中`;
+  if (mode === 'partial-tags') {
+    return `策略命中仅部分带概念标签，暂不裁剪该分区（计数含全部命中，系统候选按「${state.selectedConcept}」过滤）`;
+  }
+  return `策略命中未带概念标签，暂不受筛选影响（计数含全部命中，系统候选按「${state.selectedConcept}」过滤）`;
 }
 
 function _getStrategyScanHits() {
   return state.strategyScanSnapshot?.hits || [];
 }
 
+// #50：只有"卡片上真的有可操作按钮"的命中才计入候选数；
+// 后端入池接口未上线（404）后，命中分区降级为仅预览，不再虚报候选数。
+function _strategyHitsAreActionable() {
+  return !state.poolEnrollUnsupported;
+}
+
+function _getCompositeCandidateParts() {
+  const hits = _getStrategyScanHits();
+  const hitResult = _filterHitsByConcept(hits);
+  const system = (state.funnel?.pools?.candidate || []).filter(passConceptFilter);
+  const strategyCount = _strategyHitsAreActionable() ? hitResult.items.length : 0;
+  return {
+    hits,
+    hitResult,
+    systemCount: system.length,
+    strategyCount,
+    total: system.length + strategyCount,
+  };
+}
+
 function _getCompositeCandidateCount() {
-  const strategyHits = _getStrategyScanHits().length;
-  const funnelCandidates = (state.funnel?.pools?.candidate || []).filter(passConceptFilter).length;
-  return strategyHits + funnelCandidates;
+  return _getCompositeCandidateParts().total;
 }
 
 function renderCounts() {
   if (!state.funnel) return;
-  const c = _getCompositeCandidateCount();
+  const parts = _getCompositeCandidateParts();
+  const candidateEl = document.getElementById('count-candidate');
   const f = (state.funnel.pools.focus || []).filter(passConceptFilter).length;
   const b = (state.funnel.pools.buy || []).filter(passConceptFilter).length;
-  document.getElementById('count-candidate').textContent = c;
+  candidateEl.textContent = parts.total;
+  candidateEl.dataset.system = parts.systemCount;
+  candidateEl.dataset.strategy = parts.strategyCount;
+  candidateEl.dataset.strategyHitTotal = parts.hits.length;
+  candidateEl.dataset.conceptMode = parts.hitResult.mode;
+  candidateEl.title = `候选 ${parts.total} = 系统候选 ${parts.systemCount} + 策略命中可入池 ${parts.strategyCount}`
+    + (state.poolEnrollUnsupported ? '（入池接口未上线，策略命中仅预览）' : '');
   document.getElementById('count-focus').textContent = f;
   document.getElementById('count-buy').textContent = b;
 }
@@ -91,17 +158,81 @@ async function paperSell(positionId, symbol, name) {
   }
 }
 
-async function movePool(symbol, targetPool) {
+async function movePool(symbol, targetPool, { silent = false } = {}) {
   try {
-    const res = await request('/api/pool/move', {
+    const res = await request(POOL_MOVE_PATH, {
       method: 'POST',
       body: JSON.stringify({ symbol, target_pool: targetPool }),
     });
-    if (!res.success) alert(res.message || '迁移失败');
+    if (!res.success && !silent) alert(res.message || '迁移失败');
     await reloadFunnel();
+    return res;
   } catch (err) {
-    alert(err.message || '迁移失败');
+    if (!silent) alert(err.message || '迁移失败');
+    return { success: false, message: err.message };
   }
+}
+
+/* ==================== 策略命中入池（#50） ==================== */
+// 目标语义：策略命中 → 入池（后端 POST /api/pool/enroll 写入候选池）→ 再逐级晋升重点池。
+// 后端尚未提供该接口时（404），降级尝试 /api/pool/move 并给出可理解的原因，禁止静默失败。
+async function enrollStrategyHit(symbol, name, targetPool = 'focus', btn = null) {
+  if (btn) { btn.disabled = true; btn.dataset.prevText = btn.textContent; btn.textContent = '入池中…'; }
+  const restore = () => {
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.prevText || '加入重点池'; }
+  };
+  try {
+    const res = await request(POOL_ENROLL_PATH, {
+      method: 'POST',
+      body: JSON.stringify({ symbol, name, source: 'strategy_scan' }),
+    });
+    if (!res || res.success === false) {
+      setStatus(`加入${_poolLabel(targetPool)}失败：${(res && res.message) || '后端拒绝入池'}`, 'error');
+      restore();
+      return res || { success: false };
+    }
+    const enrolledPool = res.pool || 'candidate';
+    if (enrolledPool !== targetPool && targetPool) {
+      const moved = await movePool(symbol, targetPool, { silent: true });
+      if (!moved || moved.success === false) {
+        setStatus(`已入${_poolLabel(enrolledPool)}，但推进${_poolLabel(targetPool)}失败：${(moved && moved.message) || '未知原因'}`, 'error');
+        restore();
+        await reloadFunnel();
+        return moved;
+      }
+    }
+    setStatus(`${name || symbol} 已加入${_poolLabel(targetPool)}（来源：策略命中）`, 'success');
+    restore();
+    await reloadFunnel();
+    return { success: true, symbol, pool: targetPool };
+  } catch (err) {
+    restore();
+    if (err && err.status === 404) return _fallbackEnrollViaMove(symbol, name, targetPool, err);
+    const reason = err && err.code === 'timeout'
+      ? `入池请求超时（${Math.round((err.timeoutMs || 0) / 1000)}s）`
+      : `入池请求失败：${err.message}`;
+    setStatus(`${reason}，请稍后重试或改用系统候选`, 'error');
+    return { success: false, message: reason };
+  }
+}
+
+async function _fallbackEnrollViaMove(symbol, name, targetPool, enrollErr) {
+  // 记住"该后端版本没有入池接口"，让候选计数与卡片状态保持诚实。
+  state.poolEnrollUnsupported = true;
+  state.poolEnrollError = `${POOL_ENROLL_PATH} 返回 404，后端入池接口尚未上线`;
+  const moved = await movePool(symbol, targetPool, { silent: true });
+  if (moved && moved.success) {
+    setStatus(`入池接口未上线，已用迁移接口把 ${name || symbol} 推进${_poolLabel(targetPool)}`, 'success');
+    await reloadFunnel();
+    return moved;
+  }
+  setStatus(
+    `${state.poolEnrollError}；该股也不在系统选股池中（${(moved && moved.message) || '迁移接口拒绝'}），`
+    + `因此无法加入${_poolLabel(targetPool)}。需后端先支持 POST /api/pool/enroll`,
+    'error',
+  );
+  renderFunnel();
+  return { success: false, message: state.poolEnrollError };
 }
 
 function renderPool(poolName, list) {
@@ -169,13 +300,17 @@ function renderPool(poolName, list) {
       ? `当前概念「${state.selectedConcept}」下无匹配股票`
       : '当前暂无系统候选';
     root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${esc(hint)}</div></div>`;
+    return;
   }
+  _applyLongListCollapse(root, POOL_LIST_COLLAPSE_THRESHOLD, `pool-${poolName}`);
 }
 
-function _renderCompositeSection(title, hint, bodyHtml, count, kind = '') {
+function _renderCompositeSection(title, hint, bodyHtml, count, kind = '', meta = {}) {
   const countHtml = `<span class="composite-section-count">${esc(count)}</span>`;
+  const actionableAttr = meta.actionable === undefined ? '' : ` data-actionable="${meta.actionable ? '1' : '0'}"`;
+  const coverageAttr = meta.coverage ? ` data-concept-coverage="${esc(meta.coverage)}" data-concept-mode="${esc(meta.mode || '')}"` : '';
   return `
-    <section class="composite-section ${esc(kind)}">
+    <section class="composite-section ${esc(kind)}"${actionableAttr}${coverageAttr}>
       <div class="composite-section-head">
         <div class="composite-section-title">${esc(title)}${countHtml}</div>
         <div class="composite-section-hint">${esc(hint)}</div>
@@ -191,6 +326,18 @@ function _strategyHitCardHtml(hit) {
   const badges = (hit.rule_hits || []).slice(0, 4).map((rh) => (
     `<span class="sc-hit-tag">${esc(rh.title)}: ${esc(String(rh.label || '✓'))}</span>`
   )).join('');
+  const tagNames = _conceptTagNames(hit);
+  const tagsHtml = tagNames.length
+    ? `<div class="tags">${tagNames.slice(0, 3).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`
+    : '';
+  // #50：命中卡片给出一致的操作区（可入池 / 查看预测），并保留卡片本体的预测 modal。
+  // 后端入池接口缺失时按钮保留但禁用并说明原因，避免"有卡片无操作"的假象。
+  const actionable = _strategyHitsAreActionable();
+  const enrollBtn = actionable
+    ? `<button class="btn-enroll-focus" data-enroll-symbol="${esc(hit.symbol)}" data-enroll-name="${esc(hit.name || '')}">加入重点池</button>`
+    : `<button class="btn-enroll-focus" disabled data-enroll-symbol="${esc(hit.symbol)}" data-enroll-name="${esc(hit.name || '')}" title="${esc(state.poolEnrollError || '入池接口不可用')}">入池接口未上线</button>`;
+  const predictBtn = `<button class="btn-hit-predict" data-predict-symbol="${esc(hit.symbol)}" data-predict-name="${esc(hit.name || '')}">查看预测</button>`;
+  const actions = `${enrollBtn}${predictBtn}`;
   return `
     <div class="qb-card sc-hit-card sc-hit-card-inline" data-symbol="${esc(hit.symbol)}" data-name="${esc(hit.name || '')}">
       <div class="qb-card-top">
@@ -201,34 +348,36 @@ function _strategyHitCardHtml(hit) {
         <span class="qb-tag">收 ${fmtNum(hit.close, 2)}</span>
         <span class="qb-tag spike">综合分 ${fmtNum(hit.composite_score, 1)}</span>
       </div>
+      ${tagsHtml}
       ${badges ? `<div class="sc-hit-tags">${badges}</div>` : ''}
+      <div class="card-actions sc-hit-actions">${actions}</div>
     </div>
   `;
 }
 
 function renderCompositeCandidatePool(root, systemCandidates) {
   if (!root) return;
-  const strategyHits = _getStrategyScanHits();
+  const hits = _getStrategyScanHits();
+  const hitResult = _filterHitsByConcept(hits);
   const filteredSystem = (systemCandidates || []).filter(passConceptFilter);
   const parts = [];
+  const strategyHint = _conceptSectionHint(hitResult.mode);
+  const bodyCards = hitResult.items.slice(0, 200).map(_strategyHitCardHtml).join('');
 
-  if (strategyHits.length) {
-    parts.push(_renderCompositeSection(
-      '策略中心命中',
-      '来自当前策略的最新扫描结果',
-      strategyHits.slice(0, 200).map(_strategyHitCardHtml).join(''),
-      strategyHits.length,
-      'strategy',
-    ));
-  } else {
-    parts.push(_renderCompositeSection(
-      '策略中心命中',
-      '暂无策略命中，先运行上方扫描',
-      '<div class="empty-state compact-empty"><div class="empty-state-text">当前策略还没有扫描命中结果</div></div>',
-      0,
-      'strategy',
-    ));
-  }
+  parts.push(_renderCompositeSection(
+    '策略中心命中',
+    strategyHint,
+    hitResult.items.length
+      ? bodyCards
+      : `<div class="empty-state compact-empty"><div class="empty-state-text">${
+          state.selectedConcept
+            ? `当前概念「${esc(state.selectedConcept)}」下无策略命中`
+            : '当前策略还没有扫描命中结果'
+        }</div></div>`,
+    hitResult.items.length,
+    'strategy',
+    { actionable: _strategyHitsAreActionable(), coverage: hitResult.coverage, mode: hitResult.mode },
+  ));
 
   if (filteredSystem.length) {
     const host = document.createElement('div');
@@ -277,10 +426,11 @@ function renderCompositeCandidatePool(root, systemCandidates) {
     });
     parts.push(_renderCompositeSection(
       '系统候选',
-      state.selectedConcept ? `当前概念：${state.selectedConcept}` : '来自系统漏斗的调整期候选',
+      state.selectedConcept ? `已按概念「${state.selectedConcept}」过滤系统候选` : '来自系统漏斗的调整期候选',
       host.innerHTML,
       filteredSystem.length,
       'system',
+      { mode: state.selectedConcept ? 'filtered' : 'off', coverage: 'full' },
     ));
   } else {
     const hint = state.selectedConcept
@@ -292,6 +442,7 @@ function renderCompositeCandidatePool(root, systemCandidates) {
       `<div class="empty-state compact-empty"><div class="empty-state-text">${esc(hint)}</div></div>`,
       0,
       'system',
+      { mode: state.selectedConcept ? 'filtered' : 'off', coverage: 'full' },
     ));
   }
 
@@ -305,8 +456,36 @@ function renderCompositeCandidatePool(root, systemCandidates) {
       };
     });
   });
+  // #50：操作按钮必须阻断冒泡，否则卡片本体的预测 modal 会被顺带打开。
+  root.querySelectorAll('.sc-hit-card button[data-enroll-symbol]').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.disabled) return false;
+      enrollStrategyHit(btn.dataset.enrollSymbol, btn.dataset.enrollName, 'focus', btn);
+      return false;
+    };
+  });
+  root.querySelectorAll('.sc-hit-card button[data-predict-symbol]').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPredictDetail(btn.dataset.predictSymbol, btn.dataset.predictName);
+      return false;
+    };
+  });
+  // #56：命中/系统候选两个分区都按阈值折叠，避免一次性铺几百张卡片。
+  root.querySelectorAll('.composite-section').forEach((section) => {
+    const kind = section.classList.contains('strategy') ? 'strategy' : 'system';
+    _applyLongListCollapse(
+      section.querySelector('.composite-section-body'),
+      POOL_LIST_COLLAPSE_THRESHOLD,
+      `composite-${kind}`,
+    );
+  });
   root.querySelectorAll('.sc-hit-card').forEach((el) => {
     el.onclick = (ev) => {
+      if (ev.target.closest('button')) return;
       ev.preventDefault();
       ev.stopPropagation();
       openPredictDetail(el.getAttribute('data-symbol'), el.getAttribute('data-name'));
