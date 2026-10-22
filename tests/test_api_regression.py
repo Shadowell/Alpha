@@ -224,8 +224,14 @@ class TestKlineCache:
         r = client.get("/api/jobs/kline-cache/enrichment-status")
         assert r.status_code == 200
         data = r.json()
-        assert isinstance(data.get("items"), list)
-        assert len(data["items"]) == 5
+        items = data.get("items")
+        assert isinstance(items, list)
+        # #22 之后数据集会持续增加，这里锁住结构与下限而不是写死条数
+        assert len(items) >= 5
+        names = [item.get("dataset") for item in items]
+        assert len(set(names)) == len(names), "同一数据集不应重复出现"
+        for item in items:
+            assert {"dataset", "status"} <= set(item), f"缺少状态字段: {item}"
 
     def test_kline_extras(self, client):
         r = client.get(f"/api/kline/{TEST_SYMBOL}/extras?days=30")

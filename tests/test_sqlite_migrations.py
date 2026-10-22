@@ -145,6 +145,7 @@ def test_market_v3_limit_board_columns_and_unique_keys(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     try:
+
         def _pk(table: str) -> list[str]:
             # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
             return [
@@ -167,9 +168,12 @@ def test_market_v3_limit_board_columns_and_unique_keys(tmp_path):
         assert _pk("hsgt_top10_daily") == ["trade_date", "symbol", "market_type"]
 
         # 重复启动不再执行 DDL，也不影响既有唯一索引
-        before = {str(r[0]) for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index'"
-        ).fetchall()}
+        before = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
     finally:
         conn.close()
 
@@ -177,13 +181,20 @@ def test_market_v3_limit_board_columns_and_unique_keys(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     try:
-        after = {str(r[0]) for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index'"
-        ).fetchall()}
+        after = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
     finally:
         conn.close()
     assert before == after
-    assert {"idx_limit_board_date_limit", "idx_dragon_tiger_date", "idx_dragon_seat_date"} <= after
+    assert {
+        "idx_limit_board_date_limit",
+        "idx_dragon_tiger_date",
+        "idx_dragon_seat_date",
+    } <= after
 
 
 def test_market_database_upgrades_from_v2_to_v3_without_touching_old_rows(tmp_path):
@@ -232,10 +243,20 @@ def test_market_database_upgrades_from_v2_to_v3_without_touching_old_rows(tmp_pa
     assert store.get_limit_board_daily("2026-01-05") == []
 
     # 新表升级后立即可写
-    assert store.upsert_limit_board_daily(
-        [{"symbol": "600519", "trade_date": "2026-01-05", "limit": "U", "limit_times": 1}],
-        "2026-01-05T16:10:00",
-    ) == 1
+    assert (
+        store.upsert_limit_board_daily(
+            [
+                {
+                    "symbol": "600519",
+                    "trade_date": "2026-01-05",
+                    "limit": "U",
+                    "limit_times": 1,
+                }
+            ],
+            "2026-01-05T16:10:00",
+        )
+        == 1
+    )
 
 
 def test_funnel_and_paper_stores_share_one_migration_version(tmp_path):
