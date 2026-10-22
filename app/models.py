@@ -183,7 +183,9 @@ def _coerce_rule_param(spec: RuleSpec, param: RuleParam, value: Any) -> Any:
             try:
                 periods = [int(p) for p in parts]
             except ValueError as exc:
-                raise ValueError("规则 ma_bull_stack 参数 periods 需为逗号分隔的整数，例如 5,10,20") from exc
+                raise ValueError(
+                    "规则 ma_bull_stack 参数 periods 需为逗号分隔的整数，例如 5,10,20"
+                ) from exc
             if len(periods) < 2 or any(p <= 0 for p in periods):
                 raise ValueError("规则 ma_bull_stack 参数 periods 至少需要 2 个正整数")
         return value
@@ -292,7 +294,9 @@ class HotStockAIConfigUpdate(BaseModel):
 class AgentRunRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    task_type: Literal["daily_review", "notice_review", "full_diagnosis"] = "daily_review"
+    task_type: Literal["daily_review", "notice_review", "full_diagnosis"] = (
+        "daily_review"
+    )
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -356,3 +360,160 @@ class JobOut(BaseModel):
 class JobListOut(BaseModel):
     items: list[JobOut] = Field(default_factory=list)
     total: int = 0
+
+
+# ─────────────────── 打板核心数据底座（issue #22）───────────────────
+# 只读接口的响应模型。缺失值一律是 JSON null（不会填 0），
+# 因此数值/文本字段全部 Optional；额外字段允许透传，方便后续批次补列。
+
+
+class _PermissiveOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class TushareCapabilityItem(_PermissiveOut):
+    api: str
+    capability: Literal["available", "denied", "error", "not_configured"]
+    reason: str = ""
+    sample_rows: int = 0
+
+
+class TushareCapabilitiesOut(_PermissiveOut):
+    enabled: bool
+    probed: bool = False
+    trade_date: str | None = None
+    probed_at: str | None = None
+    apis: list[TushareCapabilityItem] = Field(default_factory=list)
+    degradations: dict[str, str] = Field(default_factory=dict)
+    note: str = ""
+
+
+class LimitBoardDatasetState(_PermissiveOut):
+    dataset: str
+    label: str = ""
+    trade_date: str = ""
+    status: str = "none"
+    row_count: int = 0
+    message: str = ""
+    updated_at: str = ""
+    latest_trade_date: str = ""
+    total_rows: int = 0
+
+
+class LimitBoardCoverage(_PermissiveOut):
+    trade_date: str
+    total_rows: int = 0
+    up_count: int = 0
+    down_count: int = 0
+    broken_count: int = 0
+    non_null_ratio: dict[str, float | None] = Field(default_factory=dict)
+    synced_at: str = ""
+
+
+class LimitBoardStatusOut(_PermissiveOut):
+    enabled: bool
+    latest_trade_date: str = ""
+    coverage: LimitBoardCoverage | None = None
+    datasets: list[LimitBoardDatasetState] = Field(default_factory=list)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    primary_apis: dict[str, str] = Field(default_factory=dict)
+    degradations: dict[str, str] = Field(default_factory=dict)
+
+
+class LimitBoardItem(_PermissiveOut):
+    symbol: str
+    trade_date: str
+    limit_flag: Literal["U", "D", "Z"] | None = None
+    first_time: str | None = None
+    last_time: str | None = None
+    open_times: int | None = None
+    limit_times: int | None = None
+    up_stat: str | None = None
+    fd_amount: float | None = None
+    amount: float | None = None
+    limit_amount: float | None = None
+    turnover_ratio: float | None = None
+    float_mv: float | None = None
+    total_mv: float | None = None
+    close: float | None = None
+    pct_chg: float | None = None
+    board_type: str | None = None
+    theme: str | None = None
+    limit_reason: str | None = None
+    source: str = ""
+    synced_at: str = ""
+
+
+class LimitLadderLevel(_PermissiveOut):
+    trade_date: str
+    ladder_level: int
+    stock_count: int = 0
+    symbols: list[dict[str, Any]] = Field(default_factory=list)
+    fd_amount_sum: float | None = None
+    amount_sum: float | None = None
+    avg_open_times: float | None = None
+    prev_level_count: int | None = None
+    promotion_ratio: float | None = None
+    source: str = ""
+
+
+class LimitBoardDayOut(_PermissiveOut):
+    trade_date: str
+    board: str | None = None
+    count: int = 0
+    items: list[LimitBoardItem] = Field(default_factory=list)
+    ladder: list[LimitLadderLevel] = Field(default_factory=list)
+    coverage: LimitBoardCoverage | None = None
+
+
+class DragonTigerItem(_PermissiveOut):
+    symbol: str
+    trade_date: str
+    reason: str = ""
+    name: str | None = None
+    close: float | None = None
+    pct_change: float | None = None
+    turnover_rate: float | None = None
+    amount: float | None = None
+    l_amount: float | None = None
+    net_amount: float | None = None
+    net_rate: float | None = None
+    amount_rate: float | None = None
+    float_values: float | None = None
+
+
+class DragonTigerSeatItem(_PermissiveOut):
+    trade_date: str
+    symbol: str
+    seat_name: str
+    side: Literal["buy", "sell"]
+    reason: str = ""
+    buy_amount: float | None = None
+    sell_amount: float | None = None
+    net_amount: float | None = None
+    seat_count: int = 1
+    source: str = ""
+
+
+class DragonTigerDayOut(_PermissiveOut):
+    trade_date: str
+    symbol: str | None = None
+    count: int = 0
+    items: list[DragonTigerItem] = Field(default_factory=list)
+    seats: list[DragonTigerSeatItem] = Field(default_factory=list)
+
+
+class HotMoneySeatItem(_PermissiveOut):
+    seat_name: str
+    org_code: str = ""
+    category: str | None = None
+    description: str | None = None
+    orgs: list[str] = Field(default_factory=list)
+    appear_count: int = 0
+    last_trade_date: str | None = None
+    source: str = ""
+
+
+class HotMoneySeatOut(_PermissiveOut):
+    count: int = 0
+    items: list[HotMoneySeatItem] = Field(default_factory=list)

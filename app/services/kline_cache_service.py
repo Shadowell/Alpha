@@ -34,12 +34,18 @@ class KlineCacheService:
         market_data_client: Any | None = None,
         schedule_after: time = time(15, 20),
         window_days: int = 180,
+        limit_board_service: Any | None = None,
     ) -> None:
         self.provider = provider
         self.store = store or KlineSQLiteStore()
-        self.market_data_client = market_data_client or EastmoneyMarketDataClient(store=self.store)
+        self.market_data_client = market_data_client or EastmoneyMarketDataClient(
+            store=self.store
+        )
         self.schedule_after = schedule_after
         self.window_days = max(10, min(window_days, 1095))  # 最长回溯 3 年
+        # 打板数据底座（issue #22）：只在收盘后随增强数据一起同步，
+        # 失败完全隔离，绝不回抛给主 K 线封账流程。
+        self.limit_board_service = limit_board_service
         self._syncing = False
         self._queue: list[tuple[str, dict[str, Any]]] = []
         self._queue_task: asyncio.Task | None = None
@@ -95,7 +101,11 @@ class KlineCacheService:
         skipped_holidays = 0
         try:
             cal_df = await self.provider.get_trade_days(min_days=1)
-            raw_days = cal_df["trade_date"].tolist() if cal_df is not None and not cal_df.empty else []
+            raw_days = (
+                cal_df["trade_date"].tolist()
+                if cal_df is not None and not cal_df.empty
+                else []
+            )
             trade_days = {str(v)[:10] for v in raw_days}
             if trade_days:
                 filtered = [d for d in dates if d in trade_days]
@@ -110,16 +120,22 @@ class KlineCacheService:
                     }
                 dates = filtered
         except Exception as exc:
-            print(f"[kline-cache] trade calendar unavailable, fallback to weekdays only: {exc}")
+            print(
+                f"[kline-cache] trade calendar unavailable, fallback to weekdays only: {exc}"
+            )
         for item in dates:
-            self._queue.append(("incremental", {"trade_date": item, "trigger_mode": trigger_mode}))
+            self._queue.append(
+                ("incremental", {"trade_date": item, "trigger_mode": trigger_mode})
+            )
         queue_size = len(self._queue)
         if self._queue_task is None or self._queue_task.done():
             self._queue_task = asyncio.create_task(self._run_queue())
         return {
             "success": True,
             "accepted": True,
-            "status": "queued" if self._syncing or queue_size > len(dates) else "running",
+            "status": "queued"
+            if self._syncing or queue_size > len(dates)
+            else "running",
             "submitted": len(dates),
             "skipped_holidays": skipped_holidays,
             "start_date": dates[0],
@@ -164,7 +180,9 @@ class KlineCacheService:
         print("[kline-cache] queue worker end")
 
     @staticmethod
-    def _weekdays_between(start_date: str, end_date: str, max_days: int = 180) -> list[str]:
+    def _weekdays_between(
+        start_date: str, end_date: str, max_days: int = 180
+    ) -> list[str]:
         try:
             start = datetime.strptime(start_date, "%Y-%m-%d").date()
             end = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -201,7 +219,9 @@ class KlineCacheService:
         唯一键永久固化，故一律拒绝。
         """
         now = now or now_cn()
-        normalized = KlineCacheService._normalize_trade_date(trade_date) or str(trade_date)
+        normalized = KlineCacheService._normalize_trade_date(trade_date) or str(
+            trade_date
+        )
         if normalized < now.date().isoformat():
             return True
         return now.timetz().replace(tzinfo=None) >= _EOD_SETTLE_TIME
@@ -248,11 +268,19 @@ class KlineCacheService:
         window_days: int | None = None,
     ) -> dict[str, Any]:
         if self._syncing:
-            return {"success": False, "message": "同步任务正在执行中", "trade_date": trade_date or "", "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "同步任务正在执行中",
+                "trade_date": trade_date or "",
+                "symbol_count": 0,
+            }
         self._syncing = True
         try:
             return await self._do_sync(
-                trade_date=trade_date, force=force, trigger_mode=trigger_mode, window_days=window_days,
+                trade_date=trade_date,
+                force=force,
+                trigger_mode=trigger_mode,
+                window_days=window_days,
             )
         finally:
             self._syncing = False
@@ -265,9 +293,16 @@ class KlineCacheService:
         window_days: int | None = None,
     ) -> dict[str, Any]:
         t0 = pytime.time()
-        target_trade_date = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target_trade_date = self._normalize_trade_date(
+            trade_date
+        ) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
-            return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "无法确定交易日",
+                "trade_date": "",
+                "symbol_count": 0,
+            }
 
         state = self.store.get_sync_state()
         if not force and state.get("last_success_trade_date") == target_trade_date:
@@ -309,10 +344,19 @@ class KlineCacheService:
                 updated_at=now_cn().isoformat(),
                 message="股票列表为空",
             )
-            return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "股票列表为空",
+                "trade_date": target_trade_date,
+                "symbol_count": 0,
+            }
 
-        effective_window = max(10, min(window_days if window_days is not None else self.window_days, 1095))
-        trade_dates_list = await self._resolve_trade_dates(target_trade_date, effective_window)
+        effective_window = max(
+            10, min(window_days if window_days is not None else self.window_days, 1095)
+        )
+        trade_dates_list = await self._resolve_trade_dates(
+            target_trade_date, effective_window
+        )
         if not trade_dates_list:
             self.store.set_sync_state(
                 attempt_trade_date=target_trade_date,
@@ -328,10 +372,17 @@ class KlineCacheService:
                 updated_at=now_cn().isoformat(),
                 message="交易窗口计算失败",
             )
-            return {"success": False, "message": "交易窗口计算失败", "trade_date": target_trade_date, "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "交易窗口计算失败",
+                "trade_date": target_trade_date,
+                "symbol_count": 0,
+            }
 
         # P3：全市场×窗口的既有对查询可能返回数十万行，放线程避免阻塞事件循环
-        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, trade_dates_list)
+        existing_pairs = await asyncio.to_thread(
+            self.store.get_existing_pairs, trade_dates_list
+        )
         # D1：未收盘定型的日期不参与本轮落库，留给盘后自动同步
         unsettled_dates = {td for td in trade_dates_list if not self._date_settled(td)}
         missing_by_date: dict[str, list[str]] = {}
@@ -373,7 +424,9 @@ class KlineCacheService:
                 "elapsed_sec": round(pytime.time() - t0, 1),
             }
 
-        unique_missing_symbols = sorted({s for syms in missing_by_date.values() for s in syms})
+        unique_missing_symbols = sorted(
+            {s for syms in missing_by_date.values() for s in syms}
+        )
         start_date = min(missing_by_date.keys()).replace("-", "")
         end_date = max(missing_by_date.keys()).replace("-", "")
 
@@ -448,7 +501,9 @@ class KlineCacheService:
         seal_target = sealed and target_trade_date not in unsettled_dates
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
-            success_trade_date=target_trade_date if seal_target else state.get("last_success_trade_date"),
+            success_trade_date=target_trade_date
+            if seal_target
+            else state.get("last_success_trade_date"),
             status=final_status,
             symbol_count=completed,
             total_symbols=total,
@@ -487,10 +542,17 @@ class KlineCacheService:
     ) -> dict[str, Any]:
         """增量同步：只同步指定交易日（默认当天）的 K 线数据。"""
         if self._syncing:
-            return {"success": False, "message": "同步任务正在执行中", "trade_date": trade_date or "", "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "同步任务正在执行中",
+                "trade_date": trade_date or "",
+                "symbol_count": 0,
+            }
         self._syncing = True
         try:
-            return await self._do_incremental_sync(trade_date=trade_date, trigger_mode=trigger_mode)
+            return await self._do_incremental_sync(
+                trade_date=trade_date, trigger_mode=trigger_mode
+            )
         finally:
             self._syncing = False
 
@@ -538,9 +600,16 @@ class KlineCacheService:
         trade_date: str | None = None,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
-        target_trade_date = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target_trade_date = self._normalize_trade_date(
+            trade_date
+        ) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
-            return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "无法确定交易日",
+                "trade_date": "",
+                "symbol_count": 0,
+            }
 
         # D1：目标日未收盘定型（盘中/盘前）时拒绝增量落库——
         # spot 最新价、当日分时K都是未完成数据，写进 (symbol, trade_date)
@@ -586,11 +655,20 @@ class KlineCacheService:
                 updated_at=now_cn().isoformat(),
                 message="股票列表为空",
             )
-            return {"success": False, "message": "股票列表为空", "trade_date": target_trade_date, "symbol_count": 0}
+            return {
+                "success": False,
+                "message": "股票列表为空",
+                "trade_date": target_trade_date,
+                "symbol_count": 0,
+            }
 
         # P3：全市场 symbol×日期对查询放线程执行
-        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, [target_trade_date])
-        missing_symbols = [s for s in symbols if (s, target_trade_date) not in existing_pairs]
+        existing_pairs = await asyncio.to_thread(
+            self.store.get_existing_pairs, [target_trade_date]
+        )
+        missing_symbols = [
+            s for s in symbols if (s, target_trade_date) not in existing_pairs
+        ]
 
         if not missing_symbols:
             self.store.set_sync_state(
@@ -648,7 +726,9 @@ class KlineCacheService:
         failed_count = 0
         fallback_symbols = missing_symbols
 
-        latest_trade_date = await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        latest_trade_date = await self._resolve_latest_trade_date(
+            now_cn().date().isoformat()
+        )
         if target_trade_date == latest_trade_date:
             batch_result = await self._batch_fill_from_spot(
                 symbols=missing_symbols,
@@ -663,7 +743,9 @@ class KlineCacheService:
             success_count += batch_result["success_count"]
             fallback_symbols = batch_result["remaining_symbols"]
 
-        if fallback_symbols and hasattr(self.market_data_client, "fetch_daily_by_trade_date"):
+        if fallback_symbols and hasattr(
+            self.market_data_client, "fetch_daily_by_trade_date"
+        ):
             batch_result = await self._batch_fill_from_market_daily(
                 symbols=fallback_symbols,
                 trade_date=target_trade_date,
@@ -700,7 +782,9 @@ class KlineCacheService:
         # D2：比例封账（同全量同步路径，见 _seal_decision）
         final_status, sealed = self._seal_decision(completed, total)
         if sealed:
-            final_msg = f"增量补缺完成 {target_trade_date} 补缺{completed}只(原缺失{total}只)"
+            final_msg = (
+                f"增量补缺完成 {target_trade_date} 补缺{completed}只(原缺失{total}只)"
+            )
         elif final_status == "partial":
             final_msg = f"增量补缺部分成功 {target_trade_date} 补缺{completed}/{total}只(未达{int(_FILL_SUCCESS_RATIO * 100)}%封账线)，将自动重试"
         else:
@@ -713,7 +797,9 @@ class KlineCacheService:
         )
         self.store.set_sync_state(
             attempt_trade_date=target_trade_date,
-            success_trade_date=target_trade_date if sealed else state.get("last_success_trade_date"),
+            success_trade_date=target_trade_date
+            if sealed
+            else state.get("last_success_trade_date"),
             status=final_status,
             symbol_count=completed,
             total_symbols=total,
@@ -758,6 +844,17 @@ class KlineCacheService:
             await self.sync_enrichment(trade_date, trigger_mode=trigger_mode)
         except Exception as exc:
             print(f"[kline-cache] enrichment failed: {exc!r}")
+        await self._run_limit_board_safely(trade_date, trigger_mode)
+
+    async def _run_limit_board_safely(self, trade_date: str, trigger_mode: str) -> None:
+        """打板数据底座同步（issue #22）；异常一律吞掉，主 K 线语义不变。"""
+        service = self.limit_board_service
+        if service is None:
+            return
+        try:
+            await service.sync_trade_date(trade_date, trigger_mode=trigger_mode)
+        except Exception as exc:
+            print(f"[kline-cache] limit board sync failed: {type(exc).__name__}")
 
     async def _retry_pending_enrichment(self, trade_date: str) -> None:
         if not getattr(self.market_data_client, "is_ready", False):
@@ -771,10 +868,29 @@ class KlineCacheService:
             item["dataset"]
             for item in overview
             if item["dataset"] != "minute"
-            and (item["trade_date"] != trade_date or item["status"] != "success")
+            and not self._dataset_satisfied(item, trade_date)
         ]
         if pending:
             await self._run_enrichment_safely(trade_date, "auto")
+
+    @staticmethod
+    def _dataset_satisfied(item: dict[str, Any], trade_date: str) -> bool:
+        """数据集是否已给出结论。
+
+        打板数据集（issue #22）在无权限时会记录 ``skipped`` / ``degraded`` /
+        ``not_configured`` 这类终态 —— 已经按降级路径处理完毕，
+        不该每轮调度都再打一次必然失败的接口。
+        """
+        from app.services.limit_board_service import (
+            DATASET_ORDER as _LIMIT_DATASETS,
+            TERMINAL_STATUSES as _TERMINAL,
+        )
+
+        status = str(item.get("status") or "")
+        date_ok = item.get("trade_date") == trade_date
+        if item.get("dataset") in _LIMIT_DATASETS:
+            return date_ok and status in _TERMINAL
+        return date_ok and status == "success"
 
     async def _run_enrichment_dataset(
         self,
@@ -817,7 +933,9 @@ class KlineCacheService:
         trade_date: str | None = None,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
-        target = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target = self._normalize_trade_date(
+            trade_date
+        ) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target:
             return {"success": False, "message": "无法确定交易日", "trade_date": ""}
         if not self._date_settled(target):
@@ -856,7 +974,9 @@ class KlineCacheService:
                 )
             except Exception as exc:
                 extra_errors.append(f"{dataset}:{type(exc).__name__}")
-        extra_status = "success" if not extra_errors else ("partial" if extra_rows else "failed")
+        extra_status = (
+            "success" if not extra_errors else ("partial" if extra_rows else "failed")
+        )
         extra_message = "ok" if not extra_errors else ",".join(extra_errors)
         self.store.set_enrichment_state(
             "daily_extras",
@@ -919,9 +1039,16 @@ class KlineCacheService:
     ) -> dict[str, Any]:
         now = now_cn()
         trade_date = now.date().isoformat()
-        unique = sorted({str(symbol).strip() for symbol in symbols if str(symbol).strip()})
+        unique = sorted(
+            {str(symbol).strip() for symbol in symbols if str(symbol).strip()}
+        )
         if not unique:
-            return {"success": False, "message": "买入池为空", "trade_date": trade_date, "row_count": 0}
+            return {
+                "success": False,
+                "message": "买入池为空",
+                "trade_date": trade_date,
+                "row_count": 0,
+            }
         if not force and not self._is_trading_session(now):
             return {
                 "success": False,
@@ -950,7 +1077,9 @@ class KlineCacheService:
                     if frame is not None and not frame.empty:
                         rows = frame.to_dict("records")
                     else:
-                        quote = await self.market_data_client.fetch_realtime_quote(symbol)
+                        quote = await self.market_data_client.fetch_realtime_quote(
+                            symbol
+                        )
                         if quote and quote.get("bar_time") and quote.get("price"):
                             rows = [
                                 {
@@ -1017,7 +1146,9 @@ class KlineCacheService:
         t0 = pytime.time()
         wanted = set(symbols)
         try:
-            snapshot = await self.market_data_client.fetch_daily_by_trade_date(trade_date)
+            snapshot = await self.market_data_client.fetch_daily_by_trade_date(
+                trade_date
+            )
         except Exception as exc:
             print(f"[kline-cache] market daily batch failed: {exc!r}")
             return {
@@ -1190,8 +1321,14 @@ class KlineCacheService:
             message=f"批量行情补缺 {completed}/{total}",
         )
         remaining = [s for s in symbols if s not in valid_symbols]
-        print(f"[kline-cache] batch spot filled {completed}/{total}, fallback={len(remaining)}")
-        return {"completed": completed, "success_count": completed, "remaining_symbols": remaining}
+        print(
+            f"[kline-cache] batch spot filled {completed}/{total}, fallback={len(remaining)}"
+        )
+        return {
+            "completed": completed,
+            "success_count": completed,
+            "remaining_symbols": remaining,
+        }
 
     async def _concurrent_fetch(
         self,
@@ -1213,12 +1350,15 @@ class KlineCacheService:
         completed = initial_completed
         success_count = initial_success_count
         failed_count = initial_failed_count
+
         async def _fetch_one(symbol: str) -> dict[str, Any]:
             error_message = ""
             async with sem:
                 t0 = pytime.time()
                 try:
-                    hist = await self.market_data_client.fetch_hist(symbol, start_date, end_date, adjust="qfq")
+                    hist = await self.market_data_client.fetch_hist(
+                        symbol, start_date, end_date, adjust="qfq"
+                    )
                 except Exception as exc:
                     hist = pd.DataFrame()
                     error_message = str(exc)[:200]
@@ -1318,7 +1458,9 @@ class KlineCacheService:
         return state
 
     def _has_active_work(self) -> bool:
-        return self._syncing or (self._queue_task is not None and not self._queue_task.done())
+        return self._syncing or (
+            self._queue_task is not None and not self._queue_task.done()
+        )
 
     def _fail_stale_running_tasks(self, message: str) -> None:
         state = self.store.get_sync_state()
@@ -1358,19 +1500,33 @@ class KlineCacheService:
 
         base_date = await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not base_date:
-            return {"check_time": check_time, "status": "error", "message": "无法确定交易日"}
+            return {
+                "check_time": check_time,
+                "status": "error",
+                "message": "无法确定交易日",
+            }
 
         trade_dates_list = await self._resolve_trade_dates(base_date, days)
         if not trade_dates_list:
-            return {"check_time": check_time, "status": "error", "message": "交易日历为空"}
+            return {
+                "check_time": check_time,
+                "status": "error",
+                "message": "交易日历为空",
+            }
 
         symbols = await self._load_symbol_list()
         if not symbols:
-            return {"check_time": check_time, "status": "error", "message": "股票列表为空"}
+            return {
+                "check_time": check_time,
+                "status": "error",
+                "message": "股票列表为空",
+            }
 
         symbol_set = set(symbols)
         total_expected = len(trade_dates_list) * len(symbols)
-        existing_pairs = await asyncio.to_thread(self.store.get_existing_pairs, trade_dates_list)
+        existing_pairs = await asyncio.to_thread(
+            self.store.get_existing_pairs, trade_dates_list
+        )
         total_actual = len(existing_pairs)
         total_missing = total_expected - total_actual
 
@@ -1380,17 +1536,25 @@ class KlineCacheService:
         for td in trade_dates_list:
             missing_symbols = [s for s in symbols if (s, td) not in existing_pairs]
             if missing_symbols:
-                missing_by_date.append({
-                    "date": td,
-                    "missing_count": len(missing_symbols),
-                    "total": len(symbols),
-                    "coverage_pct": round((1 - len(missing_symbols) / len(symbols)) * 100, 2),
-                })
+                missing_by_date.append(
+                    {
+                        "date": td,
+                        "missing_count": len(missing_symbols),
+                        "total": len(symbols),
+                        "coverage_pct": round(
+                            (1 - len(missing_symbols) / len(symbols)) * 100, 2
+                        ),
+                    }
+                )
                 for s in missing_symbols:
                     symbol_miss_count[s] = symbol_miss_count.get(s, 0) + 1
 
         worst_symbols = sorted(symbol_miss_count.items(), key=lambda x: -x[1])[:20]
-        coverage_pct = round((total_actual / total_expected) * 100, 2) if total_expected > 0 else 100.0
+        coverage_pct = (
+            round((total_actual / total_expected) * 100, 2)
+            if total_expected > 0
+            else 100.0
+        )
         status = "complete" if total_missing == 0 else "incomplete"
 
         report: dict[str, Any] = {
@@ -1404,7 +1568,9 @@ class KlineCacheService:
             "status": status,
             "missing_by_date": missing_by_date,
             "missing_dates_summary": [d["date"] for d in missing_by_date],
-            "worst_symbols": [{"symbol": s, "missing_days": c} for s, c in worst_symbols],
+            "worst_symbols": [
+                {"symbol": s, "missing_days": c} for s, c in worst_symbols
+            ],
         }
 
         self.store.save_check_report(report)
@@ -1423,7 +1589,9 @@ class KlineCacheService:
         trade_days = await self.market_data_client.fetch_trade_days(min_days=days)
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return []
-        dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        dates = (
+            pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        )
         target = pd.to_datetime(trade_date).date()
         selected = dates[dates <= target].tail(days)
         return [d.isoformat() for d in selected]
@@ -1432,7 +1600,9 @@ class KlineCacheService:
         trade_days = await self.market_data_client.fetch_trade_days()
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return ""
-        days = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        days = (
+            pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        )
         target = pd.to_datetime(base_date).date()
         valid = days[days <= target]
         if valid.empty:
@@ -1443,7 +1613,9 @@ class KlineCacheService:
         trade_days = await self.market_data_client.fetch_trade_days(min_days=days)
         if trade_days.empty or "trade_date" not in trade_days.columns:
             return "", ""
-        dates = pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        dates = (
+            pd.to_datetime(trade_days["trade_date"], errors="coerce").dropna().dt.date
+        )
         target = pd.to_datetime(trade_date).date()
         selected = dates[dates <= target].tail(days)
         if len(selected) < days:
@@ -1478,7 +1650,9 @@ class KlineCacheService:
                 name_map = {}
 
         if not name_map:
-            fetch_symbol_names = getattr(self.market_data_client, "fetch_symbol_names", None)
+            fetch_symbol_names = getattr(
+                self.market_data_client, "fetch_symbol_names", None
+            )
             if fetch_symbol_names is not None:
                 try:
                     name_map = await fetch_symbol_names()
@@ -1487,12 +1661,18 @@ class KlineCacheService:
                         self.provider.symbol_name_cache = (now_cn(), dict(name_map))
                         self.store.upsert_symbol_names(name_map, now_cn().isoformat())
                 except Exception as exc:
-                    print(f"[kline_cache] fetch symbol names from primary source failed: {exc}")
+                    print(
+                        f"[kline_cache] fetch symbol names from primary source failed: {exc}"
+                    )
 
         if not name_map:
             try:
                 snapshot = await self.market_data_client.fetch_spot()
-                if not snapshot.empty and "代码" in snapshot.columns and "名称" in snapshot.columns:
+                if (
+                    not snapshot.empty
+                    and "代码" in snapshot.columns
+                    and "名称" in snapshot.columns
+                ):
                     name_map = {
                         str(r["代码"]): str(r["名称"])
                         for _, r in snapshot.iterrows()
@@ -1528,7 +1708,9 @@ class KlineCacheService:
     ) -> int:
         """补缺后复验：统计 missing_by_date 中实际被填上的条数。"""
         check_dates = sorted(missing_by_date.keys())
-        new_existing = await asyncio.to_thread(self.store.get_existing_pairs, check_dates)
+        new_existing = await asyncio.to_thread(
+            self.store.get_existing_pairs, check_dates
+        )
         filled = 0
         for td, syms in missing_by_date.items():
             for s in syms:

@@ -1148,7 +1148,15 @@ class KlineSQLiteStore:
         金额单位统一为元；``None`` 表示源数据缺失，重复同步时用 COALESCE
         保留已有值，避免后到的空响应把已定型的封板质量字段擦掉。
         """
-        text_fields = ["ts_code", "name", "industry", "limit_flag", "first_time", "last_time", "up_stat"]
+        text_fields = [
+            "ts_code",
+            "name",
+            "industry",
+            "limit_flag",
+            "first_time",
+            "last_time",
+            "up_stat",
+        ]
         int_fields = ["open_times", "limit_times"]
         num_fields = [
             "fd_amount",
@@ -1174,7 +1182,8 @@ class KlineSQLiteStore:
                     self._optional_text(row, "name"),
                     self._optional_text(row, "industry"),
                     # 源字段名是 Tushare 的 ``limit``；列名为 ``limit_flag``（保留字）。
-                    self._optional_text(row, "limit") or self._optional_text(row, "limit_flag"),
+                    self._optional_text(row, "limit")
+                    or self._optional_text(row, "limit_flag"),
                     self._optional_text(row, "first_time"),
                     self._optional_text(row, "last_time"),
                     self._optional_int(row, "open_times"),
@@ -1245,7 +1254,8 @@ class KlineSQLiteStore:
                 str(row.get("trade_date") or "").strip(),
             )
             for row in rows
-            if str(row.get("symbol") or "").strip() and str(row.get("trade_date") or "").strip()
+            if str(row.get("symbol") or "").strip()
+            and str(row.get("trade_date") or "").strip()
         ]
         if not payload:
             return 0
@@ -1264,9 +1274,7 @@ class KlineSQLiteStore:
             conn.commit()
         return int(cur.rowcount or 0)
 
-    def upsert_limit_ladder(
-        self, rows: list[dict[str, Any]], synced_at: str
-    ) -> int:
+    def upsert_limit_ladder(self, rows: list[dict[str, Any]], synced_at: str) -> int:
         payload = [
             (
                 str(row.get("trade_date") or "").strip(),
@@ -1444,9 +1452,7 @@ class KlineSQLiteStore:
             conn.commit()
         return len(payload)
 
-    def upsert_hot_money_seats(
-        self, rows: list[dict[str, Any]], synced_at: str
-    ) -> int:
+    def upsert_hot_money_seats(self, rows: list[dict[str, Any]], synced_at: str) -> int:
         payload = []
         for row in rows:
             seat_name = str(row.get("seat_name") or "").strip()
@@ -1490,7 +1496,14 @@ class KlineSQLiteStore:
         return len(payload)
 
     def upsert_hsgt_top10(self, rows: list[dict[str, Any]], synced_at: str) -> int:
-        numeric = ["close", "change", "amount", "net_amount", "buy_amount", "sell_amount"]
+        numeric = [
+            "close",
+            "change",
+            "amount",
+            "net_amount",
+            "buy_amount",
+            "sell_amount",
+        ]
         payload = []
         for row in rows:
             symbol = str(row.get("symbol") or "").strip()
@@ -1669,6 +1682,36 @@ class KlineSQLiteStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_daily_with_limits(self, trade_date: str) -> list[dict[str, Any]]:
+        """日线 + 涨跌停价，供 ``limit_list_d`` 无权限时的自算降级。
+
+        只返回当条记录，不做任何涨停判定（判定集中在服务层，便于单测）。
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT k.symbol,
+                       k.trade_date,
+                       k.open,
+                       k.high,
+                       k.low,
+                       k.close,
+                       k.volume,
+                       k.amount,
+                       e.up_limit,
+                       e.down_limit,
+                       e.circ_mv,
+                       e.total_mv,
+                       e.turnover_rate
+                FROM kline_daily k
+                LEFT JOIN kline_daily_extras e
+                    ON e.symbol = k.symbol AND e.trade_date = k.trade_date
+                WHERE k.trade_date = ?
+                """,
+                (trade_date,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def latest_board_trade_date(self) -> str:
         with self._connect() as conn:
             row = conn.execute(
@@ -1676,8 +1719,22 @@ class KlineSQLiteStore:
             ).fetchone()
         return str(row["d"]) if row and row["d"] else ""
 
+    def previous_board_trade_date(self, trade_date: str) -> str:
+        """严格早于 ``trade_date`` 的最近一个已有涨停板数据的交易日。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(trade_date) AS d FROM limit_board_daily WHERE trade_date < ?",
+                (trade_date,),
+            ).fetchone()
+        return str(row["d"]) if row and row["d"] else ""
+
     def get_limit_board_coverage(self, trade_date: str) -> dict[str, Any]:
-        """覆盖率统计：行数、涨停/跌停/炸板分布与关键字段非空率。"""
+        """覆盖率统计：行数、涨停/跌停/炸板分布与关键字段非空率。
+
+        ``non_null_ratio`` 以当日全部打板记录为分母；``up_non_null_ratio``
+        只以涨停（U）记录为分母 —— issue #22 的验收口径是后者
+        （``limit_times``/``first_time``/``open_times``/``fd_amount`` 非空率 ≥ 90%）。
+        """
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -1698,12 +1755,25 @@ class KlineSQLiteStore:
                 """,
                 (trade_date,),
             ).fetchone()
+            up_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(first_time) AS first_time_rows,
+                    COUNT(open_times) AS open_times_rows,
+                    COUNT(limit_times) AS limit_times_rows,
+                    COUNT(fd_amount) AS fd_amount_rows
+                FROM limit_board_daily WHERE trade_date = ? AND limit_flag = 'U'
+                """,
+                (trade_date,),
+            ).fetchone()
         total = int(row["total"] or 0)
+        up_total = int(up_row["total"] or 0)
 
-        def _ratio(key: str) -> float | None:
-            if not total:
+        def _ratio(key: str, base: int) -> float | None:
+            if not base:
                 return None
-            return round(int(row[key] or 0) / total, 4)
+            return round(int(row[key] or 0) / base, 4)
 
         return {
             "trade_date": trade_date,
@@ -1712,13 +1782,35 @@ class KlineSQLiteStore:
             "down_count": int(row["down_count"] or 0),
             "broken_count": int(row["broken_count"] or 0),
             "non_null_ratio": {
-                "first_time": _ratio("first_time_rows"),
-                "last_time": _ratio("last_time_rows"),
-                "open_times": _ratio("open_times_rows"),
-                "limit_times": _ratio("limit_times_rows"),
-                "fd_amount": _ratio("fd_amount_rows"),
-                "up_stat": _ratio("up_stat_rows"),
-                "theme": _ratio("theme_rows"),
+                "first_time": _ratio("first_time_rows", total),
+                "last_time": _ratio("last_time_rows", total),
+                "open_times": _ratio("open_times_rows", total),
+                "limit_times": _ratio("limit_times_rows", total),
+                "fd_amount": _ratio("fd_amount_rows", total),
+                "up_stat": _ratio("up_stat_rows", total),
+                "theme": _ratio("theme_rows", total),
+            },
+            "up_non_null_ratio": {
+                "first_time": (
+                    round(int(up_row["first_time_rows"] or 0) / up_total, 4)
+                    if up_total
+                    else None
+                ),
+                "open_times": (
+                    round(int(up_row["open_times_rows"] or 0) / up_total, 4)
+                    if up_total
+                    else None
+                ),
+                "limit_times": (
+                    round(int(up_row["limit_times_rows"] or 0) / up_total, 4)
+                    if up_total
+                    else None
+                ),
+                "fd_amount": (
+                    round(int(up_row["fd_amount_rows"] or 0) / up_total, 4)
+                    if up_total
+                    else None
+                ),
             },
             "synced_at": row["synced_at"] or "",
         }

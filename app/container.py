@@ -3,6 +3,7 @@
 main.py 只保留 FastAPI 实例、中间件、router include 与静态挂载；
 所有服务实例在 lifespan 中通过 `build_container()` 构造，避免 import 时副作用。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,6 +32,7 @@ from app.services.jobs import JobManager
 from app.services.kline_cache_service import KlineCacheService
 from app.services.kline_store import KlineSQLiteStore
 from app.services.kronos_predict_service import KronosPredictService
+from app.services.limit_board_service import LimitBoardService
 from app.services.market_data_client import EastmoneyMarketDataClient
 from app.services.notice_service import NoticeService
 from app.services.observability import BackgroundTaskRegistry
@@ -82,6 +84,7 @@ def resolve_compat_attr(app: Any, name: str) -> Any:
         app.state.container = container
     return getattr(container, _COMPAT_ATTR_MAP.get(name, name))
 
+
 # 后台循环任务在 app.state 上的键；health 检查与 shutdown 共用。
 LOOP_TASK_KEYS = (
     "backfill_task",
@@ -100,6 +103,14 @@ def resolve_data_dir(data_dir: str | Path | None = None) -> Path:
     resolved = Path(raw).expanduser().resolve() if raw else DATA_DIR
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """读取布尔开关环境变量；未设置时用默认值，其余按 0/false/no/off 判关闭。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 @dataclass
@@ -127,6 +138,8 @@ class ServiceContainer:
     job_store: JobStore
     job_manager: JobManager
     background_tasks: BackgroundTaskRegistry
+    # 打板数据底座（issue #22）；Tushare 未配置时依然可用（自算降级）。
+    limit_board_service: LimitBoardService | None = None
 
     # ── 路径/健康辅助 ──
 
@@ -174,6 +187,36 @@ class ServiceContainer:
         if inserted:
             log.info("inserted %d builtin custom strategies", inserted)
         self.job_manager.recover()
+        self._spawn_capability_probe()
+
+    def _spawn_capability_probe(self) -> None:
+        """启动后延迟探测 Tushare 打板接口权限（只读探测，不做全量回填）。
+
+        未配置 Tushare 时探测不会发起任何网络请求，只把矩阵标记为
+        ``not_configured``，保证状态接口在本地/CI 环境也可读。
+        """
+        service = self.limit_board_service
+        if service is None or not service.is_enabled:
+            return
+        if not _env_flag("ALPHA_LIMIT_BOARD_PROBE_ON_STARTUP", True):
+            return
+
+        async def _probe() -> None:
+            try:
+                await asyncio.sleep(5)
+                matrix = await service.probe_capabilities(force=True)
+                summary = {
+                    str(item.get("api")): str(item.get("capability"))
+                    for item in (matrix.get("apis") or [])
+                    if isinstance(item, dict)
+                }
+                log.info("tushare limit-board capability matrix: %s", summary)
+            except Exception as exc:  # noqa: BLE001 — 探测失败不影响服务启动
+                log.warning(
+                    "limit board capability probe failed: %s", type(exc).__name__
+                )
+
+        self.background_tasks.spawn(_probe(), name="limit-board-capability-probe")
 
     async def shutdown(self, app_state: Any) -> None:
         # 顺序：先取消并等待循环/散任务 → 停 JobManager → WAL checkpoint，
@@ -211,7 +254,11 @@ class ServiceContainer:
                     snapshot = self.provider.realtime_snapshot_cache
                     if snapshot is not None:
                         _, df = snapshot
-                        if not df.empty and "代码" in df.columns and "最新价" in df.columns:
+                        if (
+                            not df.empty
+                            and "代码" in df.columns
+                            and "最新价" in df.columns
+                        ):
                             price_map = dict(
                                 zip(df["代码"].astype(str), df["最新价"].astype(float))
                             )
@@ -236,12 +283,16 @@ class ServiceContainer:
                     if n.hour == 16 and 15 <= n.minute < 30 and last_run_date != today:
                         snap = service.get_snapshot()
                         if (snap.get("trade_date") != today) or not snap.get("entries"):
-                            log.info("predict funnel scheduled auto run at %s", n.isoformat())
+                            log.info(
+                                "predict funnel scheduled auto run at %s", n.isoformat()
+                            )
                             try:
                                 await service.run(trigger="auto")
                                 last_run_date = today
                             except Exception as exc:  # noqa: BLE001 — 单次调度失败下次重试
-                                log.exception("predict funnel scheduled run failed: %s", exc)
+                                log.exception(
+                                    "predict funnel scheduled run failed: %s", exc
+                                )
                         else:
                             last_run_date = today
             except Exception as exc:  # noqa: BLE001 — 调度循环必须存活
@@ -255,7 +306,11 @@ class ServiceContainer:
             try:
                 service = self.hot_stock_ai_service
                 cfg = service.get_config()
-                if cfg.get("auto_refresh_enabled") and not service.running and service.is_stale():
+                if (
+                    cfg.get("auto_refresh_enabled")
+                    and not service.running
+                    and service.is_stale()
+                ):
                     log.info("hot stock ai scheduled run at %s", now_cn().isoformat())
 
                     async def _run_auto() -> None:
@@ -308,8 +363,14 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
     provider = AkshareDataProvider(kline_store=kline_store)
     eastmoney = EastmoneyMarketDataClient(store=kline_store)
     market_data_client = TushareFirstMarketDataClient(fallback=eastmoney)
+    limit_board_service = LimitBoardService(
+        store=kline_store, market_data_client=market_data_client
+    )
     kline_cache_service = KlineCacheService(
-        provider=provider, store=kline_store, market_data_client=market_data_client
+        provider=provider,
+        store=kline_store,
+        market_data_client=market_data_client,
+        limit_board_service=limit_board_service,
     )
     funnel_service = FunnelService(
         provider=provider,
@@ -346,7 +407,9 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
     )
 
     name_lookup = _build_name_lookup(provider, kline_store)
-    quiet_breakout_scanner = QuietBreakoutScanner(kline_store=kline_store, name_lookup=name_lookup)
+    quiet_breakout_scanner = QuietBreakoutScanner(
+        kline_store=kline_store, name_lookup=name_lookup
+    )
     custom_strategy_scanner = CustomStrategyScanner(
         kline_store=kline_store,
         name_lookup=name_lookup,
@@ -396,4 +459,5 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
         job_store=job_store,
         job_manager=job_manager,
         background_tasks=BackgroundTaskRegistry(),
+        limit_board_service=limit_board_service,
     )

@@ -101,7 +101,141 @@ def test_empty_market_database_is_created_at_latest_version(tmp_path):
         "index_daily",
         "kline_minute",
         "enrichment_sync_state",
+        # v3: 打板核心数据底座（issue #22）
+        "limit_board_daily",
+        "limit_ladder_daily",
+        "dragon_tiger_daily",
+        "dragon_tiger_seat_daily",
+        "hot_money_seat",
+        "hsgt_top10_daily",
     } <= _table_names(db_path)
+
+
+def test_market_v3_limit_board_columns_and_unique_keys(tmp_path):
+    """v3 打板表的列名与唯一键就是 Batch 1 的读取契约。"""
+    db_path = tmp_path / "market_kline.db"
+    KlineSQLiteStore(str(db_path))
+
+    assert {
+        "symbol",
+        "trade_date",
+        "ts_code",
+        "name",
+        "industry",
+        "limit_flag",  # Tushare 的 limit（U/D/Z）；limit 是 SQLite 保留字
+        "first_time",
+        "last_time",
+        "open_times",
+        "limit_times",
+        "up_stat",
+        "fd_amount",
+        "amount",
+        "limit_amount",
+        "turnover_ratio",
+        "float_mv",
+        "total_mv",
+        "close",
+        "pct_chg",
+        "board_type",
+        "theme",
+        "limit_reason",
+        "source",
+        "synced_at",
+    } <= _column_names(db_path, "limit_board_daily")
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        def _pk(table: str) -> list[str]:
+            # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+            return [
+                str(row[1])
+                for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                if int(row[5] or 0) > 0
+            ]
+
+        assert _pk("limit_board_daily") == ["symbol", "trade_date"]
+        assert _pk("limit_ladder_daily") == ["trade_date", "ladder_level"]
+        assert _pk("dragon_tiger_daily") == ["symbol", "trade_date", "reason"]
+        assert _pk("dragon_tiger_seat_daily") == [
+            "trade_date",
+            "symbol",
+            "seat_name",
+            "side",
+            "reason",
+        ]
+        assert _pk("hot_money_seat") == ["seat_name", "org_code"]
+        assert _pk("hsgt_top10_daily") == ["trade_date", "symbol", "market_type"]
+
+        # 重复启动不再执行 DDL，也不影响既有唯一索引
+        before = {str(r[0]) for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()}
+    finally:
+        conn.close()
+
+    KlineSQLiteStore(str(db_path))
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        after = {str(r[0]) for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()}
+    finally:
+        conn.close()
+    assert before == after
+    assert {"idx_limit_board_date_limit", "idx_dragon_tiger_date", "idx_dragon_seat_date"} <= after
+
+
+def test_market_database_upgrades_from_v2_to_v3_without_touching_old_rows(tmp_path):
+    """旧 v2 库升级到 v3：既有增强数据一字不变，新表立即可写。"""
+    db_path = tmp_path / "market_kline.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        assert apply_migrations(conn, MARKET_KLINE_DB_MIGRATIONS[:2]) == 2
+        conn.execute(
+            "INSERT INTO kline_daily VALUES ('600519','2026-01-05',1,2,0.9,1.5,10,1000,"
+            "'tushare','','2026-01-05T16:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO kline_daily_extras VALUES ('600519','2026-01-05',6.1,0.7,NULL,1.2,"
+            "1.5,0.9,1e9,8e8,11.0,9.0,1.8,'2026-01-05T16:05:00')"
+        )
+        conn.execute(
+            "INSERT INTO enrichment_sync_state VALUES ('daily_extras','2026-01-05','success',"
+            "1,'ok','2026-01-05T16:05:00')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert _user_version(db_path) == 2
+    assert not {"limit_board_daily", "dragon_tiger_daily"} & _table_names(db_path)
+
+    store = KlineSQLiteStore(str(db_path))
+
+    assert _user_version(db_path) == MARKET_KLINE_SCHEMA_VERSION
+    assert {
+        "limit_board_daily",
+        "limit_ladder_daily",
+        "dragon_tiger_daily",
+        "dragon_tiger_seat_daily",
+        "hot_money_seat",
+        "hsgt_top10_daily",
+    } <= _table_names(db_path)
+    # 旧表数据完全未受影响
+    assert store.get_kline("600519", days=1)[0]["close"] == 1.5
+    assert store.get_daily_extras("600519", days=1)[0]["up_limit"] == 11.0
+    overview = {item["dataset"]: item for item in store.get_enrichment_overview()}
+    assert overview["daily_extras"]["status"] == "success"
+    assert overview["daily_extras"]["total_rows"] == 1
+    # v3 数据集出现在同一看板里，尚未同步时为 none
+    assert overview["limit_board"]["status"] == "none"
+    assert store.get_limit_board_daily("2026-01-05") == []
+
+    # 新表升级后立即可写
+    assert store.upsert_limit_board_daily(
+        [{"symbol": "600519", "trade_date": "2026-01-05", "limit": "U", "limit_times": 1}],
+        "2026-01-05T16:10:00",
+    ) == 1
 
 
 def test_funnel_and_paper_stores_share_one_migration_version(tmp_path):
@@ -308,6 +442,13 @@ def test_market_database_upgrades_from_v1_to_latest(tmp_path):
         "index_daily",
         "kline_minute",
         "enrichment_sync_state",
+        # v3（issue #22）也必须由 v1 一次升上来
+        "limit_board_daily",
+        "limit_ladder_daily",
+        "dragon_tiger_daily",
+        "dragon_tiger_seat_daily",
+        "hot_money_seat",
+        "hsgt_top10_daily",
     } <= _table_names(db_path)
 
 

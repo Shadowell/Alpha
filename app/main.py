@@ -2,6 +2,7 @@
 
 业务路由按领域拆分到 app/routers/；服务装配见 app/container.py。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +22,19 @@ from fastapi.staticfiles import StaticFiles
 
 from app.container import build_container, resolve_compat_attr
 from app.logging_config import configure_logging, reset_request_id, set_request_id
-from app.routers import agent, jobs, kline, market, notice, paper, predict, realtime_ws, strategy, system
+from app.routers import (
+    agent,
+    jobs,
+    kline,
+    limit_board,
+    market,
+    notice,
+    paper,
+    predict,
+    realtime_ws,
+    strategy,
+    system,
+)
 from app.routers.first_limit_alpha import router as first_limit_alpha_router
 from app.routers.paper import (  # noqa: F401 — 兼容旧脚本 re-export
     PAPER_DB_FALLBACK_TIMEOUT_SECONDS,
@@ -46,7 +59,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     container = getattr(app.state, "container", None) or build_container()
     app.state.container = container
     await container.startup()
-    app.state.backfill_task = asyncio.create_task(container.backfill_names(), name="backfill-names")
+    app.state.backfill_task = asyncio.create_task(
+        container.backfill_names(), name="backfill-names"
+    )
     app.state.ticker_task = asyncio.create_task(container.ticker_loop(), name="ticker")
     app.state.kline_cache_task = asyncio.create_task(
         kline.kline_cache_loop(container.kline_cache_service), name="kline-cache"
@@ -167,6 +182,7 @@ for domain_router in (
     system.router,
     jobs.router,
     kline.router,
+    limit_board.router,
     first_limit_alpha_router,
 ):
     app.include_router(domain_router, prefix="/api")
