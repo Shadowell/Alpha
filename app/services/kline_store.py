@@ -11,6 +11,78 @@ from app.services.sqlite_migrations import MARKET_KLINE_DB_MIGRATIONS, migrate_d
 
 
 class KlineSQLiteStore:
+    """market_kline.db 读写入口。
+
+    ``_OVERVIEW_QUERIES`` 是增强/打板数据集的状态看板清单：同步调度
+    （``_retry_pending_enrichment``）与只读 API 都以此为唯一真相源，
+    新增数据集只需要在这里加一行 + 写一条 ``enrichment_sync_state``。
+    """
+
+    _OVERVIEW_QUERIES: tuple[tuple[str, str, str], ...] = (
+        (
+            "daily_extras",
+            "日频增强",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM kline_daily_extras",
+        ),
+        (
+            "moneyflow",
+            "个股资金流",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM moneyflow_daily",
+        ),
+        (
+            "hsgt",
+            "北向资金",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM market_capital_flow",
+        ),
+        (
+            "index_daily",
+            "基准指数",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM index_daily",
+        ),
+        (
+            "limit_board",
+            "涨停/跌停/炸板",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM limit_board_daily",
+        ),
+        (
+            "limit_board_theme",
+            "涨停题材/板型",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total "
+            "FROM limit_board_daily WHERE theme IS NOT NULL",
+        ),
+        (
+            "limit_ladder",
+            "连板天梯",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM limit_ladder_daily",
+        ),
+        (
+            "dragon_tiger",
+            "龙虎榜",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM dragon_tiger_daily",
+        ),
+        (
+            "dragon_tiger_seat",
+            "龙虎榜席位",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM dragon_tiger_seat_daily",
+        ),
+        (
+            "hot_money_seat",
+            "游资席位",
+            "SELECT MAX(last_trade_date) AS latest_date, COUNT(*) AS total FROM hot_money_seat",
+        ),
+        (
+            "hsgt_top10",
+            "北向十大成交股",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM hsgt_top10_daily",
+        ),
+        (
+            "minute",
+            "买入池分钟线",
+            "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total, "
+            "MAX(bar_time) AS latest_bar FROM kline_minute",
+        ),
+    )
+
     def __init__(self, db_path: str = "data/market_kline.db") -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1025,59 +1097,631 @@ class KlineSQLiteStore:
                     "SELECT * FROM enrichment_sync_state"
                 ).fetchall()
             }
-            table_stats = {
-                "daily_extras": conn.execute(
-                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM kline_daily_extras"
-                ).fetchone(),
-                "moneyflow": conn.execute(
-                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM moneyflow_daily"
-                ).fetchone(),
-                "hsgt": conn.execute(
-                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM market_capital_flow"
-                ).fetchone(),
-                "index_daily": conn.execute(
-                    "SELECT MAX(trade_date) AS latest_date, COUNT(*) AS total FROM index_daily"
-                ).fetchone(),
+            stats = {
+                dataset: conn.execute(sql).fetchone()
+                for dataset, _, sql in self._OVERVIEW_QUERIES
             }
-            minute_row = conn.execute(
-                "SELECT MAX(trade_date) AS latest_date, MAX(bar_time) AS latest_bar, COUNT(*) AS total FROM kline_minute"
-            ).fetchone()
 
-        labels = {
-            "daily_extras": "日频增强",
-            "moneyflow": "个股资金流",
-            "hsgt": "北向资金",
-            "index_daily": "基准指数",
-            "minute": "买入池分钟线",
-        }
         overview: list[dict[str, Any]] = []
-        for dataset, label in labels.items():
+        for dataset, label, _sql in self._OVERVIEW_QUERIES:
             state = states.get(dataset, {})
-            if dataset == "minute":
-                stats_row = minute_row
-                latest_date = stats_row["latest_date"] if stats_row else ""
-                extra = {
-                    "latest_bar_time": stats_row["latest_bar"] if stats_row else ""
-                }
-            else:
-                stats_row = table_stats.get(dataset)
-                latest_date = stats_row["latest_date"] if stats_row else ""
-                extra = {}
-            overview.append(
+            row = stats.get(dataset)
+            latest_date = str(row["latest_date"] or "") if row is not None else ""
+            item: dict[str, Any] = {
+                "dataset": dataset,
+                "label": label,
+                "trade_date": state.get("trade_date") or "",
+                "status": state.get("status") or "none",
+                "row_count": int(state.get("row_count") or 0),
+                "message": state.get("message") or "",
+                "updated_at": state.get("updated_at") or "",
+                "latest_trade_date": latest_date,
+                "total_rows": int(row["total"] or 0) if row is not None else 0,
+            }
+            if dataset == "minute" and row is not None:
+                item["latest_bar_time"] = str(row["latest_bar"] or "")
+            overview.append(item)
+        return overview
+
+    # ── 打板核心数据底座（issue #22）──────────────────────────
+
+    @staticmethod
+    def _optional_text(row: dict[str, Any], key: str) -> str | None:
+        value = row.get(key)
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "nat"}:
+            return None
+        return text
+
+    @staticmethod
+    def _optional_int(row: dict[str, Any], key: str) -> int | None:
+        number = KlineSQLiteStore._optional_float(row, key)
+        return None if number is None else int(round(number))
+
+    def upsert_limit_board_daily(
+        self, rows: list[dict[str, Any]], synced_at: str
+    ) -> int:
+        """涨停/跌停/炸板主表；``(symbol, trade_date)`` 幂等 upsert。
+
+        金额单位统一为元；``None`` 表示源数据缺失，重复同步时用 COALESCE
+        保留已有值，避免后到的空响应把已定型的封板质量字段擦掉。
+        """
+        text_fields = ["ts_code", "name", "industry", "limit_flag", "first_time", "last_time", "up_stat"]
+        int_fields = ["open_times", "limit_times"]
+        num_fields = [
+            "fd_amount",
+            "amount",
+            "limit_amount",
+            "turnover_ratio",
+            "float_mv",
+            "total_mv",
+            "close",
+            "pct_chg",
+        ]
+        payload = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip()
+            trade_date = str(row.get("trade_date") or "").strip()
+            if not symbol or not trade_date:
+                continue
+            payload.append(
+                (
+                    symbol,
+                    trade_date,
+                    self._optional_text(row, "ts_code"),
+                    self._optional_text(row, "name"),
+                    self._optional_text(row, "industry"),
+                    # 源字段名是 Tushare 的 ``limit``；列名为 ``limit_flag``（保留字）。
+                    self._optional_text(row, "limit") or self._optional_text(row, "limit_flag"),
+                    self._optional_text(row, "first_time"),
+                    self._optional_text(row, "last_time"),
+                    self._optional_int(row, "open_times"),
+                    self._optional_int(row, "limit_times"),
+                    self._optional_text(row, "up_stat"),
+                    *[self._optional_float(row, field) for field in num_fields],
+                    str(row.get("source") or "tushare.limit_list_d"),
+                    synced_at,
+                )
+            )
+        if not payload:
+            return 0
+        column_list = [
+            "symbol",
+            "trade_date",
+            "ts_code",
+            "name",
+            "industry",
+            "limit_flag",
+            "first_time",
+            "last_time",
+            "open_times",
+            "limit_times",
+            "up_stat",
+            *num_fields,
+            "source",
+            "synced_at",
+        ]
+        columns = ", ".join(column_list)
+        marks = ", ".join("?" for _ in column_list)
+        updates = ", ".join(
+            f"{field}=COALESCE(excluded.{field}, limit_board_daily.{field})"
+            for field in [
+                *text_fields,
+                *int_fields,
+                *num_fields,
+                "source",
+            ]
+        )
+        with self._connect() as conn:
+            conn.executemany(
+                f"""
+                INSERT INTO limit_board_daily({columns})
+                VALUES ({marks})
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    {updates},
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def update_limit_board_theme(
+        self, rows: list[dict[str, Any]], synced_at: str
+    ) -> int:
+        """用 ``kpl_list`` 回填板型/题材/涨停原因；只更新已存在的行。
+
+        返回被更新的行数（未命中的行不写入，避免造出只有题材没有封板质量的数据）。
+        """
+        payload = [
+            (
+                self._optional_text(row, "board_type"),
+                self._optional_text(row, "theme"),
+                self._optional_text(row, "limit_reason"),
+                synced_at,
+                str(row.get("symbol") or "").strip(),
+                str(row.get("trade_date") or "").strip(),
+            )
+            for row in rows
+            if str(row.get("symbol") or "").strip() and str(row.get("trade_date") or "").strip()
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            cur = conn.executemany(
+                """
+                UPDATE limit_board_daily
+                SET board_type = COALESCE(?, board_type),
+                    theme = COALESCE(?, theme),
+                    limit_reason = COALESCE(?, limit_reason),
+                    synced_at = ?
+                WHERE symbol = ? AND trade_date = ?
+                """,
+                payload,
+            )
+            conn.commit()
+        return int(cur.rowcount or 0)
+
+    def upsert_limit_ladder(
+        self, rows: list[dict[str, Any]], synced_at: str
+    ) -> int:
+        payload = [
+            (
+                str(row.get("trade_date") or "").strip(),
+                self._optional_int(row, "ladder_level"),
+                int(row.get("stock_count") or 0),
+                json.dumps(row.get("symbols") or [], ensure_ascii=False),
+                self._optional_float(row, "fd_amount_sum"),
+                self._optional_float(row, "amount_sum"),
+                self._optional_float(row, "avg_open_times"),
+                self._optional_int(row, "prev_level_count"),
+                self._optional_float(row, "promotion_ratio"),
+                str(row.get("source") or "limit_list_d"),
+                synced_at,
+            )
+            for row in rows
+            if str(row.get("trade_date") or "").strip()
+            and self._optional_int(row, "ladder_level") is not None
+        ]
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO limit_ladder_daily(
+                    trade_date, ladder_level, stock_count, symbols_json,
+                    fd_amount_sum, amount_sum, avg_open_times,
+                    prev_level_count, promotion_ratio, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trade_date, ladder_level) DO UPDATE SET
+                    stock_count=excluded.stock_count,
+                    symbols_json=excluded.symbols_json,
+                    fd_amount_sum=COALESCE(excluded.fd_amount_sum, limit_ladder_daily.fd_amount_sum),
+                    amount_sum=COALESCE(excluded.amount_sum, limit_ladder_daily.amount_sum),
+                    avg_open_times=COALESCE(excluded.avg_open_times, limit_ladder_daily.avg_open_times),
+                    prev_level_count=COALESCE(excluded.prev_level_count, limit_ladder_daily.prev_level_count),
+                    promotion_ratio=COALESCE(excluded.promotion_ratio, limit_ladder_daily.promotion_ratio),
+                    source=excluded.source,
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def upsert_dragon_tiger(self, rows: list[dict[str, Any]], synced_at: str) -> int:
+        numeric = [
+            "close",
+            "pct_change",
+            "turnover_rate",
+            "amount",
+            "l_buy",
+            "l_sell",
+            "l_amount",
+            "net_amount",
+            "net_rate",
+            "amount_rate",
+            "float_values",
+        ]
+        payload = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip()
+            trade_date = str(row.get("trade_date") or "").strip()
+            if not symbol or not trade_date:
+                continue
+            payload.append(
+                (
+                    symbol,
+                    trade_date,
+                    str(row.get("reason") or "").strip(),
+                    self._optional_text(row, "ts_code"),
+                    self._optional_text(row, "name"),
+                    *[self._optional_float(row, field) for field in numeric],
+                    str(row.get("source") or "tushare.top_list"),
+                    synced_at,
+                )
+            )
+        if not payload:
+            return 0
+        tiger_columns = [
+            "symbol",
+            "trade_date",
+            "reason",
+            "ts_code",
+            "name",
+            *numeric,
+            "source",
+            "synced_at",
+        ]
+        columns = ", ".join(tiger_columns)
+        marks = ", ".join("?" for _ in tiger_columns)
+        updates = ", ".join(
+            [
+                f"{field}=COALESCE(excluded.{field}, dragon_tiger_daily.{field})"
+                for field in ["ts_code", "name", *numeric]
+            ]
+            + ["source=excluded.source"]
+        )
+        with self._connect() as conn:
+            conn.executemany(
+                f"""
+                INSERT INTO dragon_tiger_daily({columns})
+                VALUES ({marks})
+                ON CONFLICT(symbol, trade_date, reason) DO UPDATE SET
+                    {updates},
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def upsert_dragon_tiger_seats(
+        self, rows: list[dict[str, Any]], synced_at: str
+    ) -> int:
+        """营业部席位；同 ``(date, symbol, seat, side, reason)`` 多席位聚合。"""
+        numeric = ["buy_amount", "buy_rate", "sell_amount", "sell_rate", "net_amount"]
+        payload = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip()
+            trade_date = str(row.get("trade_date") or "").strip()
+            seat_name = str(row.get("seat_name") or "").strip()
+            side = str(row.get("side") or "").strip()
+            if not symbol or not trade_date or not seat_name or not side:
+                continue
+            payload.append(
+                (
+                    trade_date,
+                    symbol,
+                    seat_name,
+                    side,
+                    str(row.get("reason") or "").strip(),
+                    self._optional_text(row, "ts_code"),
+                    self._optional_text(row, "stock_name"),
+                    *[self._optional_float(row, field) for field in numeric],
+                    int(row.get("seat_count") or 1),
+                    str(row.get("source") or "tushare.top_inst"),
+                    synced_at,
+                )
+            )
+        if not payload:
+            return 0
+        seat_columns = [
+            "trade_date",
+            "symbol",
+            "seat_name",
+            "side",
+            "reason",
+            "ts_code",
+            "stock_name",
+            *numeric,
+            "seat_count",
+            "source",
+            "synced_at",
+        ]
+        columns = ", ".join(seat_columns)
+        marks = ", ".join("?" for _ in seat_columns)
+        updates = ", ".join(
+            [
+                f"{field}=COALESCE(excluded.{field}, dragon_tiger_seat_daily.{field})"
+                for field in ["ts_code", "stock_name", *numeric]
+            ]
+            + ["seat_count=excluded.seat_count", "source=excluded.source"]
+        )
+        with self._connect() as conn:
+            conn.executemany(
+                f"""
+                INSERT INTO dragon_tiger_seat_daily({columns})
+                VALUES ({marks})
+                ON CONFLICT(trade_date, symbol, seat_name, side, reason) DO UPDATE SET
+                    {updates},
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def upsert_hot_money_seats(
+        self, rows: list[dict[str, Any]], synced_at: str
+    ) -> int:
+        payload = []
+        for row in rows:
+            seat_name = str(row.get("seat_name") or "").strip()
+            if not seat_name:
+                continue
+            payload.append(
+                (
+                    seat_name,
+                    str(row.get("org_code") or "").strip(),
+                    self._optional_text(row, "category"),
+                    self._optional_text(row, "description"),
+                    json.dumps(row.get("orgs") or [], ensure_ascii=False),
+                    int(row.get("appear_count") or 0),
+                    self._optional_text(row, "last_trade_date"),
+                    str(row.get("source") or "tushare.hm_list"),
+                    synced_at,
+                )
+            )
+        if not payload:
+            return 0
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO hot_money_seat(
+                    seat_name, org_code, category, description, orgs_json,
+                    appear_count, last_trade_date, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(seat_name, org_code) DO UPDATE SET
+                    category=COALESCE(excluded.category, hot_money_seat.category),
+                    description=COALESCE(excluded.description, hot_money_seat.description),
+                    orgs_json=excluded.orgs_json,
+                    appear_count=CASE WHEN excluded.appear_count > 0
+                        THEN excluded.appear_count ELSE hot_money_seat.appear_count END,
+                    last_trade_date=COALESCE(excluded.last_trade_date, hot_money_seat.last_trade_date),
+                    source=excluded.source,
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def upsert_hsgt_top10(self, rows: list[dict[str, Any]], synced_at: str) -> int:
+        numeric = ["close", "change", "amount", "net_amount", "buy_amount", "sell_amount"]
+        payload = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip()
+            trade_date = str(row.get("trade_date") or "").strip()
+            market_type = str(row.get("market_type") or "").strip()
+            if not symbol or not trade_date or not market_type:
+                continue
+            payload.append(
+                (
+                    trade_date,
+                    symbol,
+                    market_type,
+                    self._optional_text(row, "ts_code"),
+                    self._optional_text(row, "name"),
+                    self._optional_int(row, "rank_no"),
+                    *[self._optional_float(row, field) for field in numeric],
+                    str(row.get("source") or "tushare.hsgt_top10"),
+                    synced_at,
+                )
+            )
+        if not payload:
+            return 0
+        hsgt_columns = [
+            "trade_date",
+            "symbol",
+            "market_type",
+            "ts_code",
+            "name",
+            "rank_no",
+            *numeric,
+            "source",
+            "synced_at",
+        ]
+        columns = ", ".join(hsgt_columns)
+        marks = ", ".join("?" for _ in hsgt_columns)
+        updates = ", ".join(
+            [
+                f"{field}=COALESCE(excluded.{field}, hsgt_top10_daily.{field})"
+                for field in ["ts_code", "name", "rank_no", *numeric]
+            ]
+            + ["source=excluded.source"]
+        )
+        with self._connect() as conn:
+            conn.executemany(
+                f"""
+                INSERT INTO hsgt_top10_daily({columns})
+                VALUES ({marks})
+                ON CONFLICT(trade_date, symbol, market_type) DO UPDATE SET
+                    {updates},
+                    synced_at=excluded.synced_at
+                """,
+                payload,
+            )
+            conn.commit()
+        return len(payload)
+
+    def get_limit_board_daily(
+        self,
+        trade_date: str,
+        *,
+        board: str | None = None,
+        min_limit_times: int | None = None,
+        limit: int = 300,
+    ) -> list[dict[str, Any]]:
+        query_limit = max(1, min(int(limit), 3000))
+        sql = "SELECT * FROM limit_board_daily WHERE trade_date = ?"
+        params: list[Any] = [trade_date]
+        if board:
+            sql += " AND limit_flag = ?"
+            params.append(board)
+        if min_limit_times is not None:
+            sql += " AND limit_times >= ?"
+            params.append(int(min_limit_times))
+        sql += f" ORDER BY COALESCE(fd_amount, 0) DESC LIMIT {query_limit}"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_limit_ladder(self, trade_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT trade_date, ladder_level, stock_count, symbols_json,
+                       fd_amount_sum, amount_sum, avg_open_times,
+                       prev_level_count, promotion_ratio, source, synced_at
+                FROM limit_ladder_daily WHERE trade_date = ?
+                ORDER BY ladder_level DESC
+                """,
+                (trade_date,),
+            ).fetchall()
+        items = []
+        for row in rows:
+            try:
+                symbols = json.loads(row["symbols_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                symbols = []
+            items.append(
                 {
-                    "dataset": dataset,
-                    "label": label,
-                    "trade_date": state.get("trade_date") or "",
-                    "status": state.get("status") or "none",
-                    "row_count": int(state.get("row_count") or 0),
-                    "message": state.get("message") or "",
-                    "updated_at": state.get("updated_at") or "",
-                    "latest_trade_date": latest_date or "",
-                    "total_rows": int(stats_row["total"] or 0) if stats_row else 0,
-                    **extra,
+                    "trade_date": row["trade_date"],
+                    "ladder_level": int(row["ladder_level"]),
+                    "stock_count": int(row["stock_count"] or 0),
+                    "symbols": symbols,
+                    "fd_amount_sum": row["fd_amount_sum"],
+                    "amount_sum": row["amount_sum"],
+                    "avg_open_times": row["avg_open_times"],
+                    "prev_level_count": row["prev_level_count"],
+                    "promotion_ratio": row["promotion_ratio"],
+                    "source": row["source"],
+                    "synced_at": row["synced_at"],
                 }
             )
-        return overview
+        return items
+
+    def get_dragon_tiger(
+        self, trade_date: str, symbol: str | None = None
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM dragon_tiger_daily WHERE trade_date = ?"
+        params: list[Any] = [trade_date]
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        sql += " ORDER BY COALESCE(net_amount, 0) DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_dragon_tiger_seats(
+        self,
+        trade_date: str,
+        symbol: str | None = None,
+        *,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        query_limit = max(1, min(int(limit), 3000))
+        sql = "SELECT * FROM dragon_tiger_seat_daily WHERE trade_date = ?"
+        params: list[Any] = [trade_date]
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        sql += f" ORDER BY symbol ASC, COALESCE(net_amount, 0) DESC LIMIT {query_limit}"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_hot_money_seats(
+        self, keyword: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        query_limit = max(1, min(int(limit), 1000))
+        sql = "SELECT * FROM hot_money_seat"
+        params: list[Any] = []
+        if keyword:
+            sql += " WHERE seat_name LIKE ? OR description LIKE ?"
+            like = f"%{keyword}%"
+            params.extend([like, like])
+        sql += f" ORDER BY appear_count DESC, seat_name ASC LIMIT {query_limit}"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        items = []
+        for row in rows:
+            try:
+                orgs = json.loads(row["orgs_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                orgs = []
+            item = dict(row)
+            item["orgs"] = orgs
+            item.pop("orgs_json", None)
+            items.append(item)
+        return items
+
+    def get_hsgt_top10(self, trade_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM hsgt_top10_daily WHERE trade_date = ? "
+                "ORDER BY market_type ASC, COALESCE(rank_no, 0) ASC",
+                (trade_date,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_board_trade_date(self) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(trade_date) AS d FROM limit_board_daily"
+            ).fetchone()
+        return str(row["d"]) if row and row["d"] else ""
+
+    def get_limit_board_coverage(self, trade_date: str) -> dict[str, Any]:
+        """覆盖率统计：行数、涨停/跌停/炸板分布与关键字段非空率。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN limit_flag = 'U' THEN 1 ELSE 0 END) AS up_count,
+                    SUM(CASE WHEN limit_flag = 'D' THEN 1 ELSE 0 END) AS down_count,
+                    SUM(CASE WHEN limit_flag = 'Z' THEN 1 ELSE 0 END) AS broken_count,
+                    COUNT(first_time) AS first_time_rows,
+                    COUNT(last_time) AS last_time_rows,
+                    COUNT(open_times) AS open_times_rows,
+                    COUNT(limit_times) AS limit_times_rows,
+                    COUNT(fd_amount) AS fd_amount_rows,
+                    COUNT(up_stat) AS up_stat_rows,
+                    COUNT(theme) AS theme_rows,
+                    MAX(synced_at) AS synced_at
+                FROM limit_board_daily WHERE trade_date = ?
+                """,
+                (trade_date,),
+            ).fetchone()
+        total = int(row["total"] or 0)
+
+        def _ratio(key: str) -> float | None:
+            if not total:
+                return None
+            return round(int(row[key] or 0) / total, 4)
+
+        return {
+            "trade_date": trade_date,
+            "total_rows": total,
+            "up_count": int(row["up_count"] or 0),
+            "down_count": int(row["down_count"] or 0),
+            "broken_count": int(row["broken_count"] or 0),
+            "non_null_ratio": {
+                "first_time": _ratio("first_time_rows"),
+                "last_time": _ratio("last_time_rows"),
+                "open_times": _ratio("open_times_rows"),
+                "limit_times": _ratio("limit_times_rows"),
+                "fd_amount": _ratio("fd_amount_rows"),
+                "up_stat": _ratio("up_stat_rows"),
+                "theme": _ratio("theme_rows"),
+            },
+            "synced_at": row["synced_at"] or "",
+        }
 
     # ── 数据统计 ─────────────────────────────────────────────
 

@@ -432,11 +432,181 @@ def _migrate_market_kline_v2(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_market_kline_v3(conn: sqlite3.Connection) -> None:
+    """打板核心数据底座（issue #22）。
+
+    所有金额列统一为**元**（换算集中在 ``limit_board_service`` 的字段映射层），
+    缺失值保持 NULL，绝不写 0，避免因子层把"无数据"当成有效信号。
+
+    口径说明（按 2026-10-21 真实响应核对）：
+
+    * ``limit_list_d`` 单只股票每日只有一条记录，故 ``limit_board_daily``
+      用 ``(symbol, trade_date)`` 作主键；
+    * ``top_list`` 同一股票会因多个上榜原因各出现一次，故龙虎榜主键含 ``reason``；
+    * ``top_inst`` 同一 ``(date, symbol, 营业部, side, reason)`` 会出现多条
+      （典型是"机构专用"多个席位同名），落库时按该键聚合金额并记录 ``seat_count``；
+    * ``hsgt_top10`` 同一股票在沪/深两个通道各出现一次，主键含 ``market_type``。
+    """
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS limit_board_daily (
+            symbol TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            ts_code TEXT,
+            name TEXT,
+            industry TEXT,
+            -- Tushare ``limit`` 字段（U=涨停 / D=跌停 / Z=炸板）；``limit`` 是
+            -- SQLite 保留字，落库列名统一为 ``limit_flag``。
+            limit_flag TEXT,
+            first_time TEXT,
+            last_time TEXT,
+            open_times INTEGER,
+            limit_times INTEGER,
+            up_stat TEXT,
+            fd_amount REAL,
+            amount REAL,
+            limit_amount REAL,
+            turnover_ratio REAL,
+            float_mv REAL,
+            total_mv REAL,
+            close REAL,
+            pct_chg REAL,
+            board_type TEXT,
+            theme TEXT,
+            limit_reason TEXT,
+            source TEXT NOT NULL DEFAULT 'tushare.limit_list_d',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, trade_date)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_limit_board_date_limit "
+        "ON limit_board_daily(trade_date, limit_flag)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_limit_board_date_times "
+        "ON limit_board_daily(trade_date, limit_times)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS limit_ladder_daily (
+            trade_date TEXT NOT NULL,
+            ladder_level INTEGER NOT NULL,
+            stock_count INTEGER NOT NULL DEFAULT 0,
+            symbols_json TEXT NOT NULL DEFAULT '[]',
+            fd_amount_sum REAL,
+            amount_sum REAL,
+            avg_open_times REAL,
+            prev_level_count INTEGER,
+            promotion_ratio REAL,
+            source TEXT NOT NULL DEFAULT 'limit_list_d',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, ladder_level)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dragon_tiger_daily (
+            symbol TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            ts_code TEXT,
+            name TEXT,
+            close REAL,
+            pct_change REAL,
+            turnover_rate REAL,
+            amount REAL,
+            l_buy REAL,
+            l_sell REAL,
+            l_amount REAL,
+            net_amount REAL,
+            net_rate REAL,
+            amount_rate REAL,
+            float_values REAL,
+            source TEXT NOT NULL DEFAULT 'tushare.top_list',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, trade_date, reason)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dragon_tiger_date "
+        "ON dragon_tiger_daily(trade_date)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dragon_tiger_seat_daily (
+            trade_date TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            seat_name TEXT NOT NULL,
+            side TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            ts_code TEXT,
+            stock_name TEXT,
+            buy_amount REAL,
+            buy_rate REAL,
+            sell_amount REAL,
+            sell_rate REAL,
+            net_amount REAL,
+            seat_count INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'tushare.top_inst',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, symbol, seat_name, side, reason)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dragon_seat_date "
+        "ON dragon_tiger_seat_daily(trade_date, symbol)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hot_money_seat (
+            seat_name TEXT NOT NULL,
+            org_code TEXT NOT NULL DEFAULT '',
+            category TEXT,
+            description TEXT,
+            orgs_json TEXT NOT NULL DEFAULT '[]',
+            appear_count INTEGER NOT NULL DEFAULT 0,
+            last_trade_date TEXT,
+            source TEXT NOT NULL DEFAULT 'tushare.hm_list',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (seat_name, org_code)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hsgt_top10_daily (
+            trade_date TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL,
+            ts_code TEXT,
+            name TEXT,
+            close REAL,
+            change REAL,
+            rank_no INTEGER,
+            amount REAL,
+            net_amount REAL,
+            buy_amount REAL,
+            sell_amount REAL,
+            source TEXT NOT NULL DEFAULT 'tushare.hsgt_top10',
+            synced_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, symbol, market_type)
+        )
+        """
+    )
+
+
 MARKET_KLINE_DB_MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1, "market kline, sync task and report base schema", _migrate_market_kline_v1
     ),
     Migration(2, "Tushare enrichment tables", _migrate_market_kline_v2),
+    Migration(3, "limit-up board data foundation (#22)", _migrate_market_kline_v3),
 )
 
 
