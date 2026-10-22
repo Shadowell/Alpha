@@ -79,17 +79,18 @@ Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只�
 │  │  存储层      │    │  KronosPredictService  K线预测推理           │  │
 │  │             │    │  HotStockAIService     热门股智能分析        │  │
 │  │             │    │  HermesRuntime         Agent调度+LLM推理     │  │
-│  │  SQLite ×2  │◀──▶│  HermesMemory          任务/监控记忆持久化  │  │
-│  │  市场K线    │    │                                             │  │
+│  │  SQLite ×3  │◀──▶│  HermesMemory          任务/监控记忆持久化  │  │
+│  │  市场K线    │    │  JobStore/Manager      长任务队列与进度       │  │
 │  │  漏斗状态   │    │                                             │  │
+│  │  任务队列   │    │                                             │  │
 │  └─────────────┘    └───────────────┬─────────────────────────────┘  │
 │                                     │                                │
 │  ┌─────────────┐    ┌───────────────▼─────────────────────────────┐  │
 │  │  Kronos     │    │               接口层                         │  │
 │  │  (102.3M)   │    │                                             │  │
-│  │  K线基础    │◀──▶│  FastAPI REST API (50+ endpoints)            │  │
-│  │  模型       │    │  WebSocket /ws/realtime (snapshot+monitor)   │  │
-│  └─────────────┘    │  MCP Server (stdio, 20+ tools → Agent)      │  │
+│  │  K线基础    │◀──▶│  FastAPI REST API（84 条路由，领域 Router）    │  │
+│  │  模型       │    │  /api/health + /api/metrics + 请求 ID        │  │
+│  └─────────────┘    │  WS /ws/realtime · MCP Server (20+ tools)    │  │
 │                     │                                             │  │
 │  ┌─────────────┐    └───────────────┬─────────────────────────────┘  │
 │  │  Hermes     │                    │                                │
@@ -107,14 +108,17 @@ Alpha 是一个面向 A 股市场的**自进化量化选股系统**。它不只�
 
 ### 后台调度引擎
 
-系统启动后有 5 个核心后台循环协同工作：
+系统启动后由服务容器统一管理 7 个后台循环和 1 个启动回填任务（`/api/health` 会逐项检查其存活状态）：
 
 | 循环 | 频率 | 职责 |
 |------|------|------|
+| **启动回填** | 一次性 | 补齐缺失的股票名称并刷新本地 symbol name cache |
 | **Ticker Loop** | 60s | 调用 `FunnelService.tick()` 刷新漏斗评分，变更时 WebSocket 广播快照 |
 | **K线同步 Loop** | 每日 15:20 | 自动检测是否需要同步，仅补最新交易日缺口，进度写入数据中心 |
+| **分钟线 Loop** | 60s | 交易时段仅为买入池标的同步 1 分钟 K 线，非交易时段空转 |
 | **Hermes 调度 Loop** | 300s | 15:30 盘后复盘 · 21:00 公告复盘 |
 | **智能监控 Loop** | 30s | 盘中按配置间隔（5~30min）执行 LLM 监控 tick，结果 WebSocket 推送 |
+| **预测选股 Loop** | 300s 检查 | 交易日 16:15 自动触发预测选股扫描，同日只跑一次 |
 | **热门智能 Loop** | 60s 检查 / 5min 执行 | 检查热门股票智能分析是否过期，按配置自动刷新 Top20 个股，并对前排标的触发 TradingAgents 多代理讨论 |
 
 ---
@@ -490,8 +494,8 @@ K 线同步完成类消息只写入服务日志，`notify_sync_complete()` 在�
 | **策略建模** | FirstLimit Alpha · LightGBM · scikit-learn · GRU |
 | **智能体** | Hermes Agent（CLI `hermes chat -q` / HTTP API）· MCP 协议 · OpenAI 兼容 LLM |
 | **数据源** | Tushare Pro（股票主数据 / 交易日历 / 日线 / 估值 / 涨跌停 / 复权 / 资金流 / 北向 / 指数 / 分钟线）· 东财 async HTTP（实时行情与降级 K 线）· 新浪（交易日历降级）· AkShare / 同花顺（公告、概念等业务路径） |
-| **存储** | SQLite × 2：`market_kline.db`（含来源元数据的 K 线缓存）+ `funnel_state.db`（漏斗/持仓/Agent 记忆） |
-| **前端** | 原生 HTML/CSS/JS · ECharts 5 · Glassmorphism 暗色主题 · WebSocket 实时推送 |
+| **存储** | SQLite × 3：`market_kline.db`（K 线与增强数据）+ `funnel_state.db`（漏斗/公告/持仓/Agent 记忆）+ `jobs.db`（长任务状态），均带 `PRAGMA user_version` 启动迁移 |
+| **前端** | 原生 HTML/CSS/JS（无构建 classic modules）· ECharts 5 · CSP · Glassmorphism 暗色主题 · WebSocket 实时推送 |
 | **通知** | 飞书 Webhook **交互式卡片**（K 线同步 / 预测选股 / 周报） |
 
 ## 项目结构
@@ -499,21 +503,33 @@ K 线同步完成类消息只写入服务日志，`notify_sync_complete()` 在�
 ```
 Alpha/
 ├── app/
-│   ├── main.py                        # FastAPI 入口 + 5 个后台调度循环 + 60+ API 路由
+│   ├── main.py                        # FastAPI 装配、中间件与 lifespan（领域路由已拆分）
+│   ├── container.py                   # 服务容器、后台循环、健康数据与 WAL checkpoint
+│   ├── dependencies.py                # FastAPI 依赖注入入口
+│   ├── logging_config.py              # 结构化文本/JSON 日志与 request ID
 │   ├── config.py                      # StrategyConfig 盘中评分/迁池参数（19 项）
-│   ├── models.py                      # Pydantic 请求/响应模型
+│   ├── models.py                      # Pydantic 请求/响应与写接口边界
 │   ├── mcp_server.py                  # Alpha MCP Server（16 个工具 → Hermes Agent）
 │   ├── routers/
-│   │   ├── kline.py                   # K 线缓存路由 + 日线增强/买入池分钟线循环
+│   │   ├── market.py                  # 漏斗、热点概念/个股、个股详情、实时行情
+│   │   ├── predict.py                 # Kronos 预测、预测选股、热门股票 AI
+│   │   ├── strategy.py                # 规则目录、自定义策略、扫描、回测
+│   │   ├── notice.py                  # 公告漏斗、关键词、筛选与迁池
+│   │   ├── agent.py                   # Hermes Agent、监控配置/消息/触发
+│   │   ├── paper.py                   # 模拟盘买卖、持仓、汇总、费用设置
+│   │   ├── system.py                  # /api/health、/api/metrics
+│   │   ├── jobs.py                    # 通用任务提交/列表/状态查询
+│   │   ├── realtime_ws.py             # /ws/realtime WebSocket
+│   │   ├── kline.py                   # K 线缓存、增强数据、同步与分钟线循环
 │   │   └── first_limit_alpha.py       # FirstLimit Alpha API 路由
 │   └── services/
 │       ├── first_limit_alpha_service.py # FirstLimit Alpha 服务编排（数据/特征/训练/推理/回测）
-│       ├── kronos_predict_service.py  # Kronos 预测（惰性加载·异步锁·串行推理）
+│       ├── kronos_predict_service.py  # Kronos 预测（惰性加载·TTL/LRU 缓存·可配置采样·专用推理池）
 │       ├── kronos_model/              # Kronos 模型实现（Tokenizer + Transformer）
 │       ├── hermes_runtime.py          # Agent 调度（双模式·熔断·定时任务·监控tick）
 │       ├── hermes_memory.py           # Agent SQLite 持久化（任务/监控）
 │       ├── funnel_service.py          # 三池漏斗核心（状态管理·tick·迁池）
-│       ├── predict_funnel_service.py   # 预测选股（概念板块×Kronos；板块列表东财重试+同花顺降级）
+│       ├── predict_funnel_service.py  # 预测选股（概念板块×Kronos；东财重试+同花顺降级）
 │       ├── hot_stock_ai_service.py    # 热门股智能分析（Top20·基础评分·TradingAgents讨论·三池拆分）
 │       ├── tradingagents_adapter.py   # TradingAgents 适配层（A股代码映射 / 讨论结果抽取）
 │       ├── strategy_engine.py         # 三池盘中实时评分 + 迁池规则
@@ -525,25 +541,33 @@ Alpha/
 │       ├── notice_service.py          # 公告抓取 + 规则/LLM 双引擎打分
 │       ├── paper_trading.py           # 模拟盘（买入/卖出/持仓/费用计算）
 │       ├── kline_cache_service.py     # K 线并发同步调度 + 日频增强/买入池分钟线
-│       ├── kline_store.py             # K 线 + 增强数据 SQLite 存储（6 张表）
+│       ├── kline_store.py             # K 线 + 增强数据 SQLite 存储
 │       ├── market_data_client.py      # 东财/新浪 async HTTP 客户端（硬超时·有限重试）
 │       ├── tushare_market_data_client.py # Tushare 主源 + 显式东财/新浪降级与格式规范化
 │       ├── data_provider.py           # 多数据源适配（同花顺/新浪/AkShare）
+│       ├── blocking_io.py             # 外部阻塞调用统一超时、熔断、独立线程池与降级计数
+│       ├── job_store.py               # 通用任务 SQLite 持久化（data/jobs.db）
+│       ├── jobs.py                    # 任务提交、去重、进度、超时与重启恢复
+│       ├── observability.py           # 请求/任务/外部降级内存指标
+│       ├── error_response.py          # 5xx 通用消息 + error_id，异常细节仅写日志
+│       ├── deployment_guard.py        # TRUST_EDGE / 端口暴露面 / 写令牌启动校验
+│       ├── sqlite_migrations.py       # SQLite user_version 启动迁移
+│       ├── paths.py                   # 项目绝对数据/日志路径（ALPHA_DATA_DIR 可覆盖）
 │       ├── realtime.py                # WebSocket 广播（snapshot + monitor_update）
-│       ├── time_utils.py              # 交易日/时段/CST 时间工具
+│       ├── time_utils.py              # 交易日/时段/CST aware 时间工具
 │       └── feishu_notify.py           # 飞书 Webhook（交互式卡片 + CardBuilder 构建器）
 ├── app/static/
-│   ├── index.html                     # 8 Tab 单页应用（含热门智能）
-│   ├── app.js                         # 前端核心（3000+ 行：路由/渲染/轮询/ECharts/WS）
+│   ├── index.html                     # 8 Tab 单页应用（CSP + 模块化脚本）
+│   ├── app.js                         # 启动入口（实际渲染逻辑拆分至 js/）
+│   ├── js/                            # security/core/api/polling/render 等 22 个前端模块
 │   └── styles.css                     # Glassmorphism 暗色主题
 ├── docs/screenshots/                  # 界面截图
 ├── tests/
+│   ├── e2e/                           # Playwright：UI、前端模块与安全回归
 │   └── benchmark_kronos.py            # Kronos 性能 benchmark
-├── data/                              # SQLite 数据库（运行时生成）
+├── data/                              # SQLite 数据库（运行时生成，Git 忽略）
+├── legacy/daban/                      # 旧版打板脚本归档（不参与运行）
 ├── strategy/
-│   ├── daban.py                       # 旧版打板/强势股脚本
-│   ├── daban_2.py                     # 旧版打板策略迭代
-│   ├── daban_3.py                     # 旧版打板策略迭代
 │   └── first_limit_alpha/
 │       ├── README.md                  # 首板介入连板预测模块设计文档
 │       └── AI_PROMPTS.md              # 可直接交给 AI 的分阶段实施提示词
@@ -557,13 +581,14 @@ Alpha/
 │       ├── sequence_model.py          # GRU 时序模型
 │       └── train_sequence.py          # 时序训练入口
 ├── deploy/deploy.sh                   # 服务器端 Docker Compose 构建、启动与健康检查
-├── .github/workflows/deploy.yml       # 自托管 Runner 自动部署（push main / 手动触发）
+├── .github/workflows/                 # tests / model-tests / e2e / deploy
+├── pyproject.toml                     # ruff / mypy / pytest / coverage 配置
 ├── logs/                              # 日志文件
-├── start.sh / stop.sh / restart.sh    # 服务管理脚本
-├── Dockerfile                         # 容器镜像（CPU 版 Torch；基础+Kronos+MCP 依赖档位）
+├── start.sh / stop.sh / restart.sh    # 本地开发服务管理（线上以 CI 部署为准）
+├── Dockerfile                         # 非 root 容器镜像（entrypoint + gosu）
 ├── docker-compose.yml                 # 一键部署（env_file + data/logs volume + healthcheck）
 ├── .dockerignore                      # 镜像构建排除（.git/data/logs/tests 等）
-└── requirements.txt
+└── requirements.txt                   # 分档依赖（基础/Kronos/MCP/训练）
 ```
 
 ## 快速开始
@@ -607,7 +632,7 @@ docker compose logs -f  # 查看启动日志
 
 **数据卷说明**：数据库存放在 `alpha_data` 命名卷（VM 内 ext4）——macOS 上 SQLite 放 VirtioFS bind mount 会在容器异常退出或宿主机并发访问时页级损坏（实测两次）。宿主机取数据用 `docker compose cp alpha:/app/data/xxx.db .`；**禁止**在容器运行时从宿主机直接读写卷内 DB 文件。从裸金属迁移时用 SQLite backup API 复制（`sqlite3.connect(src).backup(dst)`），不要用 `cp` 直接拷贝挂载中的文件。
 
-**自动备份**：每天 20 点后自动对两个库做 SQLite backup API 热备到 `data/backups/`（卷内），每库保留最近 7 份。
+**自动备份**：每天 20 点后自动对 `funnel_state.db`、`market_kline.db` 做 SQLite backup API 热备到 `<ALPHA_DATA_DIR>/backups/`（默认项目 `data/backups/`），每库保留最近 7 份；路径基于项目根目录解析，不依赖启动 cwd。容器健康检查使用 `/api/health`，会同时检查 SQLite、后台循环、Kronos 和最近数据日期。
 
 ### 零配置体验矩阵
 
@@ -644,14 +669,29 @@ docker compose logs -f  # 查看启动日志
 | `FEISHU_APP_ID` | — | 飞书图片上传应用 ID，仅通过环境变量配置 |
 | `FEISHU_APP_SECRET` | — | 飞书图片上传应用密钥，仅通过环境变量配置，禁止提交到 Git |
 | `ALPHA_CORS_ORIGINS` | 本机 18888/18890 | CORS 允许来源白名单（逗号分隔） |
+| `ALPHA_EDGE_EXPOSURE` | `loopback` | 部署暴露面：`loopback` 仅宿主机回环发布；`public` 表示局域网/公网可达，必须同时配置 `ALPHA_WRITE_TOKEN`，未知值按 public fail-closed |
+| `ALPHA_DATA_DIR` | `<项目根>/data` | SQLite 与备份数据目录；服务器/Docker 可显式绝对化，避免 cwd 漂移 |
+| `ALPHA_LOG_DIR` | `<项目根>/logs` | 日志目录 |
+| `ALPHA_LOG_LEVEL` | `INFO` | 结构化日志级别 |
+| `ALPHA_LOG_FORMAT` | `text` | `text` 或 `json`；JSON 包含 request_id、task、symbol、duration_ms |
+| `ALPHA_EXTERNAL_TIMEOUT_SECONDS` | `12` | AkShare/Tushare 等外部阻塞调用默认超时；实时快照上限 8s |
+| `ALPHA_EXTERNAL_MAX_WORKERS` | `8` | 外部数据源专用有界线程池 worker 数 |
+| `ALPHA_EXTERNAL_BREAKER_THRESHOLD` | `3` | 连续失败达到阈值后打开对应数据源熔断 |
+| `ALPHA_EXTERNAL_BREAKER_COOLDOWN_SECONDS` | `60` | 熔断冷却时间 |
+| `KRONOS_SAMPLE_COUNT` | CPU 50 / GPU 100 | Kronos 推理采样次数；CPU 环境可下调以降低延迟 |
+| `KRONOS_CACHE_TTL_SECONDS` | `900` | Kronos 预测结果缓存有效期 |
+| `KRONOS_CACHE_MAX_ENTRIES` | `128` | Kronos 预测结果 LRU 最大条目数 |
 
 ### 安全提示
 
-- **默认仅本机可用**：裸机启动监听 `127.0.0.1`；Docker compose 的端口映射也只绑定回环地址。
-- **写操作防护**：未配置 `ALPHA_WRITE_TOKEN` 时，所有写请求（POST/PUT/DELETE）仅接受本机回环来源，局域网/外网返回 403。远程写入需在 `.env` 配置令牌并让请求携带 `X-Alpha-Token: <token>` 头。
-- **Docker 部署**：compose 已设 `ALPHA_TRUST_EDGE=1`（端口发布 NAT 后容器内看不到真实来源 IP，信任宿主机端口绑定作为边界）。⚠️ 若把端口映射改为 `"18888:18888"` 暴露到局域网，必须删除该项并改用 `ALPHA_WRITE_TOKEN` 模式。
-- **公告数据按不可信输入处理**：外部抓取的公告标题/链接在前端渲染时全部转义，外链仅允许 http(s) 协议；MCP 工具对股票代码强制 6 位数字校验。
-- 如需将服务暴露到局域网或公网，请务必同时配置 `ALPHA_WRITE_TOKEN`，并建议前置反向代理加 TLS 与访问控制。
+- **默认仅本机可用**：裸机启动监听 `127.0.0.1`；Docker compose 默认端口映射只绑定 `127.0.0.1:18888`，并显式声明 `ALPHA_EDGE_EXPOSURE=loopback`。
+- **写操作防护**：未配置 `ALPHA_WRITE_TOKEN` 时，所有写请求（POST/PUT/DELETE）仅接受本机回环来源，局域网/外网返回 403。远程写入需在 `.env` 配置令牌并让请求携带 `X-Alpha-Token: <token>` 头；令牌比较使用 `hmac.compare_digest`，避免非常量时间侧信道。
+- **Docker 暴露边界**：`ALPHA_TRUST_EDGE=1` 只信任宿主机端口绑定。若改为 `18888:18888` 对局域网/公网开放，必须同时设置 `ALPHA_EDGE_EXPOSURE=public` 和 `ALPHA_WRITE_TOKEN`；缺少令牌会在启动期由 `deployment_guard` fail-fast，不再静默开放写接口。
+- **容器非 root**：Dockerfile 创建 uid/gid `10001` 的 `alpha` 用户；root entrypoint 仅修复命名卷/日志目录权限，随后通过 gosu 降权运行 uvicorn。默认部署不要添加 compose `user:`，否则会绕过权限修复。
+- **外部输入与 CSP**：公告标题/类型/理由/风险、板块名、个股名及 LLM 输出均按不可信输入转义，外链只允许 http(s)；`javascript:` 等伪协议降级为文本。两个页面均声明 CSP，内联脚本被阻断；MCP 工具对股票代码强制 6 位数字校验。
+- **错误信息脱敏**：5xx 返回通用 `detail` 与可检索 `error_id`，原始异常和堆栈只进入服务端日志，避免内部路径/依赖细节泄露。
+- **超时与降级**：AkShare/Tushare 等外部阻塞调用统一走有界线程池和超时/熔断；上游卡死时 API 会降级本地 SQLite 或返回可识别的 degraded 结果，不再占满默认执行器。
+- 如需将服务暴露到局域网或公网，请务必配置 `ALPHA_WRITE_TOKEN`，并建议前置反向代理加 TLS、访问控制与速率限制。
 
 ### 服务管理
 
@@ -714,8 +754,8 @@ python3 scripts/repair_market_cache.py
 | DELETE | `/api/strategy/custom/{id}` | 删除策略（内置策略返回 403） |
 | POST | `/api/strategy/custom/{id}/default` | 将策略设为默认 |
 | GET | `/api/strategy/custom/{id}/scan` | 读取最近一次扫描快照 |
-| POST | `/api/strategy/custom/{id}/scan` | 触发全 A 股扫描（约 30 秒） |
-| POST | `/api/strategy/custom/{id}/backtest` | 对该策略执行 180 天回测（复用 `BacktestLab`） |
+| POST | `/api/strategy/custom/{id}/scan` | 提交全 A 股扫描任务（默认 202 + `job_id`；`?sync=true` 保留旧同步响应） |
+| POST | `/api/strategy/custom/{id}/backtest` | 提交自定义策略回测任务（默认 202 + `job_id`；`?sync=true` 保留旧同步响应） |
 | GET | `/api/strategy/hot-stock-ai` | 热门股票智能分析快照（Top20 基础评分 + TradingAgents 讨论增强 + 三池结果） |
 | POST | `/api/strategy/hot-stock-ai/run` | 手动触发热门股票智能分析 |
 | POST | `/api/strategy/hot-stock-ai/pool/move` | 手动迁移热门智能三池个股（复用 `symbol` / `target_pool` 请求结构） |
@@ -786,7 +826,7 @@ python3 scripts/repair_market_cache.py
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/agent/status` | Agent 运行状态 |
-| POST | `/api/agent/run` | 触发任务（daily_review / notice_review / full_diagnosis） |
+| POST | `/api/agent/run` | 提交 Agent 任务（daily_review / notice_review / full_diagnosis；默认 202 + `job_id`，`?sync=true` 兼容旧响应） |
 | GET | `/api/agent/tasks` | 最近任务列表 |
 | GET/POST | `/api/agent/monitor/config` | 监控配置读写 |
 | GET | `/api/agent/monitor/messages` | 监控消息流 |
@@ -803,7 +843,16 @@ python3 scripts/repair_market_cache.py
 | GET | `/api/paper/history` | 平仓历史 |
 | GET | `/api/paper/summary` | 盈亏汇总 |
 | GET | `/api/paper/trades` | 成交记录 |
-| GET/POST | `/api/paper/settings` | 费用设置 |
+| GET/POST | `/api/paper/settings` | 费用设置（请求模型校验费率、佣金、滑点边界） |
+
+### 通用任务与健康检查
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/jobs` | 最近任务列表（`kind`、`limit`） |
+| GET | `/api/jobs/{job_id}` | 任务状态/进度/结果；重启后运行中任务标记 interrupted |
+| GET | `/api/health` | SQLite、7 个后台循环、Kronos、K 线新鲜度、任务队列；ok/degraded 返回 200，核心依赖故障返回 503 |
+| GET | `/api/metrics` | 请求、外部超时/降级、任务失败与 Kronos 缓存命中计数 |
 
 ### 实时推送
 
@@ -814,58 +863,50 @@ python3 scripts/repair_market_cache.py
 
 ## 自动化测试
 
-项目内置两套互补的自动化测试：
+项目自动化分为后端回归、前端 E2E 和质量门禁三层：
 
-### 1. API 回归（pytest + httpx）
+### 1. 后端回归（pytest + httpx）
 
-`tests/test_api_regression.py` — 覆盖 40+ 个端点，分 12 大类：
+- `tests/test_api_regression.py`：84 个端点/契约用例，覆盖静态页面、行情、策略、Kronos、K 线增强、公告、Agent、模拟盘、任务 API、已移除接口和性能巡检。
+- 其余单元测试：覆盖 SQLite 迁移、部署安全、外部调用超时/熔断、任务生命周期、参数校验、健康检查、前端模块结构、Kronos 缓存与策略规则。
+- 当前集成验证：`329` 个非 API 用例通过，API 回归 `84/84` 通过。
 
-| 模块 | 用例数 | 覆盖范围 |
-|------|--------|---------|
-| 静态页面 | 5 | `/`、`/notice`、`/static/*` |
-| 大盘行情 | 5 | hot-concepts / hot-stocks / stock detail / realtime |
-| 策略漏斗 | 3 | `/api/funnel`、strategy/profile、缩量启动 |
-| Kronos 预测 | 4 | predict-funnel + 配置回写 + Kronos 单股预测 |
-| K 线缓存 | 6 | stats / status / progress / logs / report / 单股 |
-| 公告 | 2 | funnel + keywords |
-| Hermes Agent | 4 | status / tasks / 监控 |
-| 模拟盘 | 5 | positions / history / summary / trades / settings |
-| 已移除接口 | 21 | proposal / proposal-learner / hermes-ai 路由应返回 404 |
-| 公告详情 | 1 | 容忍 200/404 |
-| 性能巡检 | 5 | 关键只读端点 < 3s |
-
-运行：
+启动本地 API 后运行：
 
 ```bash
-python3 -m pytest tests/test_api_regression.py -v
+ENABLE_TUSHARE=false ENABLE_LIVE_MARKET_DATA=false \
+  python3 -m uvicorn app.main:app --host 127.0.0.1 --port 18890 &
+ALPHA_TEST_BASE_URL=http://127.0.0.1:18890 python3 -m pytest -q
 ```
-
-当前结果：以当前仓库实际回归结果为准。
 
 ### 2. 前端 E2E（Playwright）
 
-`tests/e2e/ui.spec.js` — 14 个用例，覆盖：
+`tests/e2e` 共 26 个用例，覆盖：
 
-- 7 个 sidebar tab 切换均无 JS 错误
-- 自定义策略中心区块视觉尺寸（宽 ≥ 600px、高 ≥ 200px）+ 规则卡片渲染 ≥ 3 张
-- **核心 bug 回归**：点击策略命中卡片不触发页面跳转 / 刷新 / `window.open`，且必须正确弹出 Kronos 预测 modal
-- 数据中心任务历史表格 grid cell 无水平 overlap（容差 2px）
-- 智能进化页不再出现提案管理子 tab
-- 模拟盘主容器渲染
-- 全站 tab 巡检 0 关键 JS 错误
-
-运行：
+- 8 个 sidebar tab 切换、核心数据渲染和全站关键 JS 错误巡检
+- 存储型 XSS 回归：恶意公告标题/板块名/个股名不创建可执行节点，`javascript:` 链接不生成可点击 href
+- CSP 实际阻断内联脚本
+- 前端模块完整性、统一轮询调度器、WebSocket 页面稳定性
+- `requestJob()` 对 202 + `/api/jobs/{id}`、409 现有 `job_id` 和旧版同步响应的兼容
+- 自定义策略区块尺寸、命中卡片不触发页面跳转、数据中心任务表格布局
 
 ```bash
 cd tests/e2e
-npm install                # 首次
-npx playwright install chromium  # 首次
-npx playwright test
+npm ci                         # 首次
+npx playwright install chromium # 首次
+ALPHA_TEST_BASE_URL=http://127.0.0.1:18890 npx playwright test
 ```
 
-当前结果：**14 / 14 全部通过**。
+### 3. CI 质量门禁
 
-### 3. 一键运行
+- `ruff check`：全库 lint。
+- `ruff format --check`：迁移、部署、Kronos、SQLite 等已规范化模块。
+- `mypy`：models/config 与新增迁移/部署/存储/预测模块的 scoped 类型门禁。
+- `pytest --cov=app --cov-fail-under=45`：当前基线约 48%，覆盖率 XML 作为 artifact 上传。
+- E2E workflow：每日定时 + `workflow_dispatch`，带 `run-e2e` label 的 PR 可手动触发。
+- 依赖：`requirements*.txt` 直接依赖精确 pin，CI 执行 `pip check`，Dependabot 覆盖 pip/npm/Actions。
+
+### 4. 一键运行
 
 ```bash
 ./tests/run_all_tests.sh

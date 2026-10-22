@@ -644,6 +644,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_feedback_proposal ON agent_feedback(proposa
 
 `task_type` 可选值：`daily_review` / `notice_review` / `weekly_evolution` / `anomaly` / `full_diagnosis`
 
+默认返回 `202 Accepted`：
+
+```json
+{
+  "job_id": "8f2c...",
+  "kind": "agent_run",
+  "status": "queued",
+  "poll_url": "/api/jobs/8f2c..."
+}
+```
+
+调用 `GET /api/jobs/{job_id}` 获取进度和最终结果；同一任务类型运行中重复提交返回 `409` 并携带现有 `job_id`。兼容旧调用可追加 `?sync=true`，此时等待任务完成并返回原结果结构。
+
 #### GET /api/agent/proposals
 
 查询参数：`status=pending&type=rule_patch&limit=20&offset=0`
