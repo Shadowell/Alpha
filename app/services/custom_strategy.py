@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,10 @@ from app.services.strategy_rules import (
 from app.services.time_utils import now_cn
 
 log = logging.getLogger("custom_strategy")
+
+# #53：概念标签提供器 — 输入命中 symbol 集合，返回 {symbol: [tag dict]}；
+# tag dict 结构与系统候选 concept_tags 同源（concept_engine.build_top_tags）。
+ConceptTagger = Callable[[set[str]], Awaitable[dict[str, list[dict[str, Any]]]]]
 
 
 # ─────────────────────────────── 数据模型 ───────────────────────────────
@@ -106,6 +111,9 @@ class StrategyHit:
     change_pct: float
     composite_score: float
     rule_hits: list[dict[str, Any]]   # [{code, title, passed, label, metric, detail}]
+    # #53：与系统候选同源的概念标签（name/color/heat/change_pct/limit_up_count...）；
+    # 无法取到概念数据时保持空列表，前端按「未带标签」优雅降级。
+    concept_tags: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,6 +125,7 @@ class StrategyHit:
             "change_pct": round(self.change_pct, 2),
             "composite_score": round(self.composite_score, 2),
             "rule_hits": self.rule_hits,
+            "concept_tags": self.concept_tags,
         }
 
 
@@ -220,10 +229,18 @@ class CustomStrategyScanner:
 
     _SNAPSHOT_KEY_PREFIX = "custom_strategy_scan:"
 
-    def __init__(self, kline_store: Any, name_lookup=None, state_store: Any | None = None) -> None:
+    def __init__(
+        self,
+        kline_store: Any,
+        name_lookup=None,
+        state_store: Any | None = None,
+        concept_tagger: ConceptTagger | None = None,
+    ) -> None:
         self.store = kline_store
         self._name_lookup = name_lookup
         self._state_store = state_store
+        # #53：可选概念标签提供器；未注入或取数失败时命中保持空标签，前端优雅降级。
+        self._concept_tagger = concept_tagger
         self._lock = asyncio.Lock()
         self._last_snapshots: dict[str, dict[str, Any]] = {}  # strategy_id -> payload
         self._running_strategies: set[str] = set()
@@ -273,6 +290,27 @@ class CustomStrategyScanner:
             self._state_store.set_kv(self._snapshot_key(strategy_id), payload)
         except Exception as exc:  # noqa: BLE001 — 持久化失败不推翻本次扫描结果
             log.warning("persist custom strategy snapshot id=%s failed: %s", strategy_id, exc)
+
+    async def _attach_concept_tags(self, hits: list[StrategyHit]) -> None:
+        """#53：为命中结果附带概念标签（复用系统候选的概念热度来源）。
+
+        任何失败（概念源不可用、超时、返回结构异常）都只降级为空标签，
+        绝不阻断扫描主流程，也不向调用方泄漏上游错误细节。
+        """
+        if self._concept_tagger is None or not hits:
+            return
+        try:
+            symbols = {h.symbol for h in hits}
+            tag_map = await self._concept_tagger(symbols)
+        except Exception as exc:  # noqa: BLE001 — 概念标签缺失仅降级，不影响扫描结果
+            log.warning("attach concept tags skipped: %s", type(exc).__name__)
+            return
+        if not isinstance(tag_map, dict):
+            return
+        for hit in hits:
+            raw_tags = tag_map.get(hit.symbol) or []
+            if isinstance(raw_tags, list):
+                hit.concept_tags = [dict(t) for t in raw_tags if isinstance(t, dict)]
 
     async def scan(
         self,
@@ -394,6 +432,7 @@ class CustomStrategyScanner:
                 hits.append(result)
 
         hits.sort(key=lambda h: (-h.composite_score, -abs(h.change_pct)))
+        await self._attach_concept_tags(hits)
         data_dates = [h.trade_date for h in hits if h.trade_date]
         payload = {
             "strategy_id": strategy.id,

@@ -7,8 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.container import ServiceContainer
 from app.dependencies import get_container
-from app.models import MovePoolRequest, RecomputeRequest
+from app.models import (
+    MarketSessionResponse,
+    MovePoolRequest,
+    PoolEnrollRequest,
+    RecomputeRequest,
+)
 from app.services.data_provider import normalize_symbol
+from app.services.market_session import resolve_market_session
 
 router = APIRouter(tags=["行情"])
 
@@ -37,6 +43,12 @@ async def get_hot_stocks(
     return await container.funnel_service.get_hot_stocks(trade_date)
 
 
+@router.get("/market/session", response_model=MarketSessionResponse)
+async def get_market_session(container: ServiceContainer = Depends(get_container)):
+    """#57：服务端统一的交易时段/交易日口径（东八区 aware 时间，含法定节假日日历）。"""
+    return await resolve_market_session(container.provider)
+
+
 @router.get("/stock/{symbol}/detail")
 async def get_stock_detail(
     symbol: str,
@@ -58,6 +70,25 @@ async def move_pool(
     resp = await container.funnel_service.move_pool(req.symbol, req.target_pool, req.note)
     if not resp.success:
         # Issue #56：与 /api/notice/pool/move 一致的 4xx 语义（非法层级/池满/不存在）。
+        raise HTTPException(status_code=400, detail=resp.message)
+    await container.broadcast_snapshot()
+    return resp
+
+
+@router.post("/pool/enroll")
+async def enroll_pool(
+    req: PoolEnrollRequest,
+    container: ServiceContainer = Depends(get_container),
+):
+    """#50：策略命中入池 — 写入候选池并按逐级规则尽力推进到目标池。
+
+    失败（跨级非法 / 买入池满 / 池位异常）返回 400，文案与 /api/pool/move 完全一致；
+    非法池名与非法 symbol 由 Pydantic 422。
+    """
+    resp = await container.funnel_service.enroll_pool(
+        req.symbol, name=req.name, source=req.source, target_pool=req.target_pool
+    )
+    if not resp.success:
         raise HTTPException(status_code=400, detail=resp.message)
     await container.broadcast_snapshot()
     return resp

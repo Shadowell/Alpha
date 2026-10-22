@@ -356,6 +356,31 @@ def checkpoint_all_sqlite(paths: list[str]) -> None:
             log.warning("checkpoint %s failed (non-fatal): %s", path, exc)
 
 
+def _build_concept_tagger(provider: AkshareDataProvider):
+    """#53：策略扫描快照的概念标签提供器 — 复用系统候选同一来源（concept_engine + provider 缓存），
+    不新造第三套概念口径。"""
+    from app.services.concept_engine import (
+        build_concept_heat,
+        build_top_tags,
+        map_stock_concepts,
+    )
+
+    async def _tag(symbols: set[str]) -> dict[str, list[dict[str, Any]]]:
+        if not symbols:
+            return {}
+        concept_heat_df = await build_concept_heat(provider, top_n=120)
+        if concept_heat_df.empty:
+            return {}
+        stock_map = await map_stock_concepts(provider, set(symbols), concept_heat_df)
+        return {
+            symbol: build_top_tags(tags, top_k=3)
+            for symbol, tags in stock_map.items()
+            if tags
+        }
+
+    return _tag
+
+
 def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
     directory = resolve_data_dir(data_dir)
 
@@ -414,6 +439,7 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
         kline_store=kline_store,
         name_lookup=name_lookup,
         state_store=funnel_service.state_store,
+        concept_tagger=_build_concept_tagger(provider),
     )
     backtest_lab = BacktestLab(kline_store=kline_store, name_lookup=name_lookup)
 

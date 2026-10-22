@@ -13,6 +13,7 @@ from app.models import (
     HotConceptResponse,
     HotStocksResponse,
     MovePoolResponse,
+    PoolEnrollResponse,
     StockCard,
     StockDetailResponse,
 )
@@ -22,11 +23,13 @@ from app.services.concept_engine import (
     build_top_tags,
     map_stock_concepts,
 )
-from app.services.data_provider import AkshareDataProvider
+from app.services.data_provider import AkshareDataProvider, normalize_symbol
+from app.services.market_session import resolve_market_session
 from app.services.pool_transition import (
     INVALID_TARGET_MESSAGE,
     MISSING_ENTRY_MESSAGE,
     buy_pool_full_message,
+    record_pool_move,
     validate_pool_transition,
 )
 from app.services.strategy_engine import apply_transition_rules, compute_intraday_score, get_last_n_trade_window
@@ -375,6 +378,143 @@ class FunnelService:
             self._save_state()
             return MovePoolResponse(success=True, message="迁移成功", symbol=symbol, pool=target_pool)
 
+    def _build_enroll_entry(
+        self, symbol: str, name: str, source: str
+    ) -> dict[str, Any]:
+        """#50：入池条目模板 — 字段与系统候选条目同构，附带来源审计（enroll_source + trigger_log）。"""
+        return {
+            "symbol": symbol,
+            "name": name,
+            "pool": POOL_CANDIDATE,
+            "score": 0.0,
+            "prev_score": 0.0,
+            "breakout_level": 0.0,
+            "recommended_pool": None,
+            "metrics": {},
+            "concept_tags": [],
+            "concept_candidates": [],
+            "reasons": [],
+            "warnings": [],
+            "trigger_log": [],
+            "transitions": {
+                "above60_count": 0,
+                "breakout_confirm_count": 0,
+                "below65_count": 0,
+            },
+            "enroll_source": source,
+            "updated_at": now_cn().isoformat(),
+        }
+
+    async def _lookup_symbol_name_unlocked(self, symbol: str) -> str:
+        try:
+            name_map = await self.provider.get_symbol_name_map(cache_ttl_seconds=3600)
+            return str((name_map or {}).get(symbol) or "")
+        except Exception:
+            return ""
+
+    async def enroll_pool(
+        self,
+        symbol: str,
+        name: str | None = None,
+        source: str = "manual",
+        target_pool: str | None = None,
+    ) -> PoolEnrollResponse:
+        """#50：把策略命中（或手工指定）个股写入候选池，并尽力推进到目标池。
+
+        迁池语义与 ``move_pool`` / ``/api/notice/pool/move`` 共享 ``pool_transition``
+        校验器：新入池起点恒为候选池，逐级晋升合法、跨级非法、降级/同级幂等，
+        买入池容量上限同源（``StrategyConfig.buy_pool_max_size``）；错误文案逐字一致。
+        """
+        clean_symbol = normalize_symbol(symbol)
+        clean_target = str(target_pool or "").strip() or None
+        if clean_target is not None and clean_target not in VALID_POOLS:
+            return PoolEnrollResponse(
+                success=False,
+                message=INVALID_TARGET_MESSAGE,
+                symbol=clean_symbol,
+                pool=POOL_CANDIDATE,
+            )
+
+        async with self.lock:
+            entry = self.entries.get(clean_symbol)
+            created = False
+            if entry is None:
+                # 新入池先做层级预检：跨级请求直接拒绝且不创建条目，避免留下半成品。
+                gate = validate_pool_transition(
+                    POOL_CANDIDATE, clean_target or POOL_CANDIDATE
+                )
+                if not gate.allowed:
+                    return PoolEnrollResponse(
+                        success=False,
+                        message=gate.message,
+                        symbol=clean_symbol,
+                        pool=POOL_CANDIDATE,
+                    )
+                display_name = (name or "").strip()[:64]
+                if not display_name:
+                    display_name = await self._lookup_symbol_name_unlocked(clean_symbol)
+                entry = self._build_enroll_entry(
+                    clean_symbol, display_name or clean_symbol, source
+                )
+                self.entries[clean_symbol] = entry
+                created = True
+                self._record_trigger(entry, f"入池: {source}")
+
+            current_pool = str(entry.get("pool", POOL_CANDIDATE))
+            moved = False
+            if clean_target is None:
+                final_pool = current_pool
+                message = "入池成功" if created else "已在选股池（幂等入池）"
+            else:
+                decision = validate_pool_transition(current_pool, clean_target)
+                if not decision.allowed:
+                    return PoolEnrollResponse(
+                        success=False,
+                        message=decision.message,
+                        symbol=clean_symbol,
+                        pool=current_pool,
+                    )
+                if decision.code != "ok_idempotent":
+                    if clean_target == POOL_BUY:
+                        buy_count = sum(
+                            1
+                            for e in self.entries.values()
+                            if e.get("pool") == POOL_BUY
+                        )
+                        if buy_count >= self.config.buy_pool_max_size:
+                            return PoolEnrollResponse(
+                                success=False,
+                                message=buy_pool_full_message(
+                                    self.config.buy_pool_max_size
+                                ),
+                                symbol=clean_symbol,
+                                pool=current_pool,
+                            )
+                    entry["pool"] = clean_target
+                    entry["recommended_pool"] = None
+                    record_pool_move(
+                        entry,
+                        f"{decision.reason} · source={source}",
+                        now_cn().isoformat(),
+                    )
+                    moved = True
+                final_pool = clean_target
+                message = "迁移成功" if moved else "已在目标池（幂等成功）"
+
+            entry["updated_at"] = now_cn().isoformat()
+            if created or moved:
+                await self._refresh_market_panels_unlocked(force=True)
+            self.updated_at = now_cn().isoformat()
+            self._save_state()
+            return PoolEnrollResponse(
+                success=True,
+                message=message,
+                symbol=clean_symbol,
+                pool=final_pool,
+                created=created,
+                moved=moved,
+            )
+
     async def recompute(self, symbol: str | None = None) -> None:
         async with self.lock:
             force_refresh = not (self.frozen and is_after_close(now_cn()))
@@ -418,11 +558,16 @@ class FunnelService:
                 "buy": len(pools[POOL_BUY]),
             }
 
+            # #57：随漏斗响应附带服务端统一时段口径，前端状态灯/买卖闸门据此切换服务端口径。
+            session = await resolve_market_session(self.provider)
             return FunnelResponse(
                 trade_date=self.trade_date,
                 updated_at=self.updated_at,
                 pools=pools,
                 stats=stats,
+                market_session=session["market_session"],
+                is_trading_day=session["is_trading_day"],
+                china_time=session["china_time"],
             )
 
     async def get_strategy_profile(self) -> dict[str, Any]:
