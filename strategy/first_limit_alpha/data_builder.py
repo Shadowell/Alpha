@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 import numpy as np
 import pandas as pd
 
 from .feature_store import ensure_dir, write_dataframe, write_json
-from .labeling import compute_sample_labels
+from .labeling import LABEL_SOURCE_PROXY, compute_sample_labels
 from .schema import LabelConfig, SampleBuildConfig
+
+if TYPE_CHECKING:
+    from .label_engine import ExecutableLabelConfig
 
 
 def board_limit_pct(symbol: str) -> float:
@@ -134,6 +137,43 @@ class FirstLimitAlphaDataBuilder:
             "distance_to_recent_high": round(float(row["distance_to_recent_high"]), 6),
         }
 
+    def build_label_dataset(
+        self,
+        output_dir: str | Path,
+        *,
+        mode: str = "all_limit_up",
+        cfg: "ExecutableLabelConfig | None" = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        symbols: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
+        """构建打板可执行标签数据集（issue #23）。
+
+        委托给 :func:`strategy.first_limit_alpha.label_engine.build_executable_label_dataset`，
+        从 v3 ``limit_board_daily`` + ``kline_daily`` 读取，替换旧的"次日开盘价代理"口径，
+        把标签写到调用方传入的产物目录（不依赖 container）。
+
+        参数
+        ----
+        * ``mode``：``first_board`` / ``all_limit_up`` / ``continuation`` / ``reversal`` / ``all``。
+        * ``cfg``：:class:`ExecutableLabelConfig`；默认使用文档化口径。
+
+        产物：``labels.csv``、``labels_meta.json``、``label_schema.json``、
+        ``label_report.json``、``labels_embargo.json``。
+        """
+        from .label_engine import build_executable_label_dataset
+
+        return build_executable_label_dataset(
+            self.db_path,
+            output_dir,
+            mode=mode,
+            start_date=start_date,
+            end_date=end_date,
+            symbols=symbols,
+            name_map=self.name_map,
+            cfg=cfg,
+        )
+
     def build_dataset(
         self,
         output_dir: str | Path,
@@ -191,7 +231,13 @@ class FirstLimitAlphaDataBuilder:
             "paths": {"samples": str(samples_path)},
             "build_config": build_cfg.to_dict(),
             "label_config": label_cfg.to_dict(),
+            "label_semantics": {
+                "label_source": LABEL_SOURCE_PROXY,
+                "note": "本方法保留旧的\"次日开盘价代理\"口径以兼容既有产物与回归；"
+                "打板真实可成交性请使用 build_label_dataset()（issue #23，label_engine）。",
+            },
             "future_information_fields": [
+                "label_source",
                 "entry_date",
                 "entry_open",
                 "future_max_high_3d",
