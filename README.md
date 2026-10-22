@@ -214,8 +214,9 @@ Tushare `daily.vol` 以“手”为单位，直接映射为 `volume`；`daily.am
 - **深度讨论**：对命中的热门股调用 [TradingAgents](https://github.com/Shadowell/TradingAgents) 项目，通过 `DeepSeek API` 产出多代理讨论结论，再映射为加减分
 - **命令行调用方式**：Alpha 通过 `uv run python -m cli.main analyze --ticker ... --date ... --provider deepseek --quick-model deepseek-chat --deep-model deepseek-reasoner` 调用 `TradingAgents`，不再直接 import 图对象
 - **解释性评分**：每只股票都输出分数组成、风险扣分、标签和一段摘要分析
+- **数据新鲜度防线**：评分禁止实时价与陈旧 K 线混算——K 线恰好缺决策当日且实时价昨收口径可对账（偏差 ≤2%）时追加当日实时 bar 统一计算均线/振幅；落后超过容忍交易日窗口或对账失败的标的整只跳过并计入 `meta.skipped_stale`；快照暴露 `meta.realtime_trade_date` / `meta.kline_max_date` / `meta.stale_kline_count`，逐股暴露 `kline_max_date` / `stale_kline` / `realtime_bar_appended` / `amount_base_date`
 - **候选池评价**：`TradingAgents` 返回结果会落到第一池候选池展示，并明确给出 `买入 / 卖出 / 观望` 评价
-- **三池拆分**：默认阈值 `8 / 11.5 / 14.5` 分，对应候选 / 重点关注 / 买入候选
+- **三池拆分**：默认阈值 `8 / 11.5 / 14.5` 分，对应候选 / 重点关注 / 买入候选；当本次运行完全没有 Kronos 预测分量（未加载 / 未启用 / 全部预测失败）时自动改用「排名分位数（买入 top 10%、重点 top 30%，候选阈值为下限）」的降级分层，`meta.prediction_enabled` / `prediction_available` / `pred_missing_count` / `pool_tier_mode` 标明分层模式与原因，不再静默空池
 - **手动迁池**：候选池卡片复用普通候选池样式，可一键加入重点关注池，并支持重点 / 买入池之间调整
 - **自动刷新**：默认每 5 分钟自动扫描一次；为保证站点响应，后台自动任务走轻量模式（缩小样本并跳过 `TradingAgents` / `Kronos`），页面手动触发仍执行完整分析
 - **点击个股**：直接弹出历史 K 线 + `Kronos` 三日预测详情
@@ -530,7 +531,9 @@ Alpha/
 │       ├── hermes_memory.py           # Agent SQLite 持久化（任务/监控）
 │       ├── funnel_service.py          # 三池漏斗核心（状态管理·tick·迁池）
 │       ├── predict_funnel_service.py  # 预测选股（概念板块×Kronos；东财重试+同花顺降级）
-│       ├── hot_stock_ai_service.py    # 热门股智能分析（Top20·基础评分·TradingAgents讨论·三池拆分）
+│       ├── hot_stock_ai_service.py    # 热门股智能分析（Top20·基础评分·TradingAgents讨论·三池拆分·K线新鲜度校验/降级分层）
+│       ├── trading_day_utils.py       # ★ 交易日窗口计算（K线新鲜度判定；日历缺失回退工作日近似）
+│       ├── pool_transition.py         # ★ 策略池/公告池共享手动迁池层级校验（逐级晋升·统一4xx文案）
 │       ├── tradingagents_adapter.py   # TradingAgents 适配层（A股代码映射 / 讨论结果抽取）
 │       ├── strategy_engine.py         # 三池盘中实时评分 + 迁池规则
 │       ├── strategy_rules.py          # ★ 自定义策略：12 条原子规则（注册表 + 参数 schema + 评估器）
@@ -744,7 +747,7 @@ python3 scripts/repair_market_cache.py
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/funnel` | 漏斗三池状态；`trade_date` 只读，历史日期返回空快照且不会重置当前池 |
-| POST | `/api/pool/move` | 股票迁池（手动覆盖自动推荐） |
+| POST | `/api/pool/move` | 股票迁池（手动覆盖自动推荐）；与公告迁池共享层级校验：逐级晋升（候选→重点→买入）、跨级/非法迁移返回 400 |
 | POST | `/api/score/recompute` | 重算评分（满足阈值时自动升/降池） |
 | GET | `/api/stock/{symbol}/detail` | 个股详情（含 K 线）；历史日期不匹配当前池时返回 404 |
 | GET | `/api/strategy/rules` | 原子规则目录（12 条，含参数 schema） |
@@ -783,7 +786,7 @@ python3 scripts/repair_market_cache.py
 | GET | `/api/notice/funnel` | 公告漏斗状态 |
 | GET | `/api/notice/keywords` | 关键词规则列表 |
 | POST | `/api/jobs/notice-screen` | 公告筛选（支持 `keywords` 过滤） |
-| POST | `/api/notice/pool/move` | 公告迁池 |
+| POST | `/api/notice/pool/move` | 公告迁池（与 `/api/pool/move` 同一层级校验、容量口径与 4xx 文案） |
 | GET | `/api/notice/{symbol}/detail` | 公告个股详情 |
 
 ### Kronos 预测

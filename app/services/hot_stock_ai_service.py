@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,11 @@ from app.services.kline_store import KlineSQLiteStore
 from app.services.kronos_predict_service import KronosPredictService
 from app.services.sqlite_store import SQLiteStateStore
 from app.services.time_utils import now_cn
+from app.services.trading_day_utils import (
+    count_missing_trading_days,
+    latest_trade_date_on_or_before,
+    normalize_trade_days,
+)
 from app.services.tradingagents_adapter import (
     DEFAULT_DEEP_MODEL,
     DEFAULT_QUICK_MODEL,
@@ -27,6 +33,11 @@ POOL_FOCUS = "focus"
 POOL_BUY = "buy"
 STATE_KEY = "hot_stock_ai"
 DISCUSSION_STATE_KEY = "hot_stock_ai_tradingagents_discussions"
+
+# Issue #51：仅允许「缓存恰好差决策当日一个交易日」且实时 bar 可验证时追加合成当日 bar；
+# 其余落后情形（>1 个交易日、或昨收校验不过）直接跳过该股并计入 skipped_stale，绝不混算。
+APPENDABLE_LAG_TRADING_DAYS = 1
+REALTIME_PREV_CLOSE_TOLERANCE_PCT = 2.0
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "top_n": 20,
@@ -60,6 +71,27 @@ def _safe_pct(numerator: float, denominator: float) -> float:
     return (numerator / denominator) * 100.0
 
 
+class StaleKlineError(Exception):
+    """Issue #51：本地 K 线相对决策交易日陈旧到不可安全混算。"""
+
+    def __init__(
+        self,
+        symbol: str,
+        name: str,
+        kline_max_date: str,
+        target_trade_date: str,
+        lag_trading_days: int,
+        reason: str,
+    ) -> None:
+        super().__init__(f"stale kline for {symbol}: {reason}")
+        self.symbol = symbol
+        self.name = name
+        self.kline_max_date = kline_max_date
+        self.target_trade_date = target_trade_date
+        self.lag_trading_days = lag_trading_days
+        self.reason = reason
+
+
 class HotStockAIService:
     def __init__(
         self,
@@ -68,12 +100,15 @@ class HotStockAIService:
         kronos_service: KronosPredictService,
         state_store: SQLiteStateStore,
         tradingagents_adapter: TradingAgentsAdapter | None = None,
+        realtime_trade_date: str | None = None,
     ) -> None:
         self.provider = provider
         self.kline_store = kline_store
         self.kronos = kronos_service
         self.state_store = state_store
         self.tradingagents = tradingagents_adapter
+        # Issue #51：可注入的「决策交易日」（测试/回放用）；为空时按交易日历取 <= 今日 的最近交易日。
+        self._trade_date_override = str(realtime_trade_date).strip()[:10] if realtime_trade_date else None
         self.lock = asyncio.Lock()
         self.running = False
         self.progress: dict[str, Any] = {
@@ -231,21 +266,55 @@ class HotStockAIService:
                 self.running = False
         return {"ok": True, "snapshot": self.get_snapshot()}
 
+    async def _fetch_trade_days(self) -> list[str]:
+        getter = getattr(self.provider, "get_trade_days", None)
+        if getter is None:
+            return []
+        try:
+            df = await getter()
+        except Exception as exc:
+            log.info("[hot_stock_ai] trade calendar unavailable: %s", exc)
+            return []
+        if df is None or getattr(df, "empty", True) or "trade_date" not in getattr(df, "columns", []):
+            return []
+        return [str(v)[:10] for v in df["trade_date"].tolist()]
+
+    def _resolve_realtime_trade_date(self, trade_days: list[str]) -> str:
+        if self._trade_date_override:
+            return self._trade_date_override
+        days = normalize_trade_days(trade_days)
+        return latest_trade_date_on_or_before(now_cn().date(), days).isoformat()
+
     async def _execute(self, trigger: str) -> dict[str, Any]:
         cfg = self.get_config()
         runtime_cfg = self._resolve_runtime_config(cfg, trigger=trigger)
+        trade_days = await self._fetch_trade_days()
+        realtime_trade_date = self._resolve_realtime_trade_date(trade_days)
+        runtime_cfg["realtime_trade_date"] = realtime_trade_date
+        runtime_cfg["trade_days"] = trade_days
         t0 = time.time()
         self.progress.update(phase="fetch", detail=f"拉取热门股票 Top{runtime_cfg['top_n']}")
         hot_df = await self.provider.get_hot_stocks(top_n=int(runtime_cfg["top_n"]), cache_ttl_seconds=300)
         if hot_df is None or hot_df.empty:
             self.progress["error"] = "热门股票接口返回为空"
             return {
-                "trade_date": now_cn().date().isoformat(),
+                "trade_date": realtime_trade_date,
                 "updated_at": now_cn().isoformat(),
                 "config": cfg,
                 "pools": {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []},
                 "entries": [],
-                "meta": {"error": "hot stocks unavailable", "trigger": trigger},
+                "meta": {
+                    "error": "hot stocks unavailable",
+                    "trigger": trigger,
+                    "realtime_trade_date": realtime_trade_date,
+                    "kline_max_date": None,
+                    "stale_kline_count": 0,
+                    "skipped_stale": [],
+                    "prediction_enabled": bool(runtime_cfg["use_kronos"]),
+                    "prediction_available": False,
+                    "pred_missing_count": 0,
+                    "pool_tier_mode": "absolute",
+                },
             }
 
         hot_df = hot_df.head(int(runtime_cfg["top_n"])).copy()
@@ -254,6 +323,8 @@ class HotStockAIService:
 
         entries: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
+        skipped_stale: list[dict[str, Any]] = []
+        seen_kline_dates: list[str] = []
         for idx, (_, row) in enumerate(hot_df.iterrows(), start=1):
             symbol = normalize_symbol(row.get("symbol", ""))
             name = str(row.get("name", "") or symbol)
@@ -264,6 +335,20 @@ class HotStockAIService:
                     failed.append({"symbol": symbol, "name": name, "reason": "insufficient_history"})
                     continue
                 entries.append(analyzed)
+                seen_kline_dates.append(str(analyzed.get("kline_max_date") or ""))
+            except StaleKlineError as exc:
+                skipped_stale.append(
+                    {
+                        "symbol": exc.symbol,
+                        "name": exc.name,
+                        "kline_max_date": exc.kline_max_date,
+                        "realtime_trade_date": exc.target_trade_date,
+                        "lag_trading_days": exc.lag_trading_days,
+                        "stale_kline": True,
+                        "reason": exc.reason,
+                    }
+                )
+                seen_kline_dates.append(str(exc.kline_max_date or ""))
             except Exception as exc:
                 failed.append({"symbol": symbol, "name": name, "reason": str(exc)})
                 log.info("[hot_stock_ai] analyze fail %s: %s", symbol, exc)
@@ -271,8 +356,14 @@ class HotStockAIService:
         entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
         discussion_meta = await self._attach_tradingagents_discussions(entries, runtime_cfg, trigger=trigger)
         entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        pools = self._build_pools(entries, cfg)
-        trade_date = entries[0]["trade_date"] if entries else now_cn().date().isoformat()
+
+        prediction_enabled = bool(runtime_cfg["use_kronos"])
+        prediction_available = any(item.get("predicted_kline") for item in entries)
+        pred_missing_count = sum(1 for item in entries if not item.get("predicted_kline"))
+        pools = self._build_pools(entries, cfg, prediction_available=prediction_available)
+        valid_kline_dates = [d for d in seen_kline_dates if d]
+        kline_max_date = max(valid_kline_dates) if valid_kline_dates else None
+        trade_date = realtime_trade_date
         avg_score = round(sum(float(item["score"]) for item in entries) / max(len(entries), 1), 2) if entries else 0.0
         ta_runtime = (
             self.tradingagents.describe_runtime()
@@ -292,8 +383,20 @@ class HotStockAIService:
                 "stocks_scanned": total,
                 "failed_count": len(failed),
                 "failed_symbols": failed[:8],
+                "stale_kline_count": len(skipped_stale),
+                "skipped_stale": skipped_stale[:8],
+                "realtime_trade_date": realtime_trade_date,
+                "kline_max_date": kline_max_date,
+                "realtime_bar_appended_count": sum(1 for item in entries if item.get("realtime_bar_appended")),
                 "elapsed_sec": round(time.time() - t0, 2),
                 "avg_score": avg_score,
+                "prediction_enabled": prediction_enabled,
+                "prediction_available": prediction_available,
+                "pred_missing_count": pred_missing_count,
+                "pool_tier_mode": "absolute" if prediction_available else "quantile_degraded",
+                "pool_tier_reason": (
+                    "" if prediction_available else "prediction_unavailable：Kronos 未启用或全部标的无预测结果，改用分位数降级分层"
+                ),
                 "kronos_enabled": bool(cfg["use_kronos"]),
                 "runtime_kronos_enabled": bool(runtime_cfg["use_kronos"]),
                 "kronos_loaded": self.kronos.is_loaded(),
@@ -429,19 +532,64 @@ class HotStockAIService:
         for col in ["open", "high", "low", "close", "volume", "amount"]:
             hist[col] = pd.to_numeric(hist[col], errors="coerce").fillna(0.0)
 
-        latest_price = float(row.get("latest_price") or hist["close"].iloc[-1])
+        kline_max_date = str(hist["date"].iloc[-1])[:10]
+        realtime_trade_date = str(cfg.get("realtime_trade_date") or kline_max_date)
+        trade_days = normalize_trade_days(cfg.get("trade_days") or [])
+        # Issue #51：新鲜度校验——统一决策时点基期。缓存恰好缺当日且实时口径可验证时
+        # 追加当日 bar；落后超过容忍窗口（或无法验证）直接判陈旧跳过，禁止实时价与陈旧窗口混算。
+        lag_days = count_missing_trading_days(kline_max_date, realtime_trade_date, trade_days)
+        if lag_days < 0:
+            raise StaleKlineError(symbol, name, kline_max_date, realtime_trade_date, lag_days, "undecidable_trade_date")
+        if lag_days > APPENDABLE_LAG_TRADING_DAYS:
+            raise StaleKlineError(symbol, name, kline_max_date, realtime_trade_date, lag_days, "beyond_tolerance")
+
+        latest_price = float(row.get("latest_price") or 0.0)
         change_pct = float(row.get("change_pct") or 0.0)
+        appended_bar: dict[str, Any] | None = None
+        if lag_days == APPENDABLE_LAG_TRADING_DAYS:
+            if latest_price <= 0:
+                raise StaleKlineError(symbol, name, kline_max_date, realtime_trade_date, lag_days, "realtime_price_missing")
+            derived_prev_close = latest_price / (1.0 + change_pct / 100.0)
+            cache_last_close = float(hist["close"].iloc[-1])
+            prev_close_dev_pct = abs(derived_prev_close - cache_last_close) / cache_last_close * 100.0 if cache_last_close > 0 else 100.0
+            if prev_close_dev_pct > REALTIME_PREV_CLOSE_TOLERANCE_PCT:
+                raise StaleKlineError(
+                    symbol, name, kline_max_date, realtime_trade_date, lag_days, "realtime_prev_close_mismatch"
+                )
+            # 合成当日 bar 仅补价格维度（开=昨收推导值，高/低取昨收与现价的可达边界），
+            # 成交量/成交额无真实数据，不伪造——量能类因子继续使用最近一条真实 K 线。
+            appended_bar = {
+                "date": realtime_trade_date,
+                "open": derived_prev_close,
+                "high": max(derived_prev_close, latest_price),
+                "low": min(derived_prev_close, latest_price),
+                "close": latest_price,
+                "volume": 0.0,
+                "amount": 0.0,
+            }
+
+        price_df = (
+            hist
+            if appended_bar is None
+            else pd.concat([hist, pd.DataFrame([appended_bar])], ignore_index=True)
+        )
+        closes = price_df["close"]
+        highs = price_df["high"]
+        lows = price_df["low"]
+
         rank = int(float(row.get("rank") or 0))
-        current_close = float(hist["close"].iloc[-1])
-        ma5 = float(hist["close"].tail(5).mean())
-        ma10 = float(hist["close"].tail(10).mean())
-        ma20 = float(hist["close"].tail(20).mean())
-        high20 = float(hist["high"].tail(20).max())
-        low20 = float(hist["low"].tail(20).min())
+        current_close = float(closes.iloc[-1])
+        if latest_price <= 0:
+            latest_price = current_close
+        ma5 = float(closes.tail(5).mean())
+        ma10 = float(closes.tail(10).mean())
+        ma20 = float(closes.tail(20).mean())
+        high20 = float(highs.tail(20).max())
+        low20 = float(lows.tail(20).min())
         avg_amount20 = float(hist["amount"].tail(20).mean())
         today_amount = float(hist["amount"].iloc[-1])
         amount_ratio20 = today_amount / avg_amount20 if avg_amount20 > 0 else 0.0
-        ret5 = _safe_pct(latest_price - float(hist["close"].iloc[-6]), float(hist["close"].iloc[-6])) if len(hist) > 6 else 0.0
+        ret5 = _safe_pct(latest_price - float(closes.iloc[-6]), float(closes.iloc[-6])) if len(closes) > 6 else 0.0
         dist_ma20 = _safe_pct(latest_price - ma20, ma20)
         dist_high20 = _safe_pct(latest_price - high20, high20)
         pullback_from_high20 = _safe_pct(high20 - latest_price, high20)
@@ -516,6 +664,8 @@ class HotStockAIService:
             f"距20日高{dist_high20:+.2f}%",
             f"量额比20日均值{amount_ratio20:.2f}倍",
         ]
+        if appended_bar is not None:
+            analysis_parts.append(f"当日指标基于实时价补算（K线缓存至{kline_max_date}）")
         if cfg.get("use_kronos", True) and predicted:
             analysis_parts.append(f"Kronos 3日高点{pred_max_high_pct:+.2f}%")
             analysis_parts.append(f"末日收盘{pred_last_close_pct:+.2f}%")
@@ -523,7 +673,12 @@ class HotStockAIService:
         return {
             "symbol": symbol,
             "name": name,
-            "trade_date": str(hist["date"].iloc[-1]),
+            "trade_date": str(price_df["date"].iloc[-1])[:10],
+            "kline_max_date": kline_max_date,
+            "realtime_trade_date": realtime_trade_date,
+            "stale_kline": appended_bar is not None,
+            "realtime_bar_appended": appended_bar is not None,
+            "amount_base_date": kline_max_date,
             "rank": rank,
             "score": score,
             "latest_price": round(latest_price, 3),
@@ -555,7 +710,16 @@ class HotStockAIService:
         }
 
     @staticmethod
-    def _build_pools(entries: list[dict[str, Any]], cfg: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    def _build_pools(
+        entries: list[dict[str, Any]],
+        cfg: dict[str, Any],
+        *,
+        prediction_available: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        if not prediction_available:
+            # Issue #52：无任何预测分量时，绝对阈值（focus 11.5 / buy 14.5）实际不可达，
+            # 改用「排名分位数 + 候选阈值下限」的降级分层，避免重点/买入池静默恒空。
+            return HotStockAIService._build_pools_quantile(entries, cfg)
         pools = {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []}
         max_buy = int(cfg["max_buy_pool_size"])
         for item in entries:
@@ -570,5 +734,29 @@ class HotStockAIService:
             elif score >= float(cfg["threshold_candidate"]):
                 pools[POOL_CANDIDATE].append(item)
             elif item.get("tradingagents", {}).get("status") == "ok":
+                pools[POOL_CANDIDATE].append(item)
+        return pools
+
+    @staticmethod
+    def _build_pools_quantile(entries: list[dict[str, Any]], cfg: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        pools = {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []}
+        ordered = sorted(entries, key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        total = len(ordered)
+        max_buy = int(cfg["max_buy_pool_size"])
+        floor = float(cfg["threshold_candidate"])
+        # 分位数边界：买入 top 10%（至少 3 只样本才启用，受池容量约束），重点 top 30%。
+        buy_take = min(max_buy, max(1, math.ceil(total * 0.10))) if total >= 3 else 0
+        focus_end = min(total, max(buy_take + 1, math.ceil(total * 0.30))) if total >= 3 else buy_take
+        for idx, item in enumerate(ordered):
+            score = float(item.get("score", 0.0))
+            if score < floor:
+                if item.get("tradingagents", {}).get("status") == "ok":
+                    pools[POOL_CANDIDATE].append(item)
+                continue
+            if idx < buy_take:
+                pools[POOL_BUY].append(item)
+            elif idx < focus_end:
+                pools[POOL_FOCUS].append(item)
+            else:
                 pools[POOL_CANDIDATE].append(item)
         return pools

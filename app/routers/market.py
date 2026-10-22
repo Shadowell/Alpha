@@ -56,6 +56,9 @@ async def move_pool(
     container: ServiceContainer = Depends(get_container),
 ):
     resp = await container.funnel_service.move_pool(req.symbol, req.target_pool, req.note)
+    if not resp.success:
+        # Issue #56：与 /api/notice/pool/move 一致的 4xx 语义（非法层级/池满/不存在）。
+        raise HTTPException(status_code=400, detail=resp.message)
     await container.broadcast_snapshot()
     return resp
 
