@@ -17,6 +17,13 @@
 - `app/services/error_response.py`：5xx 仅返回通用消息与 error id，异常细节写服务端日志（#19）。
 - CI：ruff lint/format、scoped mypy、pytest coverage 门禁、Playwright E2E workflow、Dependabot 和精确依赖 pin（#13）。
 - 前端安全模块、22 个 classic script 模块与统一轮询调度器；两个页面增加 CSP（#8 #12）。
+- `app/services/sentiment_factors.py` + `app/services/market_regime.py`：**市场情绪周期与连板梯队日频因子族（#25，纯计算层）**。计算口径：
+  - 因子表按 `trade_date` 一行为粒度，覆盖广度（涨停/跌停/涨跌家数/中位收益/强弱势/成交额比）、连板梯队（最高连板、2/3/4+ 家数、首板/续板数、1→2/2→3/3→4 晋级率、梯队完整度与集中度）、赚钱/亏钱效应（炸板率、大面率、昨日涨停今日开/收/高溢价均值与中位数）、指数与资金（指数 1/5/20d 收益、20d 波动、北向透传）；`main_theme_count`/`theme_diffusion`/`margin_balance_change` 为 #8/#1 预留占位（缺失即 None）。
+  - **严格 PIT**：`D` 行只使用 `<= D` 的数据；"昨日涨停今日溢价"按观察日记账（cohort `D-1` 的溢价写入 `D` 行），行在当日收盘后即可一次写死，历史不随后续数据改写；回测窗口与增量跑批逐行一致（幂等）。
+  - **盘中隔离**：`compute_intraday_estimates`（kline_minute/rt_min）只输出 `intraday_` 前缀键；收盘 regime 的规则输入由 `market_regime.RULE_INPUT_FIELDS` 白名单锁死，盘中估算在结构上无法污染收盘标签。
+  - **口径参数化**：`market_scope`（all/sh_sz/main/sh_main/sz_main/chinext/star/bse）、`include_st`（默认剔除，按涨停池当日名称优先）、`exclude_new_days`（默认剔除上市不足 5 个交易日的新股）；停牌/退市尾部以 `halted_or_missing_count` 报表列呈现；分母为 0 或上游缺数一律 None + `missing_flags` 标注，绝不填 0。
+  - **regime**：连续 `sentiment_score`（0–100，绝对锚点分段线性，桶内缺失重归一）+ 六阶段规则链（冰点/修复/发酵/高潮/分歧/退潮，可注入 `regime_rules`/`regime_params`，默认阈值为全周期稳定值并含确定性兜底）。
+  - 持久化（`market_sentiment_daily` 建表）、`/api/market/sentiment/*` 与前端卡片属后续接线范围，不在本次计算层提交内。
 
 ### Removed
 
