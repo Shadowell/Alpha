@@ -43,18 +43,21 @@ test('轮询调度器随 Tab 切换暂停/恢复任务', async ({ page }) => {
 
   const market = await snapshot();
   expect(market['market-hot']).toBe(true);
-  expect(market['data-center']).toBe(false);
+  expect(market['dc-status']).toBe(false);
+  expect(market['dc-detail']).toBe(false);
   expect(market['paper-prices']).toBe(false);
 
   await page.click('.sidebar-item[data-tab="data"]');
   const data = await snapshot();
-  expect(data['data-center']).toBe(true);
+  expect(data['dc-status']).toBe(true);
+  expect(data['dc-detail']).toBe(true);
   expect(data['market-hot']).toBe(false);
 
   await page.click('.sidebar-item[data-tab="paper"]');
   const paper = await snapshot();
   expect(paper['paper-prices']).toBe(true);
-  expect(paper['data-center']).toBe(false);
+  expect(paper['dc-status']).toBe(false);
+  expect(paper['dc-detail']).toBe(false);
 });
 
 test('requestJob 兼容 202 + /api/jobs/{id} 轮询并展示进度', async ({ page }) => {

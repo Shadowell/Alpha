@@ -2,15 +2,69 @@
  * 无构建、classic script，按 index.html 中的顺序加载，函数挂在全局作用域。
  */
 
+/* ==================== 请求超时与中止（#55） ==================== */
+// 默认预算：普通 GET 10s、写操作 20s；可由 window.API_TIMEOUT_MS = {read, write} 覆盖，
+// 也可在单次调用里传 { timeoutMs }。前端超时预算必须大于后端最慢正常路径，避免误杀。
+const API_TIMEOUT_DEFAULTS = { read: 10000, write: 20000 };
+
+function _apiTimeoutMs(method, options) {
+  if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) return options.timeoutMs;
+  const cfg = (typeof window !== 'undefined' && window.API_TIMEOUT_MS) || {};
+  const isWrite = String(method || 'GET').toUpperCase() !== 'GET';
+  const configured = isWrite ? cfg.write : cfg.read;
+  return Number.isFinite(configured) && configured > 0 ? configured : API_TIMEOUT_DEFAULTS[isWrite ? 'write' : 'read'];
+}
+
+function _isAbortError(err) {
+  return !!err && (err.name === 'AbortError' || String(err.name).includes('Abort'));
+}
+
 async function request(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const timeoutMs = _apiTimeoutMs(method, options);
+  const { timeoutMs: _drop, ...fetchOptions } = options;
+  const controller = new AbortController();
+  // 调用方自带 signal 时一并转发，保持外部中止能力。
+  if (fetchOptions.signal) {
+    const external = fetchOptions.signal;
+    if (external.aborted) controller.abort(external.reason);
+    else external.addEventListener('abort', () => controller.abort(external.reason), { once: true });
+  }
+  let timer = null;
+  let timedOut = false;
+  if (timeoutMs > 0) {
+    timer = setTimeout(() => { timedOut = true; controller.abort(new Error(`timeout after ${timeoutMs}ms`)); }, timeoutMs);
+  }
   let resp;
   try {
     resp = await fetch(path, {
       headers: { 'Content-Type': 'application/json' },
-      ...options,
+      ...fetchOptions,
+      method,
+      signal: controller.signal,
     });
-  } catch (_) {
-    throw new Error('后端服务不可用(连接失败)，请确认服务已启动: ./start.sh');
+  } catch (err) {
+    const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 ? 1 : 0);
+    if (timedOut) {
+      const error = new Error(`请求超时（${seconds}s）：${path}`);
+      error.code = 'timeout';
+      error.timeoutMs = timeoutMs;
+      error.path = path;
+      throw error;
+    }
+    if (_isAbortError(err)) {
+      // 调用方主动中止（如切页），不当作后端故障。
+      err.code = 'aborted';
+      err.path = path;
+      throw err;
+    }
+    const error = new Error('后端服务不可用(连接失败)，请确认服务已启动: ./start.sh');
+    error.code = 'network';
+    error.path = path;
+    error.cause = err;
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   if (!resp.ok) {
     const raw = await resp.text();
@@ -23,11 +77,21 @@ async function request(path, options = {}) {
       message = raw;
     }
     const error = new Error(message || `HTTP ${resp.status}`);
+    error.code = 'http';
     error.status = resp.status;
+    error.path = path;
     error.payload = payload;
     throw error;
   }
-  return await resp.json();
+  try {
+    return await resp.json();
+  } catch (err) {
+    const error = new Error(`响应不是合法 JSON：${path}`);
+    error.code = 'http';
+    error.status = resp.status;
+    error.path = path;
+    throw error;
+  }
 }
 
 /* ==================== Jobs API (兼容同步/异步两种响应) ==================== */
@@ -53,10 +117,23 @@ function _jobProgressText(job) {
   return `${status} ${progress}`;
 }
 
-async function pollJob(jobId, { intervalMs = 1500, timeoutMs = 30 * 60 * 1000, onProgress } = {}) {
+async function pollJob(jobId, { intervalMs = 1500, timeoutMs = 30 * 60 * 1000, onProgress, transientRetries = 3 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  let transient = 0;
   while (Date.now() < deadline) {
-    const job = await request(`/api/jobs/${encodeURIComponent(jobId)}`);
+    let job;
+    try {
+      // #55：轮询的每一轮都受超时保护；偶发超时/断连不直接终止整个任务等待。
+      job = await request(`/api/jobs/${encodeURIComponent(jobId)}`);
+      transient = 0;
+    } catch (err) {
+      if ((err.code === 'timeout' || err.code === 'network') && transient < transientRetries) {
+        transient += 1;
+        await _sleep(intervalMs);
+        continue;
+      }
+      throw err;
+    }
     if (onProgress) {
       try { onProgress(job); } catch (_) { /* 进度回调失败不影响任务 */ }
     }

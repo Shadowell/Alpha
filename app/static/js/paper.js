@@ -5,6 +5,8 @@
 /* ==================== 模拟盘 ==================== */
 
 let _paperLastRefresh = 0;
+// 各区块是否已经拿到过数据（#55）：首屏失败给重试按钮，刷新失败保留旧数据只提示。
+const _paperLoaded = { positions: false, history: false, summary: false, trades: false };
 
 async function loadPaperData() {
   const [posRes, histRes, sumRes, tradeRes] = await Promise.allSettled([
@@ -17,6 +19,27 @@ async function loadPaperData() {
   if (histRes.status === 'fulfilled') renderPaperHistory(histRes.value.positions || []);
   if (sumRes.status === 'fulfilled') renderPaperSummary(sumRes.value);
   if (tradeRes.status === 'fulfilled') renderPaperTrades(tradeRes.value.trades || []);
+  // #55：持仓 / 平仓记录 / 汇总 / 成交 四块各自给错误与重试，不整页停在加载态。
+  if (posRes.status === 'rejected') {
+    reportBlockFailure('paperPositions', posRes.reason, () => loadPaperData(),
+      { title: '当前持仓', hasData: !!_paperLoaded.positions });
+  }
+  if (histRes.status === 'rejected') {
+    reportBlockFailure('paperHistory', histRes.reason, () => loadPaperData(),
+      { title: '平仓记录', hasData: !!_paperLoaded.history });
+  }
+  if (sumRes.status === 'rejected') {
+    reportBlockFailure('paperSummaryBanner', sumRes.reason, () => loadPaperData(),
+      { title: '账户汇总', hasData: !!_paperLoaded.summary });
+  }
+  if (tradeRes.status === 'rejected') {
+    reportBlockFailure('paperTrades', tradeRes.reason, () => loadPaperData(),
+      { title: '成交记录', hasData: !!_paperLoaded.trades });
+  }
+  if (posRes.status === 'fulfilled') _paperLoaded.positions = true;
+  if (histRes.status === 'fulfilled') _paperLoaded.history = true;
+  if (sumRes.status === 'fulfilled') _paperLoaded.summary = true;
+  if (tradeRes.status === 'fulfilled') _paperLoaded.trades = true;
   _paperLastRefresh = Date.now();
   _updatePaperRefreshHint();
 }

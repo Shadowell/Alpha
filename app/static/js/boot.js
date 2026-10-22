@@ -73,10 +73,10 @@ async function init() {
       const payload = await request('/api/jobs/kline-cache/sync?trigger_mode=manual&force=true', { method: 'POST' });
       const queued = Number(payload.queue_size || 0);
       setStatus(`全量补缺任务已提交后台执行${queued > 1 ? ` · 队列${queued}个任务` : ''}`, 'success');
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
     } catch (err) {
       setStatus(`提交失败: ${err.message}`, 'error');
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
     } finally {
       _btnEnd(btn);
     }
@@ -95,7 +95,7 @@ async function init() {
       } else {
         setStatus(`初始化任务已提交：回补全市场近 ${payload.window_days} 个自然日K线，进度将在下方实时展示`, 'success');
       }
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
     } catch (err) {
       setStatus(`初始化提交失败: ${err.message}`, 'error');
     } finally {
@@ -132,10 +132,10 @@ async function init() {
       const submitted = Number(payload.submitted || 0);
       const queued = Number(payload.queue_size || 0);
       setStatus(`增量同步已批量提交: ${submitted}天${queued > submitted ? ` · 队列${queued}个任务` : ''}`, submitted > 0 ? 'success' : 'error');
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
     } catch (err) {
       setStatus(`增量同步提交失败: ${err.message}`, 'error');
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
     } finally {
       _btnEnd(btn);
     }
@@ -153,7 +153,7 @@ async function init() {
     try {
       const report = await request('/api/jobs/kline-cache/check', { method: 'POST' });
       setStatus(`检查完成: 覆盖率 ${report.coverage_pct || 0}% 缺失 ${report.total_missing || 0} 条`, 'success');
-      await loadDataCenter();
+      await loadDataCenter({ force: true });
       document.getElementById('dcReportContent')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } catch (err) {
       setStatus(`检查失败: ${err.message}`, 'error');
@@ -329,13 +329,29 @@ function _pollMarketHot() {
     if (hs.status === 'fulfilled') state.hotStocks = hs.value;
     renderHotConcepts();
     renderHotStocks();
+    // #55：两个区块各自独立失败/重试，一个挂起不会把另一边也拖成加载态。
+    if (hc.status === 'rejected') {
+      reportBlockFailure('hotConcepts', hc.reason, () => _pollMarketHot(),
+        { title: '热门概念', hasData: !!state.hotConcepts });
+    }
+    if (hs.status === 'rejected') {
+      reportBlockFailure('hotStocks', hs.reason, () => _pollMarketHot(),
+        { title: '热门个股', hasData: !!state.hotStocks });
+    }
   });
 }
 
 function _registerPollingTasks() {
   Polling.register('market-status', _updateMarketStatus, { interval: 30000 });
   Polling.register('market-hot', _pollMarketHot, { interval: 10000, tab: 'market' });
-  Polling.register('data-center', loadDataCenter, { interval: 3000, tab: 'data' });
+  // #54：数据中心按数据变化频率拆轮询——状态/进度运行中 5s、空闲 60s；
+  // 概览/报告/日志走 dc-detail 心跳（15s tick），但各区块按自身 TTL 与"关键状态变化"才真正发请求。
+  Polling.register('dc-status', () => loadDcStatus(), {
+    interval: () => (state.syncStatus && state.syncStatus.status === 'running'
+      ? DC_POLL.status.running : DC_POLL.status.idle),
+    tab: 'data',
+  });
+  Polling.register('dc-detail', () => refreshDcBlocks(), { interval: 15000, tab: 'data' });
   Polling.register('paper-prices', refreshPaperPrices, { interval: _paperPollInterval, tab: 'paper' });
   Polling.register('paper-hint', _updatePaperRefreshHint, { interval: 5000, tab: 'paper' });
   Polling.register('predict', loadPredictFunnel, {

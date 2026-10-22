@@ -58,10 +58,28 @@ function renderNoticeCounts() {
   document.getElementById('notice-count-buy').textContent = state.noticeFunnel.stats.buy;
 }
 
+// #56：与策略池统一晋升口径——候选只能升重点，重点才能升买入，禁止跨级直达买入池。
 function noticeCardActions(stock) {
-  if (stock.pool === 'candidate') return [['加入重点', 'focus'], ['加入买入', 'buy']];
+  if (stock.pool === 'candidate') return [['加入重点', 'focus']];
   if (stock.pool === 'focus') return [['移回候选', 'candidate'], ['加入买入', 'buy']];
   return [['降级重点', 'focus']];
+}
+
+// #56：分数着色不再恒为上涨色。优先按"同池均值的相对位置"分档，
+// 没有可用均值时退回绝对阈值（≥70 偏强 / ≤40 偏弱 / 其余中性）。
+function _noticeScoreCls(score, scores = []) {
+  const values = (scores || []).map((v) => Number(v)).filter((v) => Number.isFinite(v));
+  const n = Number(score);
+  if (!Number.isFinite(n)) return 'neutral';
+  if (values.length >= 3) {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    if (n >= mean + 5) return 'up';
+    if (n <= mean - 5) return 'down';
+    return 'neutral';
+  }
+  if (n >= 70) return 'up';
+  if (n <= 40) return 'down';
+  return 'neutral';
 }
 
 async function moveNoticePool(symbol, targetPool) {
@@ -80,6 +98,7 @@ async function moveNoticePool(symbol, targetPool) {
 function renderNoticePool(poolName, list) {
   const root = document.getElementById(`notice-pool-${poolName}`);
   root.innerHTML = '';
+  const scores = list.map((s) => s.score);
   list.forEach((stock) => {
     const card = document.createElement('div');
     card.className = `stock-card ${state.noticeSelectedSymbol === stock.symbol ? 'active' : ''}`;
@@ -93,7 +112,7 @@ function renderNoticePool(poolName, list) {
     card.innerHTML = `
       <div class="stock-top">
         <div class="stock-name">${esc(stock.name)} (${esc(stock.symbol)})</div>
-        <div class="score up">${fmtNum(stock.score)}</div>
+        <div class="score ${_noticeScoreCls(stock.score, scores)}">${fmtNum(stock.score)}</div>
       </div>
       <div class="metrics">${esc(stock.notice_type)} · ${esc(stock.notice_date)}</div>
       <div class="metrics">${esc(stock.title)}</div>
@@ -113,7 +132,10 @@ function renderNoticePool(poolName, list) {
   if (!list.length) {
     const hint = state.activeKeywords.size > 0 ? '当前关键词下无匹配公告' : '尚未运行公告筛选';
     root.innerHTML = `<div class="empty-state"><div class="empty-state-text">${esc(hint)}</div></div>`;
+    return;
   }
+  // #56：候选池一次性铺几十上百张卡片会拖慢滚动，超过阈值先折叠。
+  _applyLongListCollapse(root, POOL_LIST_COLLAPSE_THRESHOLD, `notice-${poolName}`);
 }
 
 function renderNoticeFunnel() {
@@ -139,8 +161,15 @@ async function selectNoticeSymbol(symbol) {
   renderChartPlaceholder('加载中...');
   document.getElementById('noticeSummary').textContent = '加载中...';
   document.getElementById('noticeDetail').textContent = '加载中...';
+  // #55：公告详情与 Kronos 预测并发发出，任一挂起都不会让另一块停在加载态；
+  // 渲染顺序仍由先详情后预测保证，避免预测覆盖 K 线图后被详情重绘冲掉。
+  const [detailRes, predictRes] = await Promise.allSettled([
+    request(`/api/notice/${symbol}/detail?days=30`),
+    request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`),
+  ]);
   try {
-    const detail = await request(`/api/notice/${symbol}/detail?days=30`);
+    if (detailRes.status === 'rejected') throw detailRes.reason;
+    const detail = detailRes.value;
     const kline = detail.kline || [];
     document.getElementById('noticeSummary').textContent = `${detail.name}(${detail.symbol}) 分数:${fmtNum(detail.score)} 池:${detail.pool}`;
     const first = (detail.notices || [])[0] || {};
@@ -166,25 +195,45 @@ async function selectNoticeSymbol(symbol) {
     } else {
       renderChartPlaceholder('K线数据未同步，请先执行数据同步');
     }
-    _fetchAndRenderNoticePredict(symbol, detail.name);
+    _renderNoticePredict(symbol, detail.name, predictRes);
     _scrollToRightPanel();
   } catch (err) {
-    document.getElementById('noticeDetail').textContent = `加载失败: ${err.message}`;
+    reportBlockFailure('noticeDetail', err, () => selectNoticeSymbol(symbol), {
+      title: '公告详情',
+      hasData: Boolean(state.noticeFunnel),
+    });
     renderChartPlaceholder(`加载失败: ${err.message}`);
   }
 }
 
-async function _fetchAndRenderNoticePredict(symbol, name) {
+// #55：预测块失败只影响本块，给出块内重试，不再静默吞掉。
+function _renderNoticePredict(symbol, name, predictRes) {
+  if (state.noticeSelectedSymbol !== symbol) return;
   const summaryEl = document.getElementById('stockSummary');
-  try {
-    const pred = await request(`/api/predict/${symbol}/kronos?lookback=180&horizon=3`);
-    if (pred.merged_kline && pred.merged_kline.length) {
-      const pk = pred.predicted_kline || [];
-      const predDates = pk.map(x => x.date);
-      const rtMap = await _fetchRealtimeMap(symbol, predDates);
+  if (predictRes.status === 'rejected') {
+    _appendPredictSummaryFailed(summaryEl, predictRes.reason, symbol, name);
+    return;
+  }
+  const pred = predictRes.value;
+  if (!(pred.merged_kline && pred.merged_kline.length)) return;
+  const pk = pred.predicted_kline || [];
+  Promise.allSettled([_fetchRealtimeMap(symbol, pk.map((x) => x.date))])
+    .then(([rtRes]) => {
+      if (state.noticeSelectedSymbol !== symbol) return;
+      const rtMap = rtRes.status === 'fulfilled' ? rtRes.value : {};
       renderKlineChart(pred.merged_kline, pred.prediction_start_index, rtMap);
       _appendPredictSummary(summaryEl, pk, pred.history_kline || [], rtMap);
-    }
-  } catch (_) {}
+    })
+    .catch(() => {});
+}
+
+function _appendPredictSummaryFailed(summaryEl, err, symbol, name) {
+  if (!summaryEl) return;
+  const retry = () => selectNoticeSymbol(symbol);
+  if (state.noticeFunnel) {
+    setStatus(`预测区块加载失败：${_blockErrorText(err)}（公告详情不受影响）`, 'error');
+    return;
+  }
+  showBlockError(summaryEl, err, retry, { title: 'Kronos 预测' });
 }
 

@@ -2666,3 +2666,61 @@ body { color: var(--text); }
 .paper-item-header { display: flex; align-items: center; gap: 8px; }
 .paper-item-detail { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .pnl-badge { margin-left: auto; font-weight: 700; font-size: 13px; }
+
+/* ==================== 前端 QA 批次（#50/#53/#54/#55/#56） ==================== */
+/* #50 策略命中卡片操作区：与其它池卡片同构，按钮阻断冒泡不触发预测 modal */
+.sc-hit-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.sc-hit-actions button { padding: 4px 10px; font-size: 12px; }
+.sc-hit-actions .btn-enroll-focus {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: var(--brand-soft);
+  color: #bfdbfe;
+}
+.sc-hit-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: var(--muted);
+}
+.composite-section[data-actionable="0"] .composite-section-hint::after {
+  content: " · 入池接口未上线，命中项仅预览且不计入候选数";
+  color: var(--focus);
+}
+
+/* #56 长列表折叠 */
+.list-collapse-toggle {
+  margin-top: 8px;
+  width: 100%;
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* #56 分数着色新增中性档（不再恒为上涨色） */
+.score.neutral { color: var(--text-secondary); }
+
+/* #55 区块级失败 + 独立重试 */
+.block-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.08);
+}
+.block-error-text { color: #fca5a5; font-size: var(--fs-sm); font-weight: 600; }
+.block-error-hint { color: var(--muted); font-size: var(--fs-xs); }
+.block-error .block-retry { align-self: flex-start; }
+
+/* #54 数据中心轮询拆分后的可见口径 */
+.dc-poll-meta { color: var(--text-dim); font-size: 11px; }
+
+/* 三池晋升口径说明（#50/#56） */
+.pool-rule-note {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.dc-sync-hint-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }

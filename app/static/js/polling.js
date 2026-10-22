@@ -56,6 +56,18 @@ const Polling = {
     if (task) this._start(task, true);
   },
 
+  /**
+   * 重新按"当前" interval 排一次定时器。
+   * 间隔是函数（例如 running 5s / 空闲 60s）时，状态跃迁后需要显式收口，
+   * 否则会按跃迁前的旧节奏继续排队（#54）。
+   */
+  reschedule(name) {
+    const task = this.tasks.get(name);
+    if (!task || !task.active) return;
+    if (task.running) return; // 正在执行：_tick 结束时会按新间隔排程
+    this._schedule(task, this._intervalOf(task));
+  },
+
   stop(name) {
     const task = this.tasks.get(name);
     if (!task) return;
