@@ -227,9 +227,7 @@ def test_regime_custom_rules_injection():
         RegimeRule("测试发酵", "注入规则", lambda ctx: ctx.score is not None),
     )
     factors = _full_score_factors()
-    assert (
-        classify_regime(factors, regime_rules=always_ferment) == "测试发酵"
-    )
+    assert classify_regime(factors, regime_rules=always_ferment) == "测试发酵"
     # 注入规则全部不成立且无 catch-all → 返回 missing_label。
     never = (RegimeRule("x", "", lambda ctx: False),)
     assert classify_regime(factors, regime_rules=never) is None
@@ -276,9 +274,7 @@ def test_intraday_fields_never_affect_close_regime():
     polluted["intraday_regime"] = "高潮"
     assert compute_sentiment_score(polluted).score == baseline_score
     assert classify_regime(polluted, score=baseline_score) == baseline
-    assert all(
-        not name.startswith("intraday_") for name in RULE_INPUT_FIELDS
-    )
+    assert all(not name.startswith("intraday_") for name in RULE_INPUT_FIELDS)
 
 
 def test_default_rule_chain_ends_with_single_catch_all():

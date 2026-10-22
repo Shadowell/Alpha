@@ -130,9 +130,7 @@ DEFAULT_SCORE_BUCKETS: Mapping[str, tuple[ScoreComponent, ...]] = {
         ScoreComponent("ladder_integrity", 0.0, 1.0, 0.20),
     ),
     "effect": (
-        ScoreComponent(
-            "yesterday_limit_up_premium_close_mean", -0.02, 0.04, 0.35
-        ),
+        ScoreComponent("yesterday_limit_up_premium_close_mean", -0.02, 0.04, 0.35),
         ScoreComponent("money_making_effect", 0.30, 0.70, 0.25),
         ScoreComponent("broken_board_rate", 0.25, 0.65, 0.25, invert=True),
         ScoreComponent("big_loss_rate", 0.0, 0.30, 0.15, invert=True),
@@ -287,7 +285,9 @@ def _in_range(value: float | None, lo: float, hi: float) -> bool:
 
 
 def _any_evaluable_true(
-    ctx: RegimeContext, keys: Sequence[str], bounds: Sequence[float],
+    ctx: RegimeContext,
+    keys: Sequence[str],
+    bounds: Sequence[float],
     invert: Sequence[bool],
 ) -> bool:
     """至少一个条件可评估，且所有可评估条件中至少一个成立。"""
@@ -309,12 +309,8 @@ def _rule_freeze(ctx: RegimeContext) -> bool:
     return (
         _le(ctx.score, p["freeze_score_max"])
         and _le(ctx.value("limit_up_count"), p["freeze_limit_up_max"])
-        and _le(
-            ctx.value("max_consecutive_boards"), p["freeze_max_boards"]
-        )
-        and _ge(
-            ctx.value("broken_board_rate"), p["freeze_broken_rate_min"]
-        )
+        and _le(ctx.value("max_consecutive_boards"), p["freeze_max_boards"])
+        and _ge(ctx.value("broken_board_rate"), p["freeze_broken_rate_min"])
         and _lt(ctx.value("yesterday_limit_up_premium_close_mean"), 0.0)
     )
 
@@ -324,13 +320,9 @@ def _rule_climax(ctx: RegimeContext) -> bool:
     return (
         _ge(ctx.score, p["climax_score_min"])
         and _ge(ctx.value("limit_up_count"), p["climax_limit_up_min"])
-        and _ge(
-            ctx.value("max_consecutive_boards"), p["climax_max_boards_min"]
-        )
+        and _ge(ctx.value("max_consecutive_boards"), p["climax_max_boards_min"])
         and _ge(ctx.value("promotion_rate_1_to_2"), p["climax_promotion_min"])
-        and _ge(
-            ctx.value("market_amount_ratio_5d"), p["climax_amount_ratio_min"]
-        )
+        and _ge(ctx.value("market_amount_ratio_5d"), p["climax_amount_ratio_min"])
         and _ge(ctx.value("yesterday_limit_up_premium_close_mean"), 0.0)
     )
 
@@ -371,9 +363,7 @@ def _rule_ferment(ctx: RegimeContext) -> bool:
         return False
     if not _in_range(ctx.score, p["ferment_score_min"], p["climax_score_min"]):
         return False
-    if not _ge(
-        ctx.value("max_consecutive_boards"), p["ferment_max_boards_min"]
-    ):
+    if not _ge(ctx.value("max_consecutive_boards"), p["ferment_max_boards_min"]):
         return False
     if not _ge(ctx.value("promotion_rate_1_to_2"), p["ferment_promotion_min"]):
         return False
@@ -390,9 +380,7 @@ def _rule_repair(ctx: RegimeContext) -> bool:
         return False
     if not ctx.is_rising():
         return False
-    if not _ge(
-        ctx.value("yesterday_limit_up_premium_close_mean"), 0.0
-    ):
+    if not _ge(ctx.value("yesterday_limit_up_premium_close_mean"), 0.0):
         return False
     return _le(ctx.value("broken_board_rate"), p["repair_broken_rate_max"])
 
@@ -493,9 +481,9 @@ RULE_INPUT_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-assert all(
-    not name.startswith("intraday_") for name in RULE_INPUT_FIELDS
-), "intraday 估算字段禁止进入收盘 regime 规则"
+assert all(not name.startswith("intraday_") for name in RULE_INPUT_FIELDS), (
+    "intraday 估算字段禁止进入收盘 regime 规则"
+)
 
 
 def classify_regime(
@@ -519,14 +507,10 @@ def classify_regime(
     if regime_params:
         unknown = set(regime_params) - set(params)
         if unknown:
-            raise ValueError(
-                f"unknown regime params: {sorted(unknown)}"
-            )
+            raise ValueError(f"unknown regime params: {sorted(unknown)}")
         params.update(regime_params)
     rules = (
-        tuple(regime_rules)
-        if regime_rules is not None
-        else build_default_rules(params)
+        tuple(regime_rules) if regime_rules is not None else build_default_rules(params)
     )
     ctx = RegimeContext(
         factors=factors,
