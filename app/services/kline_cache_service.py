@@ -181,6 +181,18 @@ class KlineCacheService:
         return dates
 
     @staticmethod
+    def _normalize_trade_date(value: Any) -> str:
+        """把 YYYYMMDD / YYYY-MM-DD 统一成 ISO 日期，供日期比较与落库使用。
+
+        调用方（含 API 查询参数）可能传紧凑格式；直接与 `date().isoformat()`
+        做字符串比较会把历史日期误判成"未收盘"，导致同步任务静默跳过。
+        """
+        text = str(value or "").strip().replace("-", "").replace("/", "")
+        if len(text) >= 8 and text[:8].isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+        return ""
+
+    @staticmethod
     def _date_settled(trade_date: str, now: datetime | None = None) -> bool:
         """D1：目标交易日的日K是否已收盘定型。
 
@@ -189,7 +201,8 @@ class KlineCacheService:
         唯一键永久固化，故一律拒绝。
         """
         now = now or now_cn()
-        if str(trade_date) < now.date().isoformat():
+        normalized = KlineCacheService._normalize_trade_date(trade_date) or str(trade_date)
+        if normalized < now.date().isoformat():
             return True
         return now.timetz().replace(tzinfo=None) >= _EOD_SETTLE_TIME
 
@@ -252,7 +265,7 @@ class KlineCacheService:
         window_days: int | None = None,
     ) -> dict[str, Any]:
         t0 = pytime.time()
-        target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target_trade_date = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
             return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
 
@@ -525,7 +538,7 @@ class KlineCacheService:
         trade_date: str | None = None,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
-        target_trade_date = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target_trade_date = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target_trade_date:
             return {"success": False, "message": "无法确定交易日", "trade_date": "", "symbol_count": 0}
 
@@ -804,7 +817,7 @@ class KlineCacheService:
         trade_date: str | None = None,
         trigger_mode: str = "manual",
     ) -> dict[str, Any]:
-        target = trade_date or await self._resolve_latest_trade_date(now_cn().date().isoformat())
+        target = self._normalize_trade_date(trade_date) or await self._resolve_latest_trade_date(now_cn().date().isoformat())
         if not target:
             return {"success": False, "message": "无法确定交易日", "trade_date": ""}
         if not self._date_settled(target):

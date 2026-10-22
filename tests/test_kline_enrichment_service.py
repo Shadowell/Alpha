@@ -175,3 +175,29 @@ def test_sync_buy_pool_minutes_skips_off_hours(tmp_path, monkeypatch):
 
     assert result["skipped_off_hours"] is True
     assert store.get_minute_bars("600000") == []
+
+
+def test_date_settled_accepts_compact_dates():
+    from zoneinfo import ZoneInfo
+
+    now = dt.datetime(2026, 10, 22, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    assert KlineCacheService._normalize_trade_date("20260901") == "2026-09-01"
+    assert KlineCacheService._normalize_trade_date("2026-09-01") == "2026-09-01"
+    assert KlineCacheService._normalize_trade_date("bad-input") == ""
+    # 紧凑格式的历史日期必须判为已定型，否则同步任务会被静默跳过
+    assert KlineCacheService._date_settled("20260901", now) is True
+    assert KlineCacheService._date_settled("2026-09-01", now) is True
+    assert KlineCacheService._date_settled("20261022", now) is False
+
+
+def test_sync_enrichment_accepts_compact_trade_date(tmp_path):
+    service, store = _service(tmp_path, FakeEnrichmentClient())
+
+    result = _run(service.sync_enrichment(TRADE_DATE.replace("-", "")))
+
+    assert result.get("skipped_intraday") is None
+    assert result["trade_date"] == TRADE_DATE
+    assert result["success"] is True
+    overview = {item["dataset"]: item for item in store.get_enrichment_overview()}
+    assert overview["daily_extras"]["trade_date"] == TRADE_DATE
