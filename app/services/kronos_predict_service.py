@@ -28,6 +28,7 @@ from typing import Any
 import pandas as pd
 
 from app.services.time_utils import now_cn
+
 log = logging.getLogger(__name__)
 
 _MODEL_ID = "NeoQuasar/Kronos-base"

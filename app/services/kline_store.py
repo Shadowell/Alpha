@@ -672,8 +672,14 @@ class KlineSQLiteStore:
 
     def upsert_moneyflow(self, rows: list[dict[str, Any]], updated_at: str) -> int:
         fields = [
-            "buy_sm_amount", "sell_sm_amount", "buy_md_amount", "sell_md_amount",
-            "buy_lg_amount", "sell_lg_amount", "buy_elg_amount", "sell_elg_amount",
+            "buy_sm_amount",
+            "sell_sm_amount",
+            "buy_md_amount",
+            "sell_md_amount",
+            "buy_lg_amount",
+            "sell_lg_amount",
+            "buy_elg_amount",
+            "sell_elg_amount",
             "net_mf_amount",
         ]
         payload = [
@@ -703,7 +709,9 @@ class KlineSQLiteStore:
             conn.commit()
             return len(payload)
 
-    def upsert_market_capital_flow(self, rows: list[dict[str, Any]], updated_at: str) -> int:
+    def upsert_market_capital_flow(
+        self, rows: list[dict[str, Any]], updated_at: str
+    ) -> int:
         payload = [
             (
                 str(row.get("trade_date", "")),
@@ -1013,7 +1021,9 @@ class KlineSQLiteStore:
         with self._connect() as conn:
             states = {
                 str(row["dataset"]): dict(row)
-                for row in conn.execute("SELECT * FROM enrichment_sync_state").fetchall()
+                for row in conn.execute(
+                    "SELECT * FROM enrichment_sync_state"
+                ).fetchall()
             }
             table_stats = {
                 "daily_extras": conn.execute(
@@ -1046,7 +1056,9 @@ class KlineSQLiteStore:
             if dataset == "minute":
                 stats_row = minute_row
                 latest_date = stats_row["latest_date"] if stats_row else ""
-                extra = {"latest_bar_time": stats_row["latest_bar"] if stats_row else ""}
+                extra = {
+                    "latest_bar_time": stats_row["latest_bar"] if stats_row else ""
+                }
             else:
                 stats_row = table_stats.get(dataset)
                 latest_date = stats_row["latest_date"] if stats_row else ""
