@@ -4,11 +4,16 @@ import asyncio
 
 import datetime as dt
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
-from app.services.blocking_io import ExternalTimeoutError, run_blocking
+from app.services.blocking_io import (
+    ExternalCircuitOpenError,
+    ExternalTimeoutError,
+    run_blocking,
+)
 from app.services.market_data_client import EastmoneyMarketDataClient, _normalize_symbol
 
 try:
@@ -41,6 +46,110 @@ def _to_ts_code(symbol: str) -> str:
     if clean.startswith(("4", "8")):
         return f"{clean}.BJ"
     return f"{clean}.SZ"
+
+
+# ── 打板数据底座（issue #22）：接口能力探测 ──────────────────────
+
+# 启动探测覆盖的接口；顺序即能力矩阵顺序。
+LIMIT_BOARD_APIS: tuple[str, ...] = (
+    "limit_list_d",
+    "limit_step",
+    "kpl_list",
+    "top_list",
+    "top_inst",
+    "hm_detail",
+    "hm_list",
+    "hsgt_top10",
+)
+
+# 单次调用结果状态（数据层面），与能力状态共同决定同步记录。
+RESULT_OK = "ok"
+RESULT_EMPTY = "empty"
+
+# 能力状态（对外可见，写入能力矩阵与同步状态表）。
+CAPABILITY_AVAILABLE = "available"
+CAPABILITY_DENIED = "denied"
+CAPABILITY_ERROR = "error"
+CAPABILITY_NOT_CONFIGURED = "not_configured"
+
+# 探测时使用的最小化请求：单只股票 + 单日，只为判别权限，不拉全市场。
+_PROBE_TS_CODE = "000001.SZ"
+
+# 各接口允许的请求参数（Tushare 对未知参数会直接报错，必须白名单）。
+_LIMIT_API_PARAMS: dict[str, tuple[str, ...]] = {
+    "limit_list_d": ("trade_date", "ts_code"),
+    "limit_step": ("trade_date", "ts_code"),
+    "kpl_list": ("trade_date", "ts_code"),
+    "top_list": ("trade_date", "ts_code"),
+    "top_inst": ("trade_date", "ts_code"),
+    "hm_detail": ("trade_date", "ts_code"),
+    "hm_list": (),
+    "hsgt_top10": ("trade_date", "ts_code"),
+}
+
+# 显式 fields：只取打板底座用到的列，减少流量。
+# 未列出的接口（limit_step / hm_detail，本机账号无权限）不做裁剪，
+# 由字段映射层按别名兼容，避免猜错的 fields 直接把可用账号打成 error。
+_LIMIT_API_FIELDS: dict[str, str] = {
+    "limit_list_d": (
+        "trade_date,ts_code,industry,name,close,pct_chg,amount,limit_amount,"
+        "float_mv,total_mv,turnover_ratio,fd_amount,first_time,last_time,"
+        "open_times,up_stat,limit_times,limit"
+    ),
+    "kpl_list": (
+        "ts_code,name,trade_date,lu_time,open_time,last_time,lu_desc,tag,"
+        "theme,status,amount,turnover_rate,free_float"
+    ),
+    "top_list": (
+        "trade_date,ts_code,name,close,pct_change,turnover_rate,amount,l_sell,"
+        "l_buy,l_amount,net_amount,net_rate,amount_rate,float_values,reason"
+    ),
+    "top_inst": (
+        "trade_date,ts_code,exalter,buy,buy_rate,sell,sell_rate,net_buy,side,reason"
+    ),
+    "hsgt_top10": (
+        "trade_date,ts_code,name,close,change,rank,market_type,amount,"
+        "net_amount,buy,sell"
+    ),
+}
+
+_PERMISSION_HINTS = ("权限", "积分", "配额", "permission", "quota", "forbidden")
+_EMPTY_HINTS = ("无数据", "not found", "no data")
+
+
+def classify_tushare_error(exc: BaseException, *, token: str = "") -> tuple[str, str]:
+    """把 Tushare 异常归一为 ``(capability_status, safe_reason)``。
+
+    只返回稳定代号，绝不回传原始报文：上游报错里可能带 URL/账号信息，
+    而 Token 本身也可能出现在个别 SDK 文案里，因此额外做一次脱敏兜底。
+    """
+    if isinstance(exc, ExternalCircuitOpenError):
+        return CAPABILITY_ERROR, "circuit_open"
+    if isinstance(exc, ExternalTimeoutError):
+        return CAPABILITY_ERROR, "timeout"
+    raw = str(exc)
+    lowered = raw.lower()
+    if token:
+        raw = raw.replace(token, "***")
+        lowered = lowered.replace(token.lower(), "***")
+    if any(hint in lowered or hint in raw for hint in _PERMISSION_HINTS):
+        return CAPABILITY_DENIED, "permission_denied"
+    if any(hint in lowered or hint in raw for hint in _EMPTY_HINTS):
+        return CAPABILITY_AVAILABLE, "empty_response"
+    return CAPABILITY_ERROR, f"api_error:{type(exc).__name__}"
+
+
+@dataclass(frozen=True)
+class LimitApiResult:
+    """一次打板接口调用的结果：数据 + 能力状态 + 安全代号。"""
+
+    frame: pd.DataFrame
+    status: str
+    reason: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status in {RESULT_OK, RESULT_EMPTY}
 
 
 class TushareFirstMarketDataClient:
@@ -650,3 +759,85 @@ class TushareFirstMarketDataClient:
             }
         )
         return result[result["bar_time"].ne("") & result["trade_date"].ne("")].reset_index(drop=True)
+
+    # ── 打板数据底座（issue #22）─────────────────────────────
+
+    async def call_limit_api(
+        self,
+        api: str,
+        *,
+        trade_date: str = "",
+        ts_code: str = "",
+        timeout: float | None = None,
+    ) -> LimitApiResult:
+        """调用一个打板相关接口，返回数据 + 能力状态 + 安全代号。
+
+        与 ``_run_dataset`` 的区别：这里保留可判别的能力状态（denied / error /
+        empty），供能力矩阵和 ``enrichment_sync_state`` 使用；调用统一走
+        :func:`run_blocking`，因此沿用既有的外部超时与熔断。
+        """
+        if not self.is_ready:
+            return LimitApiResult(pd.DataFrame(), CAPABILITY_NOT_CONFIGURED, "tushare_not_configured")
+        params: dict[str, str] = {}
+        allowed = _LIMIT_API_PARAMS.get(api, ())
+        compact = _compact_date(trade_date)
+        if "trade_date" in allowed and compact:
+            params["trade_date"] = compact
+        clean_code = str(ts_code or "").strip().upper()
+        if "ts_code" in allowed and clean_code:
+            params["ts_code"] = clean_code
+        fields = _LIMIT_API_FIELDS.get(api)
+        if fields:
+            params["fields"] = fields
+        try:
+            frame = await run_blocking(
+                self._call_limit_api_sync,
+                api,
+                params,
+                timeout=timeout,
+                name=f"tushare.{api}",
+            )
+        except Exception as exc:  # noqa: BLE001 — 单接口失败必须降级而非冒泡
+            status, reason = classify_tushare_error(exc, token=self.token)
+            self._last_operation = {
+                "operation": api,
+                "source": "tushare",
+                "fallback_reason": reason,
+            }
+            return LimitApiResult(pd.DataFrame(), status, reason)
+        self._last_operation = {"operation": api, "source": "tushare", "fallback_reason": ""}
+        if frame is None or frame.empty:
+            return LimitApiResult(pd.DataFrame(), RESULT_EMPTY, "empty_response")
+        return LimitApiResult(frame, RESULT_OK, "")
+
+    async def probe_limit_capabilities(
+        self,
+        trade_date: str,
+        apis: tuple[str, ...] | list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """逐接口探测权限，输出能力矩阵（不含任何密钥或原始报文）。"""
+
+        matrix: list[dict[str, Any]] = []
+        for api in apis or LIMIT_BOARD_APIS:
+            result = await self.call_limit_api(api, trade_date=trade_date, ts_code=_PROBE_TS_CODE)
+            capability = (
+                CAPABILITY_AVAILABLE
+                if result.status in {RESULT_OK, RESULT_EMPTY}
+                else result.status
+            )
+            matrix.append(
+                {
+                    "api": api,
+                    "capability": capability,
+                    "reason": "ok" if capability == CAPABILITY_AVAILABLE else result.reason,
+                    "sample_rows": int(len(result.frame)),
+                }
+            )
+        return matrix
+
+    def _call_limit_api_sync(self, api: str, params: dict[str, str]) -> pd.DataFrame:
+        method = getattr(self._pro_api(), api, None)
+        if method is None:
+            raise RuntimeError(f"tushare_api_missing:{api}")
+        frame = method(**params)
+        return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
