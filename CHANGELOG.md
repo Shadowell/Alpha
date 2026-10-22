@@ -14,6 +14,7 @@
 - `/api/health`、`/api/metrics`、结构化日志与 request ID；compose 健康检查从首页改为真实依赖检查（#18）。
 - `app/services/deployment_guard.py`：显式区分 loopback/public 暴露面，public + TRUST_EDGE + 无写令牌时启动 fail-fast（#10）。
 - `app/services/sqlite_migrations.py`：`PRAGMA user_version` 启动迁移；funnel v2 持久化 `hot_stocks_updated_at`，market v2 覆盖 Tushare 增强表（#16 #21）。
+- `app/services/limit_up_backtest.py`：打板可成交性回测引擎（纯服务，未接 HTTP/API）——T 日涨停排队/次日竞价开盘买入、一字与停牌买不到建模、跌停封死/停牌卖出顺延、T+1、佣金万2.5最低5/印花税万5/过户费/动态滑点、单票参与率容量与容量曲线、净值口径绩效（年化/回撤/Sharpe/Sortino/Calmar/胜率/盈亏比/费用占比/溢价指标）、指数与等权全市场基准（缺数显式 skip）、regime/板型/市值/连板高度分层、strict/loose 双口径对照、与旧 BacktestLab 差异纯函数报告、seed 可复现与 JSON 持久化（#26）。详见 `docs/issue-26-limit-up-backtest.md`。
 - `app/services/error_response.py`：5xx 仅返回通用消息与 error id，异常细节写服务端日志（#19）。
 - CI：ruff lint/format、scoped mypy、pytest coverage 门禁、Playwright E2E workflow、Dependabot 和精确依赖 pin（#13）。
 - 前端安全模块、22 个 classic script 模块与统一轮询调度器；两个页面增加 CSP（#8 #12）。
