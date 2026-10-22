@@ -5,4 +5,4 @@
 torch>=2.0.0
 einops==0.8.2
 huggingface_hub==1.17.0
-safetensors==0.7.0
+safetensors==0.8.0
