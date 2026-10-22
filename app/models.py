@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -8,6 +9,8 @@ from app.config import POOL_BUY, POOL_CANDIDATE, POOL_FOCUS
 from app.services.strategy_rules import RULE_REGISTRY, RuleParam, RuleSpec
 
 PoolName = Literal["candidate", "focus", "buy"]
+PoolEnrollSource = Literal["strategy_scan", "manual"]
+MarketSessionName = Literal["pre", "open", "lunch", "closed", "holiday"]
 
 
 class ConceptTag(BaseModel):
@@ -43,6 +46,10 @@ class FunnelResponse(BaseModel):
     updated_at: str
     pools: dict[str, list[StockCard]]
     stats: dict[str, int]
+    # #57：服务端统一交易时段口径（前端 core.js 优先采用；缺失时前端回退东八区本地兜底）。
+    market_session: MarketSessionName | None = None
+    is_trading_day: bool | None = None
+    china_time: str | None = None
 
 
 class HotConceptItem(BaseModel):
@@ -92,6 +99,57 @@ class MovePoolResponse(BaseModel):
     message: str
     symbol: str
     pool: PoolName
+
+
+_SYMBOL_6DIGIT = re.compile(r"^\d{6}$")
+
+
+class PoolEnrollRequest(BaseModel):
+    """#50：策略命中入池请求（前端 funnel.js 固定发送 {symbol, name, source}）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    symbol: str = Field(min_length=1, max_length=32)
+    name: str | None = Field(default=None, max_length=64)
+    source: PoolEnrollSource = "manual"
+    # 可选目标池：仅允许逐级晋升（新入池固定先落候选池），非法层级由服务层按
+    # pool_transition 校验返回 400，文案与 /api/pool/move 完全一致。
+    target_pool: PoolName | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalize_symbol(cls, value: str) -> str:
+        raw = str(value or "").strip().upper()
+        if raw.startswith(("SH", "SZ", "BJ")) and len(raw) > 2:
+            raw = raw[2:]
+        if not _SYMBOL_6DIGIT.match(raw):
+            raise ValueError("symbol 必须为 6 位数字证券代码")
+        return raw
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class PoolEnrollResponse(BaseModel):
+    success: bool
+    message: str
+    symbol: str
+    pool: PoolName
+    created: bool = False
+    moved: bool = False
+
+
+class MarketSessionResponse(BaseModel):
+    """#57：交易时段只读接口响应（字段名即前端消费契约）。"""
+
+    market_session: MarketSessionName
+    is_trading_day: bool
+    china_time: str
 
 
 class RecomputeRequest(BaseModel):
