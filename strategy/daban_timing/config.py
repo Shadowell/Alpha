@@ -261,6 +261,7 @@ class PortfolioLimits:
     high_board_height: int = 4  # 高度 >= 该值视为"高位板"
     lot_size: int = 100  # 100 股整数倍
     allow_odd_lot_sell: bool = True  # 清仓时允许卖出零股
+    reject_when_board_height_unknown: bool = False  # 连板高度缺失时是否硬拒
 
     def __post_init__(self) -> None:
         object.__setattr__(
