@@ -2,15 +2,23 @@
 
 ## 服务与代码
 
-- 每次修改项目内任何代码、配置、脚本后，必须执行 `./restart.sh` 以使服务生效。
+- 本地 `./start.sh` / `./restart.sh` 仅用于开发调试，禁止把本地启动当作交付；线上以 tokyo 服务器部署为准。
 - 默认通过 `./start.sh` 启动，保持 `RELOAD=0`（后台运行更稳定）。
 - 若需开发期热重载，可显式使用 `RELOAD=1 ./start.sh`。
-- 每次修改代码、配置、脚本或测试并完成必要验证后，必须执行 `git add`、创建 Git commit，并 push 到 GitHub 的 `origin/main`（`https://github.com/Shadowell/Alpha`）；禁止只保留本地未提交改动或本地 commit。
+- 每次修改代码、配置、脚本或测试并完成必要验证后，必须执行 `git add`、创建 Git commit，并合并到 `main` 后 push 到 GitHub 的 `origin/main`（`https://github.com/Shadowell/Alpha`）；禁止只保留本地未提交改动、本地 commit 或只推送功能分支。
+- 合并到 `main` 后必须触发 CI 自动部署，并按下方「自动部署规则」确认线上部署成功；禁止用本地启动代替线上部署。
 - 当系统架构、页面功能、API 接口、项目结构或技术栈发生变化时，必须同步更新 `README.md`（包括但不限于：核心功能表、界面预览、技术栈、项目结构树、API 接口列表等对应章节）。
+
+## 自动部署规则
+
+- 代码改动流程固定为：`git add` → `git commit` → 合并到 `main` → push `origin/main` → GitHub Actions 自动部署。
+- 自动部署 workflow：`.github/workflows/deploy.yml`；部署脚本：`deploy/deploy.sh`；部署目标：tokyo 服务器（`https://alpha.notenap.com`）。
+- 禁止只保留本地改动、只创建本地 commit 或只在本地启动服务；线上必须运行最新 `main`。
+- 自动部署触发后，必须确认 GitHub Actions 运行成功，并完成线上冒烟检查（页面、关键 API、静态资源）；失败需修复后重新触发，直至部署成功。
 
 ## 服务重启与代码变更操作规范
 
-**每次重启服务或修改代码前，必须严格按以下顺序执行，防止 SQLite 进程卡死（UEs 内核不可中断状态）：**
+**本地 macOS 环境每次重启服务或修改代码前，必须严格按以下顺序执行，防止 SQLite 进程卡死（UEs 内核不可中断状态）；服务器自动部署不适用此本地流程。**
 
 ```
 1. 关闭 SQLite 连接（触发 WAL checkpoint）

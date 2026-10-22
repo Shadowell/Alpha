@@ -242,6 +242,15 @@ class TestKlineCache:
         assert r.status_code == 200
         assert isinstance(r.json().get("items"), list)
 
+    def test_kline_minute_accepts_compact_date(self, client):
+        r = client.get(f"/api/kline/{TEST_SYMBOL}/minute?trade_date=20261021")
+        assert r.status_code == 200
+        assert r.json().get("trade_date") == "2026-10-21"
+
+    def test_kline_minute_rejects_invalid_date(self, client):
+        r = client.get(f"/api/kline/{TEST_SYMBOL}/minute?trade_date=not-a-date")
+        assert r.status_code == 400
+
     def test_market_capital_flow(self, client):
         r = client.get("/api/market/capital-flow?days=30")
         assert r.status_code == 200
