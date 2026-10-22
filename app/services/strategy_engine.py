@@ -145,15 +145,21 @@ def apply_transition_rules(entry: dict[str, Any], config: StrategyConfig) -> dic
     if pool == POOL_CANDIDATE:
         if score >= config.focus_score_immediate or transitions["above60_count"] >= config.focus_consecutive_minutes:
             recommended_pool = POOL_FOCUS
-            trigger_notes.append("满足重点池条件")
+            auto_move_to = POOL_FOCUS
+            trigger_notes.append("满足重点池条件，自动升池")
 
-    if pool in {POOL_CANDIDATE, POOL_FOCUS}:
+    if pool == POOL_FOCUS:
         if (
             score >= config.buy_score_threshold
             and transitions["breakout_confirm_count"] >= config.buy_breakout_consecutive_minutes
         ):
             recommended_pool = POOL_BUY
-            trigger_notes.append("满足买入池触发条件")
+            auto_move_to = POOL_BUY
+            trigger_notes.append("满足买入池触发条件，自动升池")
+
+    if pool == POOL_CANDIDATE and score >= config.buy_score_threshold:
+        # 候选池不能跳过重点池，买入触发仍需在重点池完成突破确认。
+        recommended_pool = POOL_FOCUS
 
     if pool == POOL_BUY and transitions["below65_count"] >= config.downgrade_consecutive_minutes:
         auto_move_to = POOL_FOCUS

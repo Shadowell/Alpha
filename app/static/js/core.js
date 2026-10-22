@@ -36,6 +36,9 @@ const state = {
   strategyScanSnapshot: null,
 };
 
+// 测试与浏览器调试入口；classic module 的顶层 const 本身不会自动成为 window 属性。
+window.state = state;
+
 function fmtNum(v, digits = 2) {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n.toFixed(digits) : '0.00';

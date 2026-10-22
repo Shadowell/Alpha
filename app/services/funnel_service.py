@@ -152,11 +152,17 @@ class FunnelService:
                 if entry.get("pool") == pool and entry.get("symbol")
             ]
 
-    async def ensure_trade_date(self, trade_date: str | None = None) -> None:
-        date_str = trade_date or now_cn().date().isoformat()
-        if date_str != self.trade_date:
-            self._reset_state(date_str)
-            self._save_state()
+    def _is_historical_read(self, trade_date: str | None) -> bool:
+        requested = (trade_date or "").strip()
+        return bool(requested) and requested != self.trade_date
+
+    async def roll_to_current_trade_date(self) -> None:
+        """仅供后台收盘/跨日流程显式推进交易日，读取接口不得调用。"""
+        async with self.lock:
+            today = now_cn().date().isoformat()
+            if today != self.trade_date:
+                self._reset_state(today)
+                self._save_state()
 
     async def _warmup_name_cache(self) -> None:
         """预热股票代码→名称映射：优先 provider 缓存；不足时从 entries 补齐。"""
@@ -211,6 +217,7 @@ class FunnelService:
                 continue
 
             prev_score = float(entry.get("score", 0.0))
+            old_pool = str(entry.get("pool", POOL_CANDIDATE))
             score, breakdown, metrics, warnings = compute_intraday_score(entry, market_row, elapsed_ratio, self.config)
             entry["prev_score"] = prev_score
             entry["score"] = round(score, 2)
@@ -226,10 +233,20 @@ class FunnelService:
                 self._record_trigger(entry, note)
 
             auto_move_to = transitions_result.get("auto_move_to")
-            if auto_move_to and entry["pool"] == POOL_BUY:
-                entry["pool"] = auto_move_to
-                entry["recommended_pool"] = None
-                self._record_trigger(entry, "分数低于65连续5分钟，自动降级至重点池", "warn")
+            if auto_move_to and auto_move_to != entry["pool"]:
+                if auto_move_to == POOL_BUY:
+                    buy_count = sum(1 for e in self.entries.values() if e.get("pool") == POOL_BUY)
+                    if buy_count >= self.config.buy_pool_max_size:
+                        entry["recommended_pool"] = POOL_BUY
+                        self._record_trigger(entry, "买入池已满，保留升池建议", "warn")
+                    else:
+                        entry["pool"] = auto_move_to
+                        entry["recommended_pool"] = None
+                        self._record_trigger(entry, f"自动迁池: {old_pool} -> {auto_move_to}", "info")
+                else:
+                    entry["pool"] = auto_move_to
+                    entry["recommended_pool"] = None
+                    self._record_trigger(entry, f"自动迁池: {old_pool} -> {auto_move_to}", "info")
 
         await self._refresh_market_panels_unlocked(force=force_concept_refresh)
         self.updated_at = now_cn().isoformat()
@@ -350,7 +367,13 @@ class FunnelService:
 
     async def get_funnel(self, trade_date: str | None = None) -> FunnelResponse:
         async with self.lock:
-            await self.ensure_trade_date(trade_date)
+            if self._is_historical_read(trade_date):
+                return FunnelResponse(
+                    trade_date=trade_date.strip(),
+                    updated_at="",
+                    pools={POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []},
+                    stats={"candidate": 0, "focus": 0, "buy": 0},
+                )
             pools_raw = self._build_pool_lists()
             pools: dict[str, list[StockCard]] = {POOL_CANDIDATE: [], POOL_FOCUS: [], POOL_BUY: []}
 
@@ -394,7 +417,13 @@ class FunnelService:
 
     async def get_hot_concepts(self, trade_date: str | None = None) -> HotConceptResponse:
         async with self.lock:
-            await self.ensure_trade_date(trade_date)
+            if self._is_historical_read(trade_date):
+                return HotConceptResponse(
+                    trade_date=trade_date.strip(),
+                    updated_at="",
+                    frozen=False,
+                    items=[],
+                )
             if not self.hot_concepts:
                 await self._refresh_concepts_unlocked(force=True)
                 self.updated_at = now_cn().isoformat()
@@ -412,7 +441,13 @@ class FunnelService:
 
     async def get_hot_stocks(self, trade_date: str | None = None) -> HotStocksResponse:
         async with self.lock:
-            await self.ensure_trade_date(trade_date)
+            if self._is_historical_read(trade_date):
+                return HotStocksResponse(
+                    trade_date=trade_date.strip(),
+                    updated_at="",
+                    frozen=False,
+                    items=[],
+                )
             if (not self.hot_stocks) or self._is_hot_stocks_stale(ttl_seconds=300):
                 await self._refresh_hot_stocks_unlocked(force=True)
                 self._save_state()
@@ -461,7 +496,9 @@ class FunnelService:
         self, symbol: str, trade_date: str | None = None, kline_days: int = 30
     ) -> StockDetailResponse:
         async with self.lock:
-            await self.ensure_trade_date(trade_date)
+            if self._is_historical_read(trade_date):
+                # 当前版本不保存历史池快照；历史日期明确返回 404，不能重置当前状态。
+                raise KeyError(symbol)
             entry = self.entries.get(symbol)
             if entry:
                 entry_copy = dict(entry)
