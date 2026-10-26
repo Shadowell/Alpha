@@ -1,14 +1,14 @@
 # Core API and market-data runtime. Exact pins keep local/CI/Docker installs
 # reproducible; bump intentionally (Dependabot proposes updates).
-akshare==1.19.1
+akshare==1.19.3
 tushare==1.4.29
-fastapi==0.146.0
+fastapi==0.161.1
 uvicorn[standard]==0.54.0
-pandas==3.0.6
+pandas==3.1.0
 pydantic==2.14.1
 requests==2.34.2
 httpx==0.28.1
 tqdm==4.70.1
-numpy==2.4.6
+numpy==2.5.4
 joblib==1.6.0
 scikit-learn==1.9.1

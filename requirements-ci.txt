@@ -2,8 +2,8 @@
 -r requirements-base.txt
 # Floor is asserted verbatim by tests/test_dependency_profiles.py; the exact
 # pin below is what pip actually resolves so CI remains reproducible.
-pytest>=8.0.0
-pytest==9.0.3
+pytest>=9.1.1
+pytest==9.1.1
 pytest-cov==7.1.0
 mypy==2.4.0
-ruff==0.17.1
+ruff==0.17.2
