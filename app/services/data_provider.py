@@ -286,7 +286,7 @@ class AkshareDataProvider:
         db_dates: list[str] = []
         if self.kline_store is not None:
             try:
-                db_dates = self.kline_store.get_trade_dates_from_db() or []
+                db_dates = await asyncio.to_thread(self.kline_store.get_trade_dates_from_db) or []
             except Exception:
                 db_dates = []
         if db_dates and (min_days <= 0 or len(db_dates) >= min_days):
