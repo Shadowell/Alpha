@@ -11,6 +11,7 @@ from app.models import (
     MarketSessionResponse,
     MovePoolRequest,
     PoolEnrollRequest,
+    PoolRemoveRequest,
     RecomputeRequest,
 )
 from app.services.data_provider import normalize_symbol
@@ -88,6 +89,32 @@ async def enroll_pool(
     resp = await container.funnel_service.enroll_pool(
         req.symbol, name=req.name, source=req.source, target_pool=req.target_pool
     )
+    if not resp.success:
+        raise HTTPException(status_code=400, detail=resp.message)
+    await container.broadcast_snapshot()
+    return resp
+
+
+@router.post("/pool/remove")
+async def remove_pool(
+    req: PoolRemoveRequest,
+    container: ServiceContainer = Depends(get_container),
+):
+    """#50：将误入池或需淘汰的个股移出三池漏斗。"""
+    resp = await container.funnel_service.remove_pool(req.symbol, note=req.note)
+    if not resp.success:
+        raise HTTPException(status_code=400, detail=resp.message)
+    await container.broadcast_snapshot()
+    return resp
+
+
+@router.delete("/pool/{symbol}")
+async def delete_pool_symbol(
+    symbol: str,
+    container: ServiceContainer = Depends(get_container),
+):
+    """#50：RESTful 移出选股池端点。"""
+    resp = await container.funnel_service.remove_pool(symbol)
     if not resp.success:
         raise HTTPException(status_code=400, detail=resp.message)
     await container.broadcast_snapshot()

@@ -243,7 +243,7 @@ def test_api_enroll_invalid_symbol_422(tmp_path, bad_symbol):
 
 
 def test_api_enroll_symbol_prefix_normalized(tmp_path):
-    client = _app_client(_funnel(tmp_path))
+    client = _app_client(_funnel(tmp_path, name_map={SYMBOL: "北方国际"}))
     resp = client.post(
         "/api/pool/enroll", json={"symbol": "sz000065", "source": "strategy_scan"}
     )
@@ -270,3 +270,38 @@ def test_api_enroll_name_too_long_422(tmp_path):
         json={"symbol": SYMBOL, "name": "名" * 65, "source": "strategy_scan"},
     )
     assert resp.status_code == 422
+
+
+def test_api_enroll_rejects_unknown_symbol_and_missing_name(tmp_path):
+    client = _app_client(_funnel(tmp_path, name_map={SYMBOL: "北方国际"}))
+    unknown = client.post(
+        "/api/pool/enroll", json={"symbol": "999999", "source": "strategy_scan"}
+    )
+    assert unknown.status_code == 400
+    assert "999999" in unknown.json()["detail"]
+
+    offline_client = _app_client(_funnel(tmp_path))
+    no_name = offline_client.post(
+        "/api/pool/enroll", json={"symbol": SYMBOL, "source": "strategy_scan"}
+    )
+    assert no_name.status_code == 400
+
+
+def test_api_pool_remove_and_delete(tmp_path):
+    service = _funnel(tmp_path, name_map={SYMBOL: "北方国际", "600508": "上海能源"})
+    client = _app_client(service)
+    assert client.post("/api/pool/enroll", json={"symbol": SYMBOL}).status_code == 200
+    assert client.post("/api/pool/enroll", json={"symbol": "600508"}).status_code == 200
+
+    rm = client.post("/api/pool/remove", json={"symbol": SYMBOL})
+    assert rm.status_code == 200
+    assert rm.json()["success"] is True
+    assert SYMBOL not in service.entries
+
+    dl = client.delete("/api/pool/600508")
+    assert dl.status_code == 200
+    assert dl.json()["success"] is True
+    assert "600508" not in service.entries
+
+    missing = client.post("/api/pool/remove", json={"symbol": "999999"})
+    assert missing.status_code == 400

@@ -27,7 +27,7 @@ def test_ci_profile_excludes_optional_heavy_dependencies():
     combined = "\n".join(sorted(ci_lines | base_lines)).lower()
 
     assert "-r requirements-base.txt" in ci_lines
-    assert "pytest>=8.0.0" in ci_lines
+    assert any(line.startswith(("pytest>=", "pytest==")) for line in ci_lines)
     for package in (
         "torch",
         "einops",

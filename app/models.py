@@ -144,6 +144,25 @@ class PoolEnrollResponse(BaseModel):
     moved: bool = False
 
 
+class PoolRemoveRequest(BaseModel):
+    """#50：从选股池移出个股请求。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    symbol: str = Field(min_length=1, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("symbol")
+    @classmethod
+    def _validate_symbol(cls, value: str) -> str:
+        from app.services.data_provider import normalize_symbol
+
+        clean = normalize_symbol(value)
+        if not _SYMBOL_6DIGIT.match(clean):
+            raise ValueError(f"非法股票代码（需为 6 位数字）: {value!r}")
+        return clean
+
+
 class MarketSessionResponse(BaseModel):
     """#57：交易时段只读接口响应（字段名即前端消费契约）。"""
 

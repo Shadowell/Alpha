@@ -450,12 +450,32 @@ class FunnelService:
                         symbol=clean_symbol,
                         pool=POOL_CANDIDATE,
                     )
-                display_name = (name or "").strip()[:64]
+                try:
+                    raw_map = await self.provider.get_symbol_name_map(
+                        cache_ttl_seconds=3600
+                    )
+                    name_map = dict(raw_map or {})
+                except Exception:
+                    name_map = {}
+
+                if name_map and clean_symbol not in name_map:
+                    return PoolEnrollResponse(
+                        success=False,
+                        message=f"标的不存在或未在股票字典中: {clean_symbol}",
+                        symbol=clean_symbol,
+                        pool=POOL_CANDIDATE,
+                    )
+                display_name = (name or "").strip()[:64] or str(
+                    name_map.get(clean_symbol) or ""
+                ).strip()[:64]
                 if not display_name:
-                    display_name = await self._lookup_symbol_name_unlocked(clean_symbol)
-                entry = self._build_enroll_entry(
-                    clean_symbol, display_name or clean_symbol, source
-                )
+                    return PoolEnrollResponse(
+                        success=False,
+                        message=f"无法解析股票名称，拒绝入池: {clean_symbol}",
+                        symbol=clean_symbol,
+                        pool=POOL_CANDIDATE,
+                    )
+                entry = self._build_enroll_entry(clean_symbol, display_name, source)
                 self.entries[clean_symbol] = entry
                 created = True
                 self._record_trigger(entry, f"入池: {source}")
@@ -513,6 +533,33 @@ class FunnelService:
                 pool=final_pool,
                 created=created,
                 moved=moved,
+            )
+
+    async def remove_pool(
+        self, symbol: str, note: str | None = None
+    ) -> MovePoolResponse:
+        """#50：将个股移出三池漏斗，并持久化状态。"""
+        clean_symbol = normalize_symbol(symbol)
+        async with self.lock:
+            entry = self.entries.get(clean_symbol)
+            if entry is None:
+                return MovePoolResponse(
+                    success=False,
+                    message=MISSING_ENTRY_MESSAGE,
+                    symbol=clean_symbol,
+                    pool=POOL_CANDIDATE,
+                )
+            prev_pool = str(entry.get("pool", POOL_CANDIDATE))
+            if prev_pool not in VALID_POOLS:
+                prev_pool = POOL_CANDIDATE
+            self.entries.pop(clean_symbol, None)
+            self.updated_at = now_cn().isoformat()
+            self._save_state()
+            return MovePoolResponse(
+                success=True,
+                message=f"已移出选股池（原池：{prev_pool}）",
+                symbol=clean_symbol,
+                pool=prev_pool,
             )
 
     async def recompute(self, symbol: str | None = None) -> None:
