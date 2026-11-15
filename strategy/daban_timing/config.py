@@ -342,6 +342,8 @@ class RiskLimits:
             raise ConfigError(
                 "halt_recover_threshold must be <= drawdown_halt_threshold"
             )
+        if self.halt_recover_threshold < self.half_recover_threshold:
+            raise ConfigError("halt_recover_threshold must be >= half_recover_threshold")
         if not 0.0 < _finite(self.half_multiplier, "half_multiplier") <= 1.0:
             raise ConfigError("half_multiplier must be in (0, 1]")
         _finite(self.low_score_floor, "low_score_floor")

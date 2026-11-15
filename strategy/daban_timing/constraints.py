@@ -50,6 +50,10 @@ class AllocationDecision:
     final_qty: int | None
     price: float | None
     weight_after: float | None
+    name: str = ""
+    theme: str | None = None
+    board_height: int | None = None
+    priority: float = 0.0
     rule_ids: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
@@ -62,6 +66,10 @@ class AllocationDecision:
     def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
+            "name": self.name,
+            "theme": self.theme,
+            "board_height": self.board_height,
+            "priority": self.priority,
             "side": self.side,
             "action": self.action,
             "requested_amount": round4(self.requested_amount),
@@ -508,6 +516,10 @@ def _decision(
         symbol=order.symbol,
         side=order.side,
         action=action,
+        name=order.name,
+        theme=order.theme,
+        board_height=order.board_height,
+        priority=order.priority,
         requested_amount=requested,
         final_amount=final_amount,
         requested_qty=order.qty,
