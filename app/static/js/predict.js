@@ -326,6 +326,57 @@ function _hotAiCardHtml(e, poolName) {
     </div>`;
 }
 
+function _hotAIAlertHtml(a) {
+  const levelCls = a.level === 'warning' ? 'warn' : 'info';
+  let out = `<div class="hot-ai-alert hot-ai-alert--${levelCls} hot-ai-alert--${esc(a.kind)}" role="status">`;
+  if (a.kind === 'stale') {
+    out += '<span class="hot-ai-alert-tag">数据新鲜度</span>';
+    out += `<span class="hot-ai-alert-text">${esc(a.text)}</span>`;
+    const stamp = [];
+    if (a.realtimeTradeDate) stamp.push(`实时交易日 ${esc(a.realtimeTradeDate)}`);
+    if (a.klineMaxDate) stamp.push(`K线最新 ${esc(a.klineMaxDate)}`);
+    if (a.updatedAt) {
+      const shown = (typeof fmtDateTime === 'function') ? fmtDateTime(a.updatedAt) : a.updatedAt;
+      stamp.push(`快照更新 ${esc(shown)}`);
+    }
+    if (stamp.length) out += `<span class="hot-ai-alert-stamp">${stamp.join(' · ')}</span>`;
+    if (a.items && a.items.length) {
+      const rows = a.items.map((it) => (
+        `<li><b>${esc(it.symbol)}</b>`
+        + ` · 落后 ${safeInt(it.lagTradingDays)} 个交易日`
+        + ` · ${esc(it.reason || '未知原因')}</li>`
+      )).join('');
+      out += `<details class="hot-ai-alert-details"><summary>展开被跳过标的（${safeInt(a.items.length)}）</summary>`
+        + `<ul class="hot-ai-alert-list">${rows}</ul></details>`;
+    }
+  } else if (a.kind === 'tier') {
+    out += '<span class="hot-ai-alert-tag">分层降级</span>';
+    out += `<span class="hot-ai-alert-text">${esc(a.text)}</span>`;
+    if (a.details && a.details.length) {
+      out += `<span class="hot-ai-alert-stamp">${a.details.map((d) => esc(d)).join('；')}</span>`;
+    }
+  }
+  out += '</div>';
+  return out;
+}
+
+/**
+ * 把 #51/#52 后端已产出的新鲜度/降级字段渲染成面板顶部提示。
+ * 纯判定见 core.js 的 hotAIStaleAlert / hotAITierAlert，这里只负责安全 DOM。
+ */
+function renderHotAIAlerts(snap) {
+  const el = document.getElementById('hotAiAlerts');
+  if (!el) return;
+  if (!snap) { el.innerHTML = ''; return; }
+  const meta = snap.meta || {};
+  const alerts = [];
+  const stale = (typeof hotAIStaleAlert === 'function') ? hotAIStaleAlert(meta, snap.updated_at) : null;
+  if (stale) alerts.push(stale);
+  const tier = (typeof hotAITierAlert === 'function') ? hotAITierAlert(meta) : null;
+  if (tier) alerts.push(tier);
+  el.innerHTML = alerts.map(_hotAIAlertHtml).join('');
+}
+
 function renderHotStockAI() {
   const snap = state.hotStockAI;
   const metaEl = document.getElementById('hotAiMeta');
@@ -336,10 +387,12 @@ function renderHotStockAI() {
   if (!snap) {
     if (metaEl) metaEl.textContent = '无数据';
     if (summary) summary.innerHTML = '';
+    renderHotAIAlerts(null);
     return;
   }
   const cfg = snap.config || {};
   state.hotStockAIConfig = cfg;
+  renderHotAIAlerts(snap);
   if (toggle) toggle.checked = !!cfg.auto_refresh_enabled;
   const thC = document.getElementById('hotai-th-candidate');
   const thF = document.getElementById('hotai-th-focus');

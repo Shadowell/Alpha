@@ -229,3 +229,46 @@ def test_notice_pool_matches_funnel_promotion_rules():
 
     funnel = (MODULES / "funnel.js").read_text()
     assert "_applyLongListCollapse" in funnel
+
+
+# ─────────────────── 热门智能新鲜度 / 降级分层提示（#51 / #52） ───────────────────
+
+
+def test_hotai_freshness_and_degradation_alerts_wired():
+    """#51/#52：后端已产出的新鲜度/降级字段必须在页面上有可见提示，且仅在真实条件下出现。"""
+    core = (MODULES / "core.js").read_text()
+    predict = (MODULES / "predict.js").read_text()
+    html = (STATIC / "index.html").read_text()
+    css = (STATIC / "styles.css").read_text()
+
+    # 纯判定函数落在 core.js（新增纯函数），DOM 渲染落在 predict.js
+    assert "function hotAIStaleAlert(" in core
+    assert "function hotAITierAlert(" in core
+    assert "function renderHotAIAlerts(" in predict
+    assert "renderHotAIAlerts(snap)" in predict  # 在 renderHotStockAI 内被调用
+
+    # 消费的是后端真实字段名，禁止改名/臆造
+    for field in (
+        "stale_kline_count", "skipped_stale", "realtime_trade_date", "kline_max_date",
+        "pool_tier_mode", "pool_tier_reason", "prediction_available", "prediction_enabled",
+        "pred_missing_count", "lag_trading_days",
+    ):
+        assert field in core, f"core.js 未消费后端字段 {field}"
+
+    # 陈旧横幅文案与降级横幅文案
+    assert "只因 K 线落后被跳过，未参与评分" in core
+    assert "三池已切换为分位数降级分层" in core
+
+    # 降级提示只在 quantile_degraded 触发：绝对阈值模式必须直接返回 null，不得出现误导文案
+    assert "quantile_degraded" in core
+    assert "String(m.pool_tier_mode || '') !== 'quantile_degraded') return null" in core, \
+        "降级判定未使用严格不等（quantile_degraded 之外应短路返回 null）"
+
+    # 所有插值文本走 esc()/safeInt()，禁止未过滤后端字符串进 innerHTML
+    assert "${esc(a.text)}" in predict
+    assert "esc(it.symbol)" in predict and "safeInt(it.lagTradingDays)" in predict
+    assert "esc(it.reason" in predict
+
+    # 横幅容器与安全样式已就位
+    assert 'id="hotAiAlerts"' in html
+    assert ".hot-ai-alert" in css and ".hot-ai-alerts:empty" in css

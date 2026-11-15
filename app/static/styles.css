@@ -2244,6 +2244,29 @@ body { color: var(--text); }
   border: 1px solid rgba(251, 191, 36, 0.22);
   border-radius: 14px;
 }
+
+/* #51/#52：热门智能数据新鲜度 / 降级分层提示横幅 */
+.hot-ai-alerts { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+.hot-ai-alerts:empty { display: none; }
+.hot-ai-alert {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px;
+  padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5;
+}
+.hot-ai-alert--warn { background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.34); color: #fcd34d; }
+.hot-ai-alert--info { background: rgba(59, 130, 246, 0.10); border: 1px solid rgba(59, 130, 246, 0.28); color: #bfdbfe; }
+.hot-ai-alert-tag {
+  font-weight: 700; font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  background: rgba(245, 158, 11, 0.16); color: #fbbf24;
+}
+.hot-ai-alert--info .hot-ai-alert-tag { background: rgba(59, 130, 246, 0.16); color: #93c5fd; }
+.hot-ai-alert-text { font-weight: 600; color: #fde68a; }
+.hot-ai-alert--info .hot-ai-alert-text { color: #dbeafe; }
+.hot-ai-alert-stamp { flex-basis: 100%; color: var(--text-secondary); font-size: 12px; }
+.hot-ai-alert-details { flex-basis: 100%; }
+.hot-ai-alert-details summary { cursor: pointer; color: #fbbf24; font-size: 12px; font-weight: 600; outline: none; }
+.hot-ai-alert-list { margin: 8px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 12px; }
+.hot-ai-alert-list li { margin: 2px 0; }
+.hot-ai-alert-list b { color: #fcd34d; font-family: var(--font-mono); }
 .graphic-header {
   display: flex;
   justify-content: space-between;

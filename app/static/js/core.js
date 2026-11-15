@@ -376,3 +376,76 @@ function setStatus(text, tone = 'info') {
   }, duration);
 }
 
+/* ==================== 热门智能：数据新鲜度 / 降级分层判定（#51 / #52） ==================== */
+// 后端已在快照 meta 层产出可观测字段（见 app/services/hot_stock_ai_service.py），
+// 但前端此前完全没消费。这里只做纯判定，返回结构化数据，DOM 渲染交给 predict.js，
+// 便于单测与 Playwright 直接断言；字段缺失时一律保守降级为 null，绝不臆造文案。
+
+// K 线缓存明显落后于本次打分的实时交易日 → 混期风险（不受周末/节假日影响，是硬证据）。
+function _hotAIIsMixedPeriod(meta) {
+  const rt = String((meta && meta.realtime_trade_date) || '').slice(0, 10);
+  const kmax = String((meta && meta.kline_max_date) || '').slice(0, 10);
+  return !!(rt && kmax && kmax < rt);
+}
+
+/**
+ * 陈旧 / 混期提示模型。仅当有标的因 K 线落后被跳过、或 K 线缓存落后实时交易日时返回。
+ * @returns {null|{kind:'stale',level:string,text:string,realtimeTradeDate:string|null,klineMaxDate:string|null,updatedAt:string,items:Array<{symbol:string,lagTradingDays:number,reason:string}>}}
+ */
+function hotAIStaleAlert(meta, updatedAt) {
+  const m = meta || {};
+  const count = Number(m.stale_kline_count) || 0;
+  const mixed = _hotAIIsMixedPeriod(m);
+  if (count <= 0 && !mixed) return null;
+  const rt = String(m.realtime_trade_date || '').slice(0, 10) || null;
+  const kmax = String(m.kline_max_date || '').slice(0, 10) || null;
+  let text;
+  if (count > 0) {
+    text = `${count} 只因 K 线落后被跳过，未参与评分`;
+    if (mixed) text += `；K 线缓存（${kmax}）落后于实时交易日（${rt}），存在混期风险`;
+  } else {
+    text = `K 线缓存（${kmax}）落后于实时交易日（${rt}），存在混期风险`;
+  }
+  const skipped = Array.isArray(m.skipped_stale) ? m.skipped_stale : [];
+  return {
+    kind: 'stale',
+    level: 'warning',
+    text,
+    realtimeTradeDate: rt,
+    klineMaxDate: kmax,
+    updatedAt: String(updatedAt || ''),
+    items: skipped.map((s) => ({
+      symbol: String((s && s.symbol) || ''),
+      lagTradingDays: Number(s && s.lag_trading_days) || 0,
+      reason: String((s && s.reason) || ''),
+    })),
+  };
+}
+
+/**
+ * 降级分层提示模型。仅在 meta.pool_tier_mode === 'quantile_degraded' 时返回，
+ * 绝对阈值（8/11.5/14.5）模式返回 null，避免误导文案。
+ * @returns {null|{kind:'tier',level:string,text:string,details:string[]}}
+ */
+function hotAITierAlert(meta) {
+  const m = meta || {};
+  if (String(m.pool_tier_mode || '') !== 'quantile_degraded') return null;
+  const details = [];
+  const reason = String(m.pool_tier_reason || '');
+  if (reason) details.push(`原因：${reason}`);
+  const missing = Number(m.pred_missing_count) || 0;
+  if (m.prediction_available === false && missing > 0) details.push(`预测分量缺失 ${missing} 只`);
+  if (typeof m.prediction_enabled === 'boolean') {
+    details.push(m.prediction_enabled ? 'Kronos 已启用但本次无可用预测结果' : 'Kronos 当前未启用');
+  }
+  return {
+    kind: 'tier',
+    level: 'warning',
+    text: 'Kronos 预测不可用，三池已切换为分位数降级分层',
+    details,
+  };
+}
+
+window.hotAIStaleAlert = hotAIStaleAlert;
+window.hotAITierAlert = hotAITierAlert;
+
