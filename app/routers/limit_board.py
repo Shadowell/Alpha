@@ -105,6 +105,25 @@ async def get_limit_board_status(container: ServiceContainer = Depends(get_conta
     return payload
 
 
+@router.post("/data/limit-board/sync")
+async def trigger_limit_board_sync(
+    trade_date: str | None = Query(None, description="交易日 YYYY-MM-DD，默认最近交易日"),
+    force: bool = Query(False, description="是否忽略当日已同步标记强制重抓"),
+    container: ServiceContainer = Depends(get_container),
+):
+    """#22：手动触发打板核心数据底座同步。"""
+    service = _service(container)
+    norm_date = _normalize_trade_date(trade_date) if trade_date else None
+    try:
+        result = await service.sync_trade_date(
+            norm_date, trigger_mode="manual", force=force
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("manual limit board sync failed: %s", type(exc).__name__)
+        return error_detail("打板数据同步失败", exc, 503, context="limit board sync")
+    return {"status": "ok", "result": result, "server_time": now_cn().isoformat()}
+
+
 @router.get("/data/limit-board/{trade_date}", response_model=LimitBoardDayOut)
 async def get_limit_board_by_date(
     trade_date: str,

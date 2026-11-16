@@ -947,7 +947,8 @@ ALPHA_TEST_BASE_URL=http://127.0.0.1:18890 npx playwright test
 - `strategy/first_limit_alpha/microstructure_features.py`：封板强度、板型、股性共 46 个因子（108 列），代理口径带 `*_is_proxy`。
 - `app/services/sentiment_factors.py` + `app/services/market_regime.py`：市场情绪分与六阶段 regime（冰点/修复/发酵/高潮/分歧/退潮），盘中估算以 `intraday_` 前缀结构性隔离。
 - `app/services/limit_up_backtest.py`：可成交性回测（一字买不到、涨停排队、跌停顺延、动态滑点、5% 参与率容量上限），strict / loose 双口径。
-- `app/services/alt_sentiment/`：互动易与全市场关注度另类情绪因子，总开关 `ALPHA_ALT_SENTIMENT_ENABLED` 默认关闭。
+- `app/services/alt_sentiment/`：互动易与全市场关注度另类情绪因子，已装配至容器并挂载 `/api/alt-sentiment/{sources,sync,factors/{symbol},coverage,offline-report}`，总开关 `ALPHA_ALT_SENTIMENT_ENABLED` 默认关闭，`data/alt_sentiment.db` 已纳入 lifespan checkpoint 清单。
 - `strategy/model_validation/`：基线 vs 候选模型的 walk-forward + embargo 增量验证脚手架，样本外无增量自动判「不保留」。
-
-依赖关系：另类情绪与模型验证为独立包，尚未接入容器与前端；接入需在 `app/container.py` 装配并新增路由，`data/alt_sentiment.db` 已纳入 lifespan checkpoint 清单。
+- `strategy/daban_factors/`：资金流向（#28）、题材生命周期（#29）、竞价分时（#30）、筹码解禁与事件风险（#31）四套 PIT 因子族。
+- `strategy/first_limit_alpha/tiered_model/`：五档（首板/1进2/2进3/高位/反包）分层晋级概率模型、校准、因子评估与模型卡（#27）。
+- 新增打板与情绪研究路由：`POST /api/data/limit-board/sync`（#22）、`GET/POST /api/market/sentiment/{latest,history,compute}`（#25，`market_sentiment_daily` 表）、`POST /api/daban/backtest`（#26）、`GET /api/daban/microstructure/quality`（#24）、`POST /api/daban/labels/build`（#23）、`POST /api/daban/validation/run`（#36）。

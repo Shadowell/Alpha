@@ -32,6 +32,7 @@ from app.services.jobs import JobManager
 from app.services.kline_cache_service import KlineCacheService
 from app.services.kline_store import KlineSQLiteStore
 from app.services.kronos_predict_service import KronosPredictService
+from app.services.alt_sentiment import AltSentimentService, AltSentimentStore
 from app.services.limit_board_service import LimitBoardService
 from app.services.market_data_client import EastmoneyMarketDataClient
 from app.services.notice_service import NoticeService
@@ -140,6 +141,9 @@ class ServiceContainer:
     background_tasks: BackgroundTaskRegistry
     # 打板数据底座（issue #22）；Tushare 未配置时依然可用（自算降级）。
     limit_board_service: LimitBoardService | None = None
+    # 另类情绪因子底座（issue #33）；受 ALPHA_ALT_SENTIMENT_ENABLED 门控。
+    alt_sentiment_store: AltSentimentStore | None = None
+    alt_sentiment_service: AltSentimentService | None = None
 
     # ── 路径/健康辅助 ──
 
@@ -461,6 +465,9 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
     except Exception as exc:  # noqa: BLE001 — 空库初始化失败留给具体请求报错
         log.warning("kline schema init failed: %s", exc)
 
+    alt_sentiment_store = AltSentimentStore(db_path=str(directory / "alt_sentiment.db"))
+    alt_sentiment_service = AltSentimentService(store=alt_sentiment_store)
+
     return ServiceContainer(
         data_dir=directory,
         provider=provider,
@@ -486,4 +493,6 @@ def build_container(data_dir: str | Path | None = None) -> ServiceContainer:
         job_manager=job_manager,
         background_tasks=BackgroundTaskRegistry(),
         limit_board_service=limit_board_service,
+        alt_sentiment_store=alt_sentiment_store,
+        alt_sentiment_service=alt_sentiment_service,
     )

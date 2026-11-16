@@ -18,6 +18,9 @@ from typing import Any
 #: issue 编号 → 模块名（逐条 issue 交付时追加）。
 FACTOR_FAMILY_MODULES: dict[int, str] = {
     28: "capital_flow",
+    29: "theme_lifecycle",
+    30: "auction_intraday",
+    31: "chip_event_risk",
 }
 
 
@@ -28,8 +31,8 @@ def family_capability() -> dict[str, Any]:
         module = import_module(f"strategy.daban_factors.{module_name}")
         payload[str(issue)] = {
             "module": f"strategy.daban_factors.{module_name}",
-            "capability": module[f"{module_name}_capability"](),
-            "factor_count": len(module[f"{module_name}_factor_specs"]()),
+            "capability": getattr(module, f"{module_name}_capability")(),
+            "factor_count": len(getattr(module, f"{module_name}_factor_specs")()),
         }
     return payload
 

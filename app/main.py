@@ -24,6 +24,8 @@ from app.container import build_container, resolve_compat_attr
 from app.logging_config import configure_logging, reset_request_id, set_request_id
 from app.routers import (
     agent,
+    alt_sentiment,
+    daban,
     jobs,
     kline,
     limit_board,
@@ -183,6 +185,8 @@ for domain_router in (
     jobs.router,
     kline.router,
     limit_board.router,
+    alt_sentiment.router,
+    daban.router,
     first_limit_alpha_router,
 ):
     app.include_router(domain_router, prefix="/api")

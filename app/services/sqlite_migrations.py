@@ -601,12 +601,35 @@ def _migrate_market_kline_v3(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_market_kline_v4(conn: sqlite3.Connection) -> None:
+    """#25 市场情绪周期与连板梯队日频表。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sentiment_daily (
+            trade_date TEXT PRIMARY KEY,
+            sentiment_score REAL,
+            regime TEXT,
+            limit_up_count INTEGER,
+            limit_down_count INTEGER,
+            broken_board_rate REAL,
+            max_board_height INTEGER,
+            first_board_count INTEGER,
+            continuation_count INTEGER,
+            promotion_rate REAL,
+            payload_json TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MARKET_KLINE_DB_MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1, "market kline, sync task and report base schema", _migrate_market_kline_v1
     ),
     Migration(2, "Tushare enrichment tables", _migrate_market_kline_v2),
     Migration(3, "limit-up board data foundation (#22)", _migrate_market_kline_v3),
+    Migration(4, "market sentiment daily (#25)", _migrate_market_kline_v4),
 )
 
 
