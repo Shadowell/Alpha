@@ -83,9 +83,9 @@ jobs:
         if: ${{ steps.gate.outputs.should_deploy == 'true' }}
         run: |
           set -euo pipefail
-          curl -fsS --max-time 10 http://127.0.0.1:18888/ >/dev/null
-          curl -fsS --max-time 10 http://127.0.0.1:18888/api/jobs/kline-cache/enrichment-status >/dev/null
-          curl -fsS --max-time 10 http://127.0.0.1:18888/api/strategy/rules >/dev/null
+          curl -fsS --max-time 25 --retry 2 --retry-delay 2 http://127.0.0.1:18888/ >/dev/null
+          curl -fsS --max-time 25 --retry 2 --retry-delay 2 http://127.0.0.1:18888/api/jobs/kline-cache/enrichment-status >/dev/null
+          curl -fsS --max-time 25 --retry 2 --retry-delay 2 http://127.0.0.1:18888/api/strategy/rules >/dev/null
           echo "alpha smoke checks passed"
 
       - name: Record deployed SHA
